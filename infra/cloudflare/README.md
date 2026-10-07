@@ -22,3 +22,12 @@ R2 Standard currently includes 10 GB-month of storage, 1 million Class A operati
 - Do not register or change the Telegram webhook until the durable receiver and rollback path are tested.
 
 This is intentionally a staging contract; it does not perform Telegram cutover by itself.
+
+## Deployed staging receiver
+
+- Worker: `thuthayatethar-telegram-ingestion` (`workers.dev` enabled; preview URLs disabled).
+- Health URL: `https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev/health`.
+- Webhook path: `https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev/telegram/webhook`.
+- The Worker is bound to the `thuthayatethar-ingestion` D1 database and allowlisted for the approved group ID. Its webhook secret is intentionally not configured yet.
+- Verified behavior: `GET /health` returns HTTP 200; `POST /telegram/webhook` without a secret returns HTTP 503 (`webhook_not_configured`). The Telegram webhook has not been registered or changed.
+- Current code stores Telegram file metadata, an initial missing-rights record, and a received event in D1. It does **not** download the PDF into R2, run OCR, or publish a catalog entry. Do not describe this as end-to-end book ingestion.
