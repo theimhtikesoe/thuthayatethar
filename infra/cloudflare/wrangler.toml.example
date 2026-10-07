@@ -1,0 +1,17 @@
+name = "thuthayatethar-telegram-ingestion"
+main = "src/index.ts"
+compatibility_date = "2026-10-08"
+
+# Identifiers are not secrets; webhook and storage credentials stay out of Git.
+account_id = "557f8dd4f971a942beb3057ddc74a248"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "thuthayatethar-ingestion"
+database_id = "e6631b37-bcbb-4550-b4c7-3acebb961484"
+
+[vars]
+TELEGRAM_ALLOWED_CHAT_IDS = "<approved-group-chat-id>"
+
+# Set this with `wrangler secret put TELEGRAM_WEBHOOK_SECRET`.
+# Do not put the value in this file.
