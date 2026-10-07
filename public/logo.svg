@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 96" role="img" aria-label="သုတရိပ်သာ">
+  <rect width="320" height="96" rx="24" fill="#17212b"/>
+  <path d="M40 26h34c14 0 25 11 25 25v20H65c-14 0-25-11-25-25V26Z" fill="#fffdf9"/>
+  <path d="M100 26h34v20c0 14-11 25-25 25h-9V26Z" fill="#e2a84b"/>
+  <path d="M99 29v39" stroke="#17212b" stroke-width="3" opacity=".35"/>
+  <circle cx="168" cy="48" r="4" fill="#e2a84b"/>
+  <text x="184" y="58" fill="#fffdf9" font-family="Noto Sans Myanmar, Myanmar Text, sans-serif" font-size="25" font-weight="700">သုတရိပ်သာ</text>
+</svg>
