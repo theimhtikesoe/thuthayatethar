@@ -11,7 +11,7 @@ type D1Database = {
 
 export interface Env {
   DB: D1Database;
-  TELEGRAM_WEBHOOK_SECRET: string;
+  TELEGRAM_WEBHOOK_SECRET?: string;
   TELEGRAM_ALLOWED_CHAT_IDS: string;
 }
 
@@ -76,7 +76,9 @@ function mediaFor(message: JsonRecord): { type: MediaType; fileId: string; fileN
 }
 
 async function receive(request: Request, env: Env): Promise<Response> {
-  if (!constantTimeEqual(request.headers.get("x-telegram-bot-api-secret-token"), env.TELEGRAM_WEBHOOK_SECRET)) {
+  const expectedSecret = env.TELEGRAM_WEBHOOK_SECRET;
+  if (!expectedSecret) return json({ ok: false, error: "webhook_not_configured" }, 503);
+  if (!constantTimeEqual(request.headers.get("x-telegram-bot-api-secret-token"), expectedSecret)) {
     return json({ ok: false, error: "unauthorized" }, 401);
   }
   if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) {
