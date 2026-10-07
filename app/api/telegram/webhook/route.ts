@@ -82,9 +82,14 @@ function mediaTypeFor(message: JsonRecord): AcceptedMedia | null {
 
 export async function POST(request: NextRequest): Promise<Response> {
   const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
-  const allowedChatId = process.env.TELEGRAM_ALLOWED_CHAT_ID?.trim();
+  const allowedChatIds = new Set(
+    (process.env.TELEGRAM_ALLOWED_CHAT_IDS ?? "")
+      .split(",")
+      .map((chatId) => chatId.trim())
+      .filter((chatId) => /^-?\d+$/.test(chatId)),
+  );
 
-  if (!webhookSecret || !allowedChatId) {
+  if (!webhookSecret || allowedChatIds.size === 0) {
     return jsonResponse({ ok: false, error: "webhook_not_configured" }, 503);
   }
 
@@ -110,13 +115,21 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse({ ok: false, error: "invalid_update" }, 400);
   }
 
-  const message = [update.message, update.edited_message].find(isRecord);
+  const message = [
+    update.message,
+    update.edited_message,
+    update.channel_post,
+    update.edited_channel_post,
+  ].find(isRecord);
   if (!message || !isRecord(message.chat)) {
     return jsonResponse({ ok: true, status: "ignored" });
   }
 
   const chat = message.chat;
-  if ((chat.type !== "group" && chat.type !== "supergroup") || String(chat.id) !== allowedChatId) {
+  if (
+    (chat.type !== "group" && chat.type !== "supergroup" && chat.type !== "channel") ||
+    !allowedChatIds.has(String(chat.id))
+  ) {
     return jsonResponse({ ok: true, status: "ignored" });
   }
 
