@@ -180,6 +180,7 @@ function matchesTime(minutes: number, time: string) {
 }
 
 export default function HomePage() {
+  const [catalogBooks, setCatalogBooks] = useState<Book[] | null>(null);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("အားလုံး");
   const [time, setTime] = useState("အားလုံး");
@@ -190,15 +191,41 @@ export default function HomePage() {
   const [fontScale, setFontScale] = useState(1);
   const [lineHeight, setLineHeight] = useState(1.8);
 
+  useEffect(() => {
+    fetch("/api/catalog", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload: { configured?: boolean; books?: Array<Partial<Book> & { id?: string | number; pages?: string[] }> }) => {
+        if (!payload.configured || !Array.isArray(payload.books)) return;
+        setCatalogBooks(payload.books.map((book, index) => ({
+          id: typeof book.id === "number" ? book.id : index + 1,
+          title: book.title ?? "စာအုပ်အသစ်",
+          author: book.author ?? "မသိရသေးသော စာရေးသူ",
+          category: book.category ?? "အခြား",
+          year: book.year ?? "—",
+          readingTime: book.readingTime ?? 10,
+          pages: book.pages ?? [],
+          summary: book.summary ?? "",
+          color: book.color ?? "#d6c6a9",
+          accent: book.accent ?? "#655139",
+          mark: book.mark ?? "စာ",
+          rights: book.rights === "summary" ? "summary" : "full",
+          tag: book.tag ?? "ထုတ်ဝေထားသည်",
+        })));
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const availableBooks = catalogBooks ?? books;
+
   const filteredBooks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    return books.filter((book) => {
+    return availableBooks.filter((book) => {
       const haystack = `${book.title} ${book.author} ${book.category} ${book.summary} ${book.tag}`.toLowerCase();
       return (!normalized || haystack.includes(normalized)) &&
         (category === "အားလုံး" || book.category === category) &&
         (time === "အားလုံး" || matchesTime(book.readingTime, time));
     });
-  }, [category, query, time]);
+  }, [availableBooks, category, query, time]);
 
   useEffect(() => {
     const stopReaderActions = (event: KeyboardEvent) => {
@@ -271,7 +298,7 @@ export default function HomePage() {
         <div className="catalog-layout">
           <aside className="filters" aria-label="စာအုပ်စစ်ထုတ်မှုများ">
             <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="စာအုပ်ရှာရန်..." aria-label="စာအုပ်ရှာရန်" /><kbd>⌘ K</kbd></label>
-            <div className="filter-block"><p>အမျိုးအစား</p>{categories.map((item) => <button type="button" key={item} className={category === item ? "filter-pill selected" : "filter-pill"} onClick={() => setCategory(item)}>{item}<span>{item === "အားလုံး" ? books.length : books.filter((book) => book.category === item).length}</span></button>)}</div>
+            <div className="filter-block"><p>အမျိုးအစား</p>{categories.map((item) => <button type="button" key={item} className={category === item ? "filter-pill selected" : "filter-pill"} onClick={() => setCategory(item)}>{item}<span>{item === "အားလုံး" ? availableBooks.length : availableBooks.filter((book) => book.category === item).length}</span></button>)}</div>
             <div className="filter-block"><p>ဖတ်ရှုချိန်</p>{times.map((item) => <button type="button" key={item} className={time === item ? "filter-pill selected" : "filter-pill"} onClick={() => setTime(item)}>{item}</button>)}</div>
             {(query || category !== "အားလုံး" || time !== "အားလုံး") && <button type="button" className="reset-button" onClick={resetFilters}>စစ်ထုတ်မှုများ ရှင်းမည် ↺</button>}
             <div className="rights-note"><span>✓</span><div><strong>ဖတ်ရှုရန်သီးသန့်</strong><small>စာအုပ်အကြောင်းအရာများကို download မလုပ်နိုင်ပါ။</small></div></div>
