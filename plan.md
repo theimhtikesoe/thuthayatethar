@@ -46,11 +46,11 @@
 - `public/manus-routes.json` — route manifest.
 - `public/logo.svg` — project wordmark/mark.
 - `app.config.ts` — project logo metadata.
-- `app/api/telegram/webhook/route.ts` — Telegram group/channel မှ PDF/photo update လက်ခံသည့် route; webhook secret နှင့် chat allowlist ကိုစစ်ဆေးမည်။
+- `app/api/telegram/webhook/route.ts` — Telegram upload group မှ document/photo candidate update လက်ခံသည့် route; webhook secret နှင့် group allowlist ကိုစစ်ဆေးမည်။
 - `.env.example` — secret တန်ဖိုးမပါသော runtime key အမည်များ။
 - `docs/telegram-ingestion.md` — webhook လုပ်ဆောင်ပုံ၊ configuration နှင့် နောက်အဆင့် pipeline မှတ်စုများ။
 - `TODO.md` — approved deliverables and acceptance clauses.
 
 ## Telegram webhook phase
 
-ဤအဆင့်တွင် `POST /api/telegram/webhook` server-side Next.js route ကိုသာ ထည့်မည်။ Telegram secret-token header ကိုစစ်ဆေးပြီး `TELEGRAM_ALLOWED_CHAT_IDS` allowlist ထဲက group/supergroup/channel မှ PDF/photo update များကိုသာ acknowledge လုပ်မည်။ Media ကို download သို့မဟုတ် သိမ်းဆည်းမည်မဟုတ်သကဲ့သို့ လက်ရှိ catalog ကိုလည်း မပြောင်းလဲစေရ။ `@sarpaymyr` သည် အသုံးပြုသူပေးထားသော ဖြစ်နိုင်ချေရှိသည့် source channel ဖြစ်သော်လည်း public preview တွင် ပြန်လည်ဖြန့်ဝေခွင့်လိုင်စင် မဖော်ပြထားသောကြောင့် rights holder ခွင့်ပြုချက်ရသည်အထိ အကြောင်းအရာကို download, OCR, store သို့မဟုတ် publish မလုပ်ရ။ Persistent idempotency၊ OCR၊ private storage၊ rights review နှင့် approval ပြီးမှ catalog publication လုပ်ခြင်းတို့သည် နောက်အဆင့် scope ဖြစ်သည်။
+Webhook အဆင့်တွင် `POST /api/telegram/webhook` သည် အသုံးပြုသူ၏ allowlist ထဲရှိ upload group မှ `message`/`edited_message` update များအတွင်းက document/photo candidate ကိုသာ acknowledge လုပ်မည်။ Endpoint သည် file ကိုမဒေါင်းလုပ်ရယူသဖြင့် `accepted` ကို file scan ပြီးစီးသည်ဟု မယူဆရ၊ catalog ထဲတွင်လည်း မည်သည့်အကြောင်းအရာမျှ မထုတ်ဝေပါ။ နောက်အဆင့် pipeline တွင် Telegram `getFile`, file type/size/MIME/checksum/malware validation, private storage, OCR/text extraction, metadata draft နှင့် idempotent queue ပါဝင်မည်။ File တစ်ခုချင်းစီ၏ rights evidence ကို review အတည်ပြုပြီးမှ catalog ပေါ်တင်မည်; အချက်အလက်မပြည့်စုံလျှင် draft/quarantine တွင်ထားမည်။ Public channel များကို source အဖြစ်မသုံးပါ။

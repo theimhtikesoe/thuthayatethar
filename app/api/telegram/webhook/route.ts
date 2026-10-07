@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 const MAX_UPDATE_BYTES = 256 * 1024;
 
 type JsonRecord = Record<string, unknown>;
-type AcceptedMedia = "pdf" | "photo";
+type AcceptedMedia = "document" | "photo";
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -64,12 +64,8 @@ async function readBoundedBody(request: Request): Promise<Uint8Array | null> {
 
 function mediaTypeFor(message: JsonRecord): AcceptedMedia | null {
   const document = message.document;
-  if (isRecord(document)) {
-    const mimeType = typeof document.mime_type === "string" ? document.mime_type.toLowerCase() : "";
-    const fileName = typeof document.file_name === "string" ? document.file_name.toLowerCase() : "";
-    if (mimeType === "application/pdf" || (!mimeType && fileName.endsWith(".pdf"))) {
-      return "pdf";
-    }
+  if (isRecord(document) && typeof document.file_id === "string") {
+    return "document";
   }
 
   const photos = message.photo;
@@ -115,21 +111,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     return jsonResponse({ ok: false, error: "invalid_update" }, 400);
   }
 
-  const message = [
-    update.message,
-    update.edited_message,
-    update.channel_post,
-    update.edited_channel_post,
-  ].find(isRecord);
+  const message = [update.message, update.edited_message].find(isRecord);
   if (!message || !isRecord(message.chat)) {
     return jsonResponse({ ok: true, status: "ignored" });
   }
 
   const chat = message.chat;
-  if (
-    (chat.type !== "group" && chat.type !== "supergroup" && chat.type !== "channel") ||
-    !allowedChatIds.has(String(chat.id))
-  ) {
+  if ((chat.type !== "group" && chat.type !== "supergroup") || !allowedChatIds.has(String(chat.id))) {
     return jsonResponse({ ok: true, status: "ignored" });
   }
 

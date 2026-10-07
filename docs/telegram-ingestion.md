@@ -1,45 +1,31 @@
 # Telegram → သုတရိပ်သာ Ingestion Plan
 
-## လက်ရှိ connection details
+## လက်ရှိ source နှင့် connection
 
 - **Bot:** [@ThuThaYateTharBot](https://t.me/ThuThaYateTharBot)
-- **Review/test group:** [သုတရိပ်သာ group](https://t.me/+MliKH1H_FQNmMGQ9)
-- **Potential source channels:** [@sarpaymyr](https://t.me/sarpaymyr), [@RO_Bookshelf](https://t.me/RO_Bookshelf)
-- **Production website:** `https://thuthayatethar.rz99systems.com/`
-- **Bot token:** WebDev production project secret `TELEGRAM_BOT_TOKEN` အဖြစ်သာသိမ်းပြီး source code, log သို့မဟုတ် chat ထဲသို့ မထည့်ရ။
+- **Upload group:** [သုတရိပ်သာ group](https://t.me/+MliKH1H_FQNmMGQ9) — လက်ရှိသတ်မှတ်ထားသော တစ်ခုတည်းသော file intake source ဖြစ်သည်။
+- **Website:** `https://thuthayatethar.rz99systems.com/`
+- **Bot token:** WebDev production secret `TELEGRAM_BOT_TOKEN` အဖြစ်သာ သိမ်းထားပြီး source code, log, chat ထဲတွင် မထည့်ရ။
+- [@sarpaymyr](https://t.me/sarpaymyr) နှင့် [@RO_Bookshelf](https://t.me/RO_Bookshelf) တို့သည် ယခု workflow ၏ source မဟုတ်ပါ။ Bot သည် ၎င်းတို့ထံမှ file မယူရ။
 
-## Numeric `chat_id` ရယူနည်း
+## Group `chat_id` နှင့် Telegram setup
 
-- Public channel အတွက် Telegram Bot API `getChat` ကို `chat_id=@sarpaymyr` ဖြင့် bot token ကိုသိမ်းထားသော protected environment မှခေါ်ပြီး response ထဲက `result.id` ကိုယူနိုင်သည်။ Bot token ကို browser address bar, chat, commit သို့မဟုတ် terminal command history ထဲ မထည့်ပါနှင့်။
-- Group အတွက် bot ကို group ထဲသို့ ထည့်ပြီး test message တစ်ခု ပို့ပါ။ Webhook မတပ်ထားချိန် Telegram Bot API `getUpdates` response ထဲရှိ `message.chat.id` သည် numeric ID ဖြစ်သည်။ Webhook တပ်ထားပါက `getUpdates` အလုပ်မလုပ်သောကြောင့် `getWebhookInfo` ဖြင့်အခြေအနေကိုစစ်ပြီး webhook payload ကို server-side မှ စစ်ရမည်။
-- Group/channel ID များကို protected environment setting `TELEGRAM_ALLOWED_CHAT_IDS` တွင် comma-separated အဖြစ်ထည့်နိုင်သည်။ Channel ID များသည် အများအားဖြင့် `-100...` ပုံစံဖြစ်သော်လည်း API response ထဲက numeric value ကိုသာ ယုံကြည်ပါ။
+Bot ကို group ထဲထည့်ပြီး test message သို့မဟုတ် document တစ်ခု ပို့ပါ။ Webhook မသတ်မှတ်ထားသေးလျှင် Bot API `getUpdates` response ထဲက `message.chat.id` သည် group ၏ numeric ID ဖြစ်သည်။ Webhook သတ်မှတ်ထားပါက `getUpdates` အသုံးမပြုနိုင်ပါ; `getWebhookInfo` ဖြင့်အခြေအနေကိုစစ်ပြီး လိုအပ်လျှင် webhook update မှ chat ID ကို လုံခြုံစွာရယူပါ။ Bot က group ထဲရှိ non-command message များကို လက်ခံနိုင်ရန် BotFather `/setprivacy` ကို `Disable` လုပ်ပါ သို့မဟုတ် bot ကို group admin အဖြစ်သတ်မှတ်ပါ။ `setWebhook.allowed_updates` တွင် `message` နှင့် `edited_message` ကိုသာ ထည့်ပါ။ Production `TELEGRAM_ALLOWED_CHAT_IDS` တွင် ကိုယ်ပိုင် upload group ၏ numeric ID ကိုသာ သတ်မှတ်ပါ။ Bot မထည့်မီက group history ကို webhook က ပြန်မယူနိုင်ပါ။
 
-## Telegram-side လိုအပ်ချက်
+## Upload → scan → draft → publish လမ်းကြောင်း
 
-Bot ကို group ထဲထည့်ရမည်။ Public channel `@sarpaymyr` မှ **အသစ်တင်မည့်** post update များရယူရန် channel admin က bot ကို administrator အဖြစ်ထည့်ရမည်။ BotFather `/setprivacy` → `Disable` သည် group ထဲက non-command message များအတွက်သာဖြစ်ပြီး channel admin permission ကို အစားမထိုးပါ။ Webhook `allowed_updates` တွင် `message`, `edited_message`, `channel_post`, `edited_channel_post` ပါရမည်။ Telegram Bot API webhook သည် webhook တပ်ပြီးနောက် ဖြစ်လာသော update များကိုပို့ပြီး အရင်တင်ထားသည့် channel history ကို backfill မလုပ်ပါ။
+1. Webhook သည် group allowlist, secret-token header နှင့် Telegram JSON update ကိုစစ်ပြီး document/photo ကို candidate အဖြစ် acknowledge လုပ်မည်။ Webhook ကိုယ်တိုင် file ကို download, scan, OCR သို့မဟုတ် publish မလုပ်ပါ။
+2. နောက်ဆင့် worker သည် Telegram `getFile` ဖြင့် file ကိုရယူပြီး extension/MIME, actual file type, byte size, checksum နှင့် malware ကိုစစ်ဆေးမည်။ မသိသော format၊ size limit ကျော်သော file သို့မဟုတ် validation မအောင်မြင်သော file ကို quarantine ထဲထားမည်။
+3. Validation ပြီးပြီး rights evidence ရရှိမှသာ text extraction/OCR လုပ်ကာ title, author, category, summary နှင့် page data ကို draft အဖြစ်ဖန်တီးမည်။ မြန်မာစာ OCR ရလဒ်ကို လူကပြန်စစ်နိုင်သည့်အဆင့် ပါရမည်။
+4. File တစ်ခုချင်းစီအတွက် rights status/evidence ကို `RightsRecord` ထဲသိမ်းပြီး admin review ပြီးမှ catalog တွင် publish လုပ်မည်။ Group ထဲ file တင်ထားခြင်း၊ bot ကို admin လုပ်ထားခြင်း သို့မဟုတ် credit ပေးထားခြင်းတစ်ခုတည်းကို publication approval အဖြစ် အလိုအလျောက် မသတ်မှတ်ရ။
+5. Approved assets များကို private object storage/server-mediated reader ဖြင့်သာပေးမည်။ Telegram raw/permanent file URL များကို public မလုပ်ရ။ `IngestionJob` ကို `telegramUpdateId` ဖြင့် idempotent လုပ်ပြီး retry များကြောင့် catalog item ထပ်မတင်စေရ။
 
-## Source channel နှင့် မူပိုင်ခွင့်
+## လက်ရှိ webhook code ၏ scope
 
-`@sarpaymyr` public preview တွင် copyright concern ရှိပါက ဆက်သွယ်ရန်နှင့် original owner များကို credit ပေးကြောင်းသာဖော်ပြထားပြီး ပြန်လည်ကူးယူ/ထုတ်ဝေခွင့်လိုင်စင် မဖော်ပြထားပါ။ Public channel ဖြစ်ခြင်း၊ credit ပေးထားခြင်း သို့မဟုတ် bot ကို admin လုပ်ထားခြင်းသည် စာအုပ်အပြည့်အစုံကို ပြန်လည်ထုတ်ဝေခွင့်မဟုတ်ပါ။ Rights holder ၏ ခွင့်ပြုချက်/evidence မရမချင်း channel မှဖိုင်များကို download, OCR, store သို့မဟုတ် catalog publish မလုပ်ရ။
+`POST /api/telegram/webhook` သည် Telegram `X-Telegram-Bot-Api-Secret-Token` header ကို `TELEGRAM_WEBHOOK_SECRET` နှင့် constant-time comparison လုပ်သည်။ Configured group/supergroup မှ `message`/`edited_message` ထဲရှိ Telegram document/photo candidate များကိုသာ လက်ခံသည်။ Request JSON ကို 256 KiB အထိကန့်သတ်သည်။ Secret မမှန်လျှင် `401`, JSON မမှန်လျှင် `400`, body ကြီးလွန်းလျှင် `413`, config မပြည့်စုံလျှင် `503` ပြန်ပေးသည်။ Allowlist မကိုက်သည့် chat သို့မဟုတ် မသက်ဆိုင်သည့် update ကို `200 ignored` ပြန်ပေးသည်။ Log ထဲတွင် update ID နှင့် candidate အမျိုးအစားကိုသာထားပြီး caption, user details, chat/file ID နှင့် raw update ကို မသိမ်းပါ။ `accepted` ဆိုသည်မှာ update သည် filter ကိုကျော်သွားခြင်းသာဖြစ်ပြီး file ကိုရယူခြင်း၊ scan/OCR လုပ်ခြင်း၊ storage ထဲသိမ်းခြင်း သို့မဟုတ် website ပေါ်တင်ခြင်း ပြီးစီးသည်ဟု မဆိုလိုပါ။
 
-`@RO_Bookshelf` public bio တွင် “Free books” ဟုဖော်ပြပြီး မူရင်းစာရေးဆရာများနှင့် ထုတ်ဝေသူများကို credit ပေးကြောင်း ရေးထားသည်။ Post များတွင် `@readerodyssey_filesbot` မှတစ်ဆင့် စာဖတ်ရန် link များပါရှိသည်။ သို့သော် public preview တွင် redistribution license သို့မဟုတ် စာအုပ်အပြည့်အစုံကို အခြား website ပေါ် ပြန်တင်ခွင့်ကို မဖော်ပြထားပါ။ Rights-holder ခွင့်ပြုချက်/evidence မရမချင်း ထို channel မှစာအုပ်များကို download, OCR, store သို့မဟုတ် သုတရိပ်သာပေါ် publish မလုပ်ရ။ Source: https://t.me/RO_Bookshelf
+## ဒေတာဖွဲ့စည်းပုံနှင့် အခွင့်အရေးမှတ်တမ်း
 
-## လက်ရှိအဆင့် — webhook receiver
+`Book`: title, slug, author, category, summary, coverAssetId, readingTime, rightsStatus, publicationStatus. `BookPage`: pageNumber, imageAssetId, textContent. `Asset`: storageKey, MIME, byteSize, checksum, Telegram file reference, visibility. `RightsRecord`: source chat/message, rights holder, evidence, reviewer, reviewedAt, allowed uses, expiry. `IngestionJob`: Telegram update ID, status, error, retry count. Bot token နှင့် API secret များကို ဤ record များတွင် မသိမ်းရ။
 
-- Production website တွင် `POST /api/telegram/webhook` ကို server-side receiver အဖြစ်အသုံးပြုသည်။ Route သည် Telegram `X-Telegram-Bot-Api-Secret-Token` header ကို `TELEGRAM_WEBHOOK_SECRET` နှင့် constant-time comparison လုပ်ပြီး `TELEGRAM_ALLOWED_CHAT_IDS` ထဲရှိ `group`/`supergroup`/`channel` များမှ `message`, `edited_message`, `channel_post`, `edited_channel_post` update များထဲက PDF document သို့မဟုတ် photo media ကိုသာ `accepted` ဟုတုံ့ပြန်သည်။
-- Request JSON ကို 256 KiB အထိကန့်သတ်သည်။ Secret မမှန်လျှင် `401`, JSON မမှန်လျှင် `400`, body ကြီးလွန်းလျှင် `413`, environment configuration မပြည့်စုံလျှင် `503` ပြန်ပေးသည်။ ခွင့်မပြုထားသော chat သို့မဟုတ် မသက်ဆိုင်သော update/media ကို Telegram retry မဖြစ်စေရန် `200 ignored` ပြန်ပေးသည်။
-- Log ထဲတွင် `update_id` နှင့် media type ကိုသာမှတ်တမ်းတင်သည်။ Caption, user details, chat ID, file ID နှင့် raw update များကို မ log လုပ်ပါ။ ယခုအဆင့်တွင် Telegram ဖိုင်ကို download/OCR မလုပ်၊ database/object storage ထဲမသိမ်း၊ catalog မပြင်ဆင်/မထုတ်ဝေပါ။ `accepted` သည် update ရောက်ရှိပြီး filter ကိုကျော်ခဲ့သည်ဟုသာဆိုလိုပြီး durable ingestion သို့မဟုတ် rights approval ပြီးကြောင်း မဆိုလိုပါ။
-- Production runtime တွင် `TELEGRAM_WEBHOOK_SECRET` နှင့် comma-separated numeric ID များဖြစ်သော `TELEGRAM_ALLOWED_CHAT_IDS` ကို protected environment settings အဖြစ်ထားရမည်။ လက်ရှိ `TELEGRAM_BOT_TOKEN` ကို source ထဲမထည့်ဘဲ Telegram Bot API `setWebhook` အတွက်သာသုံးရမည်။
-
-## နောက်တစ်ဆင့် — full ingestion pipeline
-
-Rights evidence အတည်ပြုပြီးမှ persistent queue/idempotency၊ Telegram `getFile`၊ MIME နှင့် byte-size စစ်ဆေးခြင်း၊ malware scan၊ private object storage၊ database schemas၊ OCR၊ admin review၊ rights record နှင့် approval ပြီးမှ catalog publish လုပ်ခြင်းကို သီးခြားတည်ဆောက်မည်။ Group/channel ထဲဖိုင်ရှိနေခြင်းတစ်ခုတည်းကို publication permission အဖြစ် ဘယ်တော့မှ မယူဆရ။
-
-
-## နောက်အဆင့်အတွက် architecture မှတ်စု
-
-Persistent `IngestionJob` ကို `telegramUpdateId` ဖြင့် idempotent လုပ်ပြီး group/channel allowlist နှင့် file type အပြင် uploader/rights evidence ကိုစစ်ရမည်။ Rights ခွင့်ပြုချက်ရပြီးမှ `getFile` ဖြင့် download, MIME/size validation, malware scan, private object storage နှင့် OCR ကိုလုပ်မည်။ အကြံပြု entity များမှာ `Book`, `BookPage`, `Asset`, `RightsRecord`, `IngestionJob` ဖြစ်သည်။ စာအုပ်များသည် admin rights review မပြီးမချင်း `draft` အဖြစ်သာရှိပြီး အတည်ပြုပြီးမှ catalog ထဲ publish လုပ်မည်; reader သည် Telegram raw URL သို့မဟုတ် permanent download link မပေးရ။
-
-## API source
-
-Telegram Bot API reference (getChat, getUpdates, setWebhook, update payloads): https://core.telegram.org/bots/api
+Telegram Bot API reference: https://core.telegram.org/bots/api
