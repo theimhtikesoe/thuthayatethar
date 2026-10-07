@@ -140,19 +140,48 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
     const fileResponse = await fetch(`${base}/file/bot${env.TELEGRAM_BOT_TOKEN}/${result.file_path}`);
     if (!fileResponse.ok) throw new Error("telegram_file_download_failed");
     const contentLength = Number(fileResponse.headers.get("content-length") ?? "0");
-    if (contentLength > maxBytes) throw new Error("file_too_large");
-    const bytes = await fileResponse.arrayBuffer();
-    if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) throw new Error("file_too_large");
+    const expectedBytes = contentLength > 0 ? contentLength : (typeof item.byte_size === "number" ? item.byte_size : 0);
+    if (expectedBytes > maxBytes) {
+      await fileResponse.body?.cancel();
+      throw new Error("file_too_large");
+    }
     const key = `originals/${intakeId}/${safeFileName(typeof item.original_filename === "string" ? item.original_filename : null, item.media_type === "photo" ? "photo" : "document")}`;
-    const checksum = await sha256(bytes);
-    await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: typeof item.mime_type === "string" ? item.mime_type : "application/octet-stream" }, customMetadata: { intakeId, sha256: checksum, visibility: "private" } });
+    const httpMetadata = { contentType: typeof item.mime_type === "string" ? item.mime_type : "application/octet-stream" };
+    let byteSize = 0;
+    let checksum: string | null = null;
+    if (contentLength > 0 && contentLength <= DEFAULT_MAX_FILE_BYTES) {
+      const bytes = await fileResponse.arrayBuffer();
+      if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) throw new Error("file_too_large");
+      if (expectedBytes > 0 && bytes.byteLength !== expectedBytes) throw new Error("telegram_file_size_mismatch");
+      checksum = await sha256(bytes);
+      const stored = await env.BUCKET.put(key, bytes, { httpMetadata, customMetadata: { intakeId, sha256: checksum, visibility: "private" } });
+      if (!stored || stored.size !== bytes.byteLength) throw new Error("r2_storage_failed");
+      byteSize = stored.size;
+    } else {
+      if (!fileResponse.body) throw new Error("telegram_file_body_missing");
+      const progress = { bytes: 0 };
+      const countedBody = fileResponse.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          progress.bytes += chunk.byteLength;
+          if (progress.bytes > maxBytes) throw new Error("file_too_large");
+          controller.enqueue(chunk);
+        },
+        flush() {
+          if (progress.bytes === 0) throw new Error("empty_file");
+          if (expectedBytes > 0 && progress.bytes !== expectedBytes) throw new Error("telegram_file_size_mismatch");
+        },
+      }));
+      const stored = await env.BUCKET.put(key, countedBody, { httpMetadata, customMetadata: { intakeId, visibility: "private" } });
+      if (!stored || stored.size === 0 || stored.size > maxBytes) throw new Error("r2_storage_failed");
+      byteSize = stored.size;
+    }
     const now = new Date().toISOString();
     const title = titleFromFile(key.split("/").pop() ?? "book.pdf");
     const slug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "book"}-${intakeId.slice(0, 8)}`;
     await env.DB.batch([
-      env.DB.prepare("UPDATE intake_items SET status = 'draft', storage_key = ?, sha256 = ?, byte_size = ?, updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(key, checksum, bytes.byteLength, now, intakeId),
+      env.DB.prepare("UPDATE intake_items SET status = 'draft', storage_key = ?, sha256 = ?, byte_size = ?, updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(key, checksum, byteSize, now, intakeId),
       env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, summary, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, "မူကြမ်းအဖြစ် စစ်ဆေးရန် စာအုပ်ဖိုင်ကို လက်ခံထားသည်။", JSON.stringify({ source: "telegram", assetKey: key, rightsStatus: "missing" }), now, now),
-      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'stored_in_r2', ?, ?)").bind(intakeId, JSON.stringify({ storageKey: key, byteSize: bytes.byteLength }), now),
+      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'stored_in_r2', ?, ?)").bind(intakeId, JSON.stringify({ storageKey: key, byteSize, checksumComputed: Boolean(checksum) }), now),
     ]);
   } catch (error) {
     const message = error instanceof Error ? error.message : "processing_failed";
