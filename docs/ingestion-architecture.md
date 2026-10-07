@@ -37,7 +37,8 @@ Telegram group
 ## Current blocker / prerequisites
 
 - Cloudflare account `Hlah3894@gmail.com's Account` is connected. D1 database `thuthayatethar-ingestion` has been created in APAC with ID `e6631b37-bcbb-4550-b4c7-3acebb961484`, and the version-controlled schema has been applied and verified.
-- Cloudflare R2 is not enabled in the account; enablement must be completed in the Cloudflare Dashboard before bucket creation.
+- Cloudflare R2 bucket `thuthayatethar-private-ingestion` is enabled in APAC Standard storage. Lifecycle cleanup is configured for incomplete uploads (1 day), `tmp/` (2 days), `ocr-temp/` (7 days), `quarantine-expiring/` (14 days), and `failed/` (30 days). Approved originals, published assets, and rights evidence are intentionally excluded.
+- R2 Standard currently includes 10 GB-month storage, 1 million Class A operations, 10 million Class B operations, and free egress per month. Cleanup controls temporary growth but does not guarantee the account stays below 10 GB if approved originals accumulate.
 - VPS hostname, SSH user, deployment directory, and the user's preferred SSH access method are still needed. Do not send private keys or bot secrets in chat.
 - The Telegram Local Bot API migration requires `api_id` and `api_hash` and causes a short delivery interruption. Do not perform it until the exact cutover and rollback plan is approved.
 
@@ -50,7 +51,7 @@ Telegram group
 
 ## Rollout order
 
-1. Create the private R2 bucket after R2 is enabled and the resource name is confirmed; D1 is already created and schema-applied.
+1. Keep the private R2 bucket prefixes aligned with the lifecycle policy; D1 and R2 are already created and verified.
 2. Deploy the durable receiver/worker contract to a protected staging endpoint.
 3. Provision the VPS Local Bot API and worker with secrets stored only on the VPS.
 4. Run synthetic updates and test deduplication, retries, failure/quarantine, and rollback.
