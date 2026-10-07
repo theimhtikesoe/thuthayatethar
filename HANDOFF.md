@@ -24,6 +24,12 @@
 
 `app/api/telegram/webhook/route.ts` validates the webhook secret and chat allowlist, recognizes group `document`/`photo` updates, writes only a privacy-safe log line, then returns HTTP 200 with `status: "accepted"`. It does **not** persist the Telegram update, enqueue work, download the file, or publish catalog content. Registering this endpoint with Telegram now would acknowledge and discard incoming media updates. **Do not call `setWebhook` until a durable queue/storage path is implemented, tested, and ready.** Preserve any existing Telegram webhook until the new route is fully ready.
 
+## Platform badge and continuation notes
+
+- The application source does not contain a `Made with Manus` label or badge. An anonymous fetch of the live custom domain showed that the Manus gateway injects platform-owned HTML metadata, a `<manus-content-root>` element, and an editor/badge runtime; its current runtime configuration reports `hideBadge: false`.
+- This badge is not controlled by React markup, CSS, an environment variable, or the Webdev config plane. Do not add a client-side DOM/CSS hack to suppress it. Use the owner-only Manus Dashboard badge-visibility setting when the correct project account is available; the current sandbox was not attached to that managed project and the authenticated dashboard account did not list it, so no owner setting was changed during this work.
+- Keep this `HANDOFF.md` file in version control as the project continuation source of truth. Update it when branch, deployment, hosting, secrets scope, rights evidence, or safety blockers change. The Manus `handoff` tool is for transferring one temporary file between execution devices; it is not a replacement for repository project documentation.
+
 ## Large-file / host constraints
 
 - The group contains PDFs reported as 129 MB and 59 MB. Telegram's cloud Bot API `getFile` download limit is 20 MB. The official local Bot API server can remove that download limit in `--local` mode, but requires `api_id` and `api_hash` from `my.telegram.org` and a deliberate bot migration (`logOut` from `api.telegram.org` before switching). Expect a short delivery interruption during cutover.
