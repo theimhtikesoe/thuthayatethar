@@ -1,6 +1,7 @@
 type D1Statement = {
   bind: (...values: unknown[]) => D1Statement;
   run: () => Promise<{ meta: { changes: number } }>;
+  first: <T = Record<string, unknown>>() => Promise<T | null>;
 };
 
 type D1Database = {
@@ -128,18 +129,37 @@ async function receive(request: Request, env: Env): Promise<Response> {
     now,
   ).run();
 
-  if (insert.meta.changes > 0) {
-    await env.DB.batch([
-      env.DB.prepare(`INSERT INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)`)
-        .bind(crypto.randomUUID(), intakeId, now, now),
-      env.DB.prepare(`INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'received', '{}', ?)`)
-        .bind(intakeId, now),
-    ]);
-    return json({ ok: true, status: "accepted", updateId: parsed.update_id, intakeId });
-  }
+  const isNew = insert.meta.changes > 0;
+  const persistedIntake = isNew
+    ? { id: intakeId }
+    : await env.DB.prepare(`
+        SELECT id FROM intake_items
+        WHERE telegram_update_id = ? OR telegram_file_id = ?
+        ORDER BY CASE WHEN telegram_update_id = ? THEN 0 ELSE 1 END
+        LIMIT 1
+      `).bind(parsed.update_id, media.fileId, parsed.update_id).first<{ id: string }>();
 
-  // Duplicate update/file: acknowledge safely without creating a second job.
-  return json({ ok: true, status: "duplicate", updateId: parsed.update_id });
+  // A previous request may have inserted the intake row but failed before its
+  // rights/event writes. Reconcile these idempotently before acknowledging any retry.
+  if (!persistedIntake?.id) throw new Error("persisted_intake_not_found");
+  await env.DB.batch([
+    env.DB.prepare(`INSERT OR IGNORE INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)`)
+      .bind(crypto.randomUUID(), persistedIntake.id, now, now),
+    env.DB.prepare(`
+      INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at)
+      SELECT ?, 'received', '{}', ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM ingestion_events WHERE intake_id = ? AND event_type = 'received'
+      )
+    `).bind(persistedIntake.id, now, persistedIntake.id),
+  ]);
+
+  return json({
+    ok: true,
+    status: isNew ? "accepted" : "duplicate",
+    updateId: parsed.update_id,
+    intakeId: persistedIntake.id,
+  });
 }
 
 export default {
