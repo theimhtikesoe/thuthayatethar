@@ -87,6 +87,15 @@ function makeRequest() {
   });
 }
 
+test("fails closed when the webhook secret is not configured", async () => {
+  const env = makeEnv(makeDb());
+  delete env.TELEGRAM_WEBHOOK_SECRET;
+
+  const response = await worker.fetch(makeRequest(), env);
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { ok: false, error: "webhook_not_configured" });
+});
+
 test("accepts an intake and returns the same record on duplicate delivery", async () => {
   const DB = makeDb();
   const env = makeEnv(DB);
