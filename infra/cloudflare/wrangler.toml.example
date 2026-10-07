@@ -13,8 +13,24 @@ database_id = "e6631b37-bcbb-4550-b4c7-3acebb961484"
 binding = "BUCKET"
 bucket_name = "thuthayatethar-private-ingestion"
 
+[[secrets_store_secrets]]
+binding = "TELEGRAM_WEBHOOK_SECRET_STORE"
+store_id = "67d3d264273044adb2b26f1b81d9cfed"
+secret_name = "TELEGRAM_WEBHOOK_SECRET"
+
+[[secrets_store_secrets]]
+binding = "TELEGRAM_BOT_TOKEN_STORE"
+store_id = "67d3d264273044adb2b26f1b81d9cfed"
+secret_name = "TELEGRAM_BOT_TOKEN"
+
+# Add this binding after ADMIN_TOKEN is created in the same Secrets Store.
+# [[secrets_store_secrets]]
+# binding = "ADMIN_TOKEN_STORE"
+# store_id = "67d3d264273044adb2b26f1b81d9cfed"
+# secret_name = "ADMIN_TOKEN"
+
 [vars]
-TELEGRAM_ALLOWED_CHAT_IDS = "<approved-group-chat-id>"
+TELEGRAM_ALLOWED_CHAT_IDS = "-4314141664"
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
 MAX_FILE_BYTES = "20971520"
 CATALOG_ORIGIN = "https://thuthayatethar.rz99systems.com"
