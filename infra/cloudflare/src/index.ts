@@ -14,24 +14,51 @@ type R2Object = { key: string; size: number; httpEtag: string };
 type R2Bucket = {
   put: (key: string, value: ArrayBuffer | ReadableStream, options?: Record<string, unknown>) => Promise<R2Object | null>;
 };
+type SecretStoreBinding = { get: () => Promise<string> };
 type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
 
 export interface Env {
   DB: D1Database;
   BUCKET?: R2Bucket;
-  TELEGRAM_WEBHOOK_SECRET?: string;
-  TELEGRAM_ALLOWED_CHAT_IDS: string;
-  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_WEBHOOK_SECRET?: string | SecretStoreBinding;
+  TELEGRAM_ALLOWED_CHAT_IDS?: string | SecretStoreBinding;
+  TELEGRAM_BOT_TOKEN?: string | SecretStoreBinding;
   TELEGRAM_API_BASE_URL?: string;
   MAX_FILE_BYTES?: string;
+  CATALOG_ORIGIN?: string | SecretStoreBinding;
+  ADMIN_TOKEN?: string | SecretStoreBinding;
+  TELEGRAM_WEBHOOK_SECRET_STORE?: SecretStoreBinding;
+  TELEGRAM_BOT_TOKEN_STORE?: SecretStoreBinding;
+  ADMIN_TOKEN_STORE?: SecretStoreBinding;
+}
+
+type RuntimeEnv = Omit<Env, "TELEGRAM_WEBHOOK_SECRET" | "TELEGRAM_ALLOWED_CHAT_IDS" | "TELEGRAM_BOT_TOKEN" | "CATALOG_ORIGIN" | "ADMIN_TOKEN"> & {
+  TELEGRAM_WEBHOOK_SECRET?: string;
+  TELEGRAM_ALLOWED_CHAT_IDS?: string;
+  TELEGRAM_BOT_TOKEN?: string;
   CATALOG_ORIGIN?: string;
   ADMIN_TOKEN?: string;
-}
+};
 
 type JsonRecord = Record<string, unknown>;
 type MediaType = "document" | "photo";
 const MAX_UPDATE_BYTES = 256 * 1024;
 const DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024;
+
+async function secretValue(value: string | SecretStoreBinding | undefined): Promise<string | undefined> {
+  return typeof value === "string" ? value : value ? await value.get() : undefined;
+}
+
+async function resolveSecrets(env: Env): Promise<RuntimeEnv> {
+  return {
+    ...env,
+    TELEGRAM_WEBHOOK_SECRET: await secretValue(env.TELEGRAM_WEBHOOK_SECRET_STORE ?? env.TELEGRAM_WEBHOOK_SECRET),
+    TELEGRAM_BOT_TOKEN: await secretValue(env.TELEGRAM_BOT_TOKEN_STORE ?? env.TELEGRAM_BOT_TOKEN),
+    ADMIN_TOKEN: await secretValue(env.ADMIN_TOKEN_STORE ?? env.ADMIN_TOKEN),
+    TELEGRAM_ALLOWED_CHAT_IDS: await secretValue(env.TELEGRAM_ALLOWED_CHAT_IDS),
+    CATALOG_ORIGIN: await secretValue(env.CATALOG_ORIGIN),
+  };
+}
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -98,7 +125,7 @@ function maxFileBytes(env: Env): number {
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_FILE_BYTES;
 }
 
-async function processIntake(intakeId: string, env: Env): Promise<void> {
+async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
   if (!env.BUCKET || !env.TELEGRAM_BOT_TOKEN) return;
   const item = await env.DB.prepare("SELECT * FROM intake_items WHERE id = ? LIMIT 1").bind(intakeId).first<JsonRecord>();
   if (!item || typeof item.telegram_file_id !== "string") return;
@@ -135,7 +162,7 @@ async function processIntake(intakeId: string, env: Env): Promise<void> {
   }
 }
 
-async function receive(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
+async function receive(request: Request, env: RuntimeEnv, ctx?: ExecutionContext): Promise<Response> {
   const expectedSecret = env.TELEGRAM_WEBHOOK_SECRET;
   if (!expectedSecret) return json({ ok: false, error: "webhook_not_configured" }, 503);
   if (!constantTimeEqual(request.headers.get("x-telegram-bot-api-secret-token"), expectedSecret)) return json({ ok: false, error: "unauthorized" }, 401);
@@ -150,7 +177,7 @@ async function receive(request: Request, env: Env, ctx?: ExecutionContext): Prom
   const message = findMessage(parsed);
   const chat = message && isRecord(message.chat) ? message.chat : null;
   const chatId = chat && (typeof chat.id === "number" || typeof chat.id === "string") ? String(chat.id) : null;
-  if (!message || !chat || !chatId || (chat.type !== "group" && chat.type !== "supergroup") || !allowedChatIds(env.TELEGRAM_ALLOWED_CHAT_IDS).has(chatId)) return json({ ok: true, status: "ignored" });
+  if (!message || !chat || !chatId || (chat.type !== "group" && chat.type !== "supergroup") || !allowedChatIds(env.TELEGRAM_ALLOWED_CHAT_IDS ?? "").has(chatId)) return json({ ok: true, status: "ignored" });
   const media = mediaFor(message);
   const messageId = message.message_id;
   if (!media || !Number.isSafeInteger(messageId)) return json({ ok: true, status: "ignored" });
@@ -168,7 +195,7 @@ async function receive(request: Request, env: Env, ctx?: ExecutionContext): Prom
   return json({ ok: true, status: isNew ? "accepted" : "duplicate", updateId: parsed.update_id, intakeId: persistedIntake.id });
 }
 
-async function catalog(request: Request, env: Env): Promise<Response> {
+async function catalog(request: Request, env: RuntimeEnv): Promise<Response> {
   const origin = env.CATALOG_ORIGIN;
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": origin ?? "*", "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" } });
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405, origin);
@@ -178,7 +205,7 @@ async function catalog(request: Request, env: Env): Promise<Response> {
   return json({ ok: true, books }, 200, origin);
 }
 
-async function publish(request: Request, env: Env, slug: string): Promise<Response> {
+async function publish(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
   if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
   const book = await env.DB.prepare("SELECT id, intake_id FROM book_drafts WHERE slug = ? LIMIT 1").bind(slug).first<{ id: string; intake_id: string }>();
   if (!book) return json({ ok: false, error: "book_not_found" }, 404);
@@ -192,11 +219,12 @@ async function publish(request: Request, env: Env, slug: string): Promise<Respon
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const runtimeEnv = await resolveSecrets(env);
     const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "telegram-ingestion", storage: Boolean(env.BUCKET), processor: Boolean(env.TELEGRAM_BOT_TOKEN) });
-    if (url.pathname === "/catalog") return catalog(request, env);
-    if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, env, ctx);
-    if (request.method === "POST" && url.pathname.startsWith("/admin/publish/")) return publish(request, env, decodeURIComponent(url.pathname.slice("/admin/publish/".length)));
+    if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "telegram-ingestion", storage: Boolean(runtimeEnv.BUCKET), processor: Boolean(runtimeEnv.TELEGRAM_BOT_TOKEN) });
+    if (url.pathname === "/catalog") return catalog(request, runtimeEnv);
+    if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv, ctx);
+    if (request.method === "POST" && url.pathname.startsWith("/admin/publish/")) return publish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/publish/".length)));
     return json({ ok: false, error: "not_found" }, 404);
   },
 };
