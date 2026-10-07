@@ -5,7 +5,7 @@
 - **Bot:** [@ThuThaYateTharBot](https://t.me/ThuThaYateTharBot)
 - **Upload group:** [သုတရိပ်သာ group](https://t.me/+MliKH1H_FQNmMGQ9) — လက်ရှိသတ်မှတ်ထားသော တစ်ခုတည်းသော file intake source ဖြစ်သည်။
 - **Website:** `https://thuthayatethar.rz99systems.com/`
-- **Bot token:** WebDev production secret `TELEGRAM_BOT_TOKEN` အဖြစ်သာ သိမ်းထားပြီး source code, log, chat ထဲတွင် မထည့်ရ။
+- **Bot token:** `TELEGRAM_BOT_TOKEN` ကို WebDev production secret အဖြစ်သာထားပါ; source code, log, chat ထဲမထည့်ပါနှင့်။ လက်ရှိ receiver တွင် token ကိုအသုံးမပြုပါ။ Webhook မှတ်ပုံတင်ရန်နှင့် နောက်ဆင့် worker က Telegram `getFile` ဖြင့် file ရယူရန် server-side မှ အသုံးပြုရမည်။
 - [@sarpaymyr](https://t.me/sarpaymyr) နှင့် [@RO_Bookshelf](https://t.me/RO_Bookshelf) တို့သည် ယခု workflow ၏ source မဟုတ်ပါ။ Bot သည် ၎င်းတို့ထံမှ file မယူရ။
 
 ## Group `chat_id` နှင့် Telegram setup
@@ -29,3 +29,7 @@ Bot ကို group ထဲထည့်ပြီး test message သို့မ�
 `Book`: title, slug, author, category, summary, coverAssetId, readingTime, rightsStatus, publicationStatus. `BookPage`: pageNumber, imageAssetId, textContent. `Asset`: storageKey, MIME, byteSize, checksum, Telegram file reference, visibility. `RightsRecord`: source chat/message, rights holder, evidence, reviewer, reviewedAt, allowed uses, expiry. `IngestionJob`: Telegram update ID, status, error, retry count. Bot token နှင့် API secret များကို ဤ record များတွင် မသိမ်းရ။
 
 Telegram Bot API reference: https://core.telegram.org/bots/api
+
+## Hosting note
+
+၂၀၂၆-၁၀-၀၇ ရက်တွင် `https://thuthayatethar.rz99systems.com/` ကို စစ်ဆေးရာ response header များတွင် `x-manus-proxy-mode: transparent/1`, `x-thuthayatethar-proxy: cloudflare-worker`, `server: cloudflare`, `x-powered-by: Next.js` ပါဝင်သည်။ ယင်းအချက်များက လက်ရှိ site ကို Manus gateway နှင့် Cloudflare Worker မှတစ်ဆင့် ပေးနေကြောင်းပြသည်; Vercel deployment ဖြစ်ကြောင်း မပြပါ။ Hosting ကို Vercel သို့ ပြောင်းရန် သီးခြားမဆုံးဖြတ်သေးပါက environment variable များကို existing Manus WebDev production project ထဲတွင်သာ ထည့်ပါ။ Source: https://thuthayatethar.rz99systems.com/
