@@ -24,6 +24,13 @@
 
 `app/api/telegram/webhook/route.ts` validates the webhook secret and chat allowlist, recognizes group `document`/`photo` updates, writes only a privacy-safe log line, then returns HTTP 200 with `status: "accepted"`. It does **not** persist the Telegram update, enqueue work, download the file, or publish catalog content. Registering this endpoint with Telegram now would acknowledge and discard incoming media updates. **Do not call `setWebhook` until a durable queue/storage path is implemented, tested, and ready.** Preserve any existing Telegram webhook until the new route is fully ready.
 
+## Staging implementation started
+
+- The approved architecture is now documented in `docs/ingestion-architecture.md`: existing VPS for Telegram Local Bot API and the worker; Cloudflare D1 for durable intake/rights/publish state; private R2 for originals, quarantine files, OCR output, covers, and rights evidence.
+- `infra/cloudflare/schema.sql` defines idempotent intake, rights records, book drafts, and ingestion events. `infra/cloudflare/src/index.ts` is a staging Cloudflare Worker receiver that validates the secret and allowlist, deduplicates by Telegram update/file ID, persists the candidate and initial rights record before returning HTTP 200, and does not publish anything.
+- Cloudflare account `557f8dd4f971a942beb3057ddc74a248` is connected. It currently has no D1 databases, and R2 is not enabled. No Cloudflare resource was created and no Telegram setting was changed during this staging step.
+- VPS deployment details are still required: hostname/IP, SSH user, deployment directory, Docker status, and preferred secret-storage method. Do not send private keys or bot/API secrets in chat. See `infra/vps/README.md`.
+
 ## Platform badge and continuation notes
 
 - The application source does not contain a `Made with Manus` label or badge. An anonymous fetch of the live custom domain showed that the Manus gateway injects platform-owned HTML metadata, a `<manus-content-root>` element, and an editor/badge runtime; its current runtime configuration reports `hideBadge: false`.

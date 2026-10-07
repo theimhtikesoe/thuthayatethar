@@ -1,0 +1,17 @@
+name = "thuthayatethar-telegram-ingestion"
+main = "src/index.ts"
+compatibility_date = "2026-10-08"
+
+# Fill these after the D1 database is created; never commit production secret values.
+# account_id = "<cloudflare-account-id>"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "thuthayatethar-ingestion"
+database_id = "<d1-database-id>"
+
+[vars]
+TELEGRAM_ALLOWED_CHAT_IDS = "<approved-group-chat-id>"
+
+# Set this with `wrangler secret put TELEGRAM_WEBHOOK_SECRET`.
+# Do not put the value in this file.
