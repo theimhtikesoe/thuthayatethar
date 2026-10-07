@@ -1,5 +1,16 @@
 # Telegram → သုတရိပ်သာ Ingestion Plan
 
+## လက်ရှိ connection details
+
+- **Bot:** [@ThuThaYateTharBot](https://t.me/ThuThaYateTharBot)
+- **Source group:** [သုတရိပ်သာ group](https://t.me/+MliKH1H_FQNmMGQ9)
+- **Production website:** `https://thuthayatethar.rz99systems.com/`
+- **Bot token:** WebDev production project secret `TELEGRAM_BOT_TOKEN` အဖြစ် သိမ်းထားပြီး token တန်ဖိုးကို source code, log သို့မဟုတ် chat ထဲတွင် မထည့်ပါ။
+
+## Telegram-side လိုအပ်ချက်
+
+Bot ကို group ထဲသို့ အရင် add လုပ်ပြီး admin permission ပေးရမည်။ Bot က command မဟုတ်သော document/photo message များကိုပါ ဖတ်နိုင်ရန် BotFather ထဲတွင် `/setprivacy` → `Disable` လုပ်ရမည်။ ထို့နောက် group ထဲတွင် စမ်းသပ်စာအုပ်ဖိုင်တစ်ခု၊ မျက်နှာဖုံးပုံတစ်ပုံနှင့် title/author/category/rights caption တစ်ခု ပို့ရမည်။ Group ထဲတွင် ဖိုင်ရှိခြင်းတစ်ခုတည်းသည် ပြသခွင့်အတည်ပြုချက် မဟုတ်သောကြောင့် rights evidence မရှိသေးသည့်ဖိုင်များကို production catalog တွင် အလိုအလျောက် publish မလုပ်ရ။
+
 ## ရည်ရွယ်ချက်
 
 နောက်အဆင့်တွင် သတ်မှတ်ထားသော Telegram group ထဲသို့ တင်လာသော စာအုပ်ဖိုင်များနှင့် ပုံများကို bot က ဖတ်ယူပြီး စာအုပ်အသစ်အဖြစ် catalog ထဲသို့ ထည့်ပေးမည်။ Website မှာ စာအုပ်မျက်နှာဖုံး၊ metadata၊ ပုံပါစာမျက်နှာများနှင့် တရားဝင်ခွင့်ပြုထားသော full text ကို read-only အဖြစ် ဖတ်ရှုနိုင်မည်။
