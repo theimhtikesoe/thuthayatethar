@@ -36,6 +36,13 @@ Bot ကို group ထဲသို့ အရင် add လုပ်ပြီး
 
 Telegram group ထဲက ဖိုင်ရှိနေခြင်းတစ်ခုတည်းကို တရားဝင်ပြသခွင့်အဖြစ် မယူဆရ။ Rights record မရှိသော စာအုပ်ကို metadata/summary-only အဖြစ်သာ ထားမည်။ Bot ကို public groups အားလုံးတွင် အလိုအလျောက် မဖတ်စေဘဲ allowlist သတ်မှတ်မည်။ Webhook signature/secret path၊ idempotency key၊ file size limit၊ MIME validation၊ malware scanning နှင့် audit log လိုအပ်မည်။
 
-## နောက်တစ်ဆင့် implementation
+## လက်ရှိအဆင့် — webhook receiver
 
-Production domain publish ပြီးနောက် server/API layer ကို သတ်မှတ်ပြီး Telegram Bot API credential ကို secret manager ထဲသို့ ထည့်မည်။ ထို့နောက် Database schema နှင့် storage bucket တည်ဆောက်၊ admin review screen နှင့် first ingestion test group တစ်ခုဖြင့် စမ်းသပ်မည်။
+- Production website တွင် `POST /api/telegram/webhook` ကို server-side receiver အဖြစ် အသုံးပြုမည်။ Route သည် Telegram `X-Telegram-Bot-Api-Secret-Token` header ကို `TELEGRAM_WEBHOOK_SECRET` နှင့် constant-time comparison လုပ်ပြီး၊ `TELEGRAM_ALLOWED_CHAT_ID` ဖြင့် သတ်မှတ်ထားသော `group`/`supergroup` chat එකээс ирсэн `message`/`edited_message` ထဲက PDF document သို့မဟုတ် photo media ကိုသာ `accepted` ဟုတုံ့ပြန်မည်။
+- Request JSON ကို 256 KiB အထိကန့်သတ်သည်။ မမှန်သော secret ကို `401`, မမှန်သော JSON ကို `400`, oversized body ကို `413`, environment configuration မပြည့်စုံလျှင် `503` ဖြင့် တုံ့ပြန်သည်။ Chat, media, update အမျိုးအစား မကိုက်ညီပါက Telegram retry မဖြစ်စေရန် `200 ignored` ပြန်ပေးသည်။
+- Receiver သည် `update_id` နှင့် media type ကိုသာ လျှော့ချမှတ်တမ်းတင်သည်။ Caption, user details, chat ID, file ID နှင့် raw update ကို မ log လုပ်ပါ။ ဤအဆင့်တွင် Telegram ဖိုင်ကို download မလုပ်၊ OCR မလုပ်၊ database/object storage တွင် မသိမ်း၊ catalog မပြင်ဆင်/မထုတ်ဝေပါ။ ထို့ကြောင့် 200 `accepted` သည် media update ရောက်ရှိပြီး filter ကိုကျော်ခဲ့သည်ဟုသာ ဆိုလိုပြီး durable ingestion သို့မဟုတ် processing ပြီးစီးသည်ဟု မဆိုလိုပါ။
+- Production runtime တွင် `TELEGRAM_WEBHOOK_SECRET` နှင့် group ရဲ့ numeric `TELEGRAM_ALLOWED_CHAT_ID` ကို protected environment settings အဖြစ်ထားရမည်။ လက်ရှိသိမ်းထားပြီးသား `TELEGRAM_BOT_TOKEN` ကို source ထဲမထည့်ဘဲ Telegram Bot API ၏ `setWebhook` အတွက်သာ operator ကအသုံးပြုရမည်။ `allowed_updates` ကို `message` နှင့် `edited_message` သာထားရမည်။
+
+## နောက်တစ်ဆင့် — full ingestion pipeline
+
+Webhook လက်ခံမှုတည်ငြိမ်ပြီးနောက် persistent queue/idempotency၊ Telegram `getFile`၊ MIME နှင့် byte-size စစ်ဆေးခြင်း၊ malware scan၊ private object storage၊ database schemas၊ OCR၊ rights review/admin screen болон approval ပြီးမှ catalog publish လုပ်ခြင်းကို သီးခြားတည်ဆောက်မည်။ Group ထဲဖိုင်တင်ထားခြင်းတစ်ခုတည်းကို publication permission အဖြစ် ဘယ်တော့မှ မယူဆရ။

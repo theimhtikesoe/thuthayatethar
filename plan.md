@@ -46,4 +46,11 @@
 - `public/manus-routes.json` — route manifest.
 - `public/logo.svg` — project wordmark/mark.
 - `app.config.ts` — project logo metadata.
+- `app/api/telegram/webhook/route.ts` — Telegram group မှ PDF/photo update လက်ခံသည့် route; webhook secret နှင့် group allowlist ကိုသာ စစ်ဆေးမည်။
+- `.env.example` — secret တန်ဖိုးမပါသော runtime key အမည်များ။
+- `docs/telegram-ingestion.md` — webhook လုပ်ဆောင်ပုံ၊ configuration နှင့် နောက်အဆင့် pipeline မှတ်စုများ။
 - `TODO.md` — approved deliverables and acceptance clauses.
+
+## Telegram webhook phase
+
+ဤအဆင့်တွင် production website ထဲသို့ `POST /api/telegram/webhook` server-side Next.js route ကိုသာ ထည့်မည်။ Telegram secret-token header ကိုစစ်ဆေးပြီး configured group/supergroup မှ PDF/photo update များကိုသာ acknowledge လုပ်မည်၊ media ဖိုင်ကို download သို့မဟုတ် သိမ်းဆည်းမည်မဟုတ်ပါ။ လက်ရှိ catalog ကို မပြောင်းလဲစေရ။ Persistent idempotency၊ OCR၊ private storage၊ rights review နှင့် catalog publication များကို နောက်အဆင့်သို့ ချန်ထားပြီး လက်ခံရရှိသောဖိုင်ကို အလိုအလျောက် publish မလုပ်ရ။
