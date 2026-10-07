@@ -36,7 +36,7 @@ Telegram group
 
 ## Current blocker / prerequisites
 
-- Cloudflare account `Hlah3894@gmail.com's Account` is connected. No D1 database exists yet.
+- Cloudflare account `Hlah3894@gmail.com's Account` is connected. D1 database `thuthayatethar-ingestion` has been created in APAC with ID `e6631b37-bcbb-4550-b4c7-3acebb961484`, and the version-controlled schema has been applied and verified.
 - Cloudflare R2 is not enabled in the account; enablement must be completed in the Cloudflare Dashboard before bucket creation.
 - VPS hostname, SSH user, deployment directory, and the user's preferred SSH access method are still needed. Do not send private keys or bot secrets in chat.
 - The Telegram Local Bot API migration requires `api_id` and `api_hash` and causes a short delivery interruption. Do not perform it until the exact cutover and rollback plan is approved.
@@ -50,7 +50,7 @@ Telegram group
 
 ## Rollout order
 
-1. Create D1 database and private R2 bucket after confirming resource names and account.
+1. Create the private R2 bucket after R2 is enabled and the resource name is confirmed; D1 is already created and schema-applied.
 2. Deploy the durable receiver/worker contract to a protected staging endpoint.
 3. Provision the VPS Local Bot API and worker with secrets stored only on the VPS.
 4. Run synthetic updates and test deduplication, retries, failure/quarantine, and rollback.

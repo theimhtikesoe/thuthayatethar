@@ -28,7 +28,7 @@
 
 - The approved architecture is now documented in `docs/ingestion-architecture.md`: existing VPS for Telegram Local Bot API and the worker; Cloudflare D1 for durable intake/rights/publish state; private R2 for originals, quarantine files, OCR output, covers, and rights evidence.
 - `infra/cloudflare/schema.sql` defines idempotent intake, rights records, book drafts, and ingestion events. `infra/cloudflare/src/index.ts` is a staging Cloudflare Worker receiver that validates the secret and allowlist, deduplicates by Telegram update/file ID, persists the candidate and initial rights record before returning HTTP 200, and does not publish anything.
-- Cloudflare account `557f8dd4f971a942beb3057ddc74a248` is connected. It currently has no D1 databases, and R2 is not enabled. No Cloudflare resource was created and no Telegram setting was changed during this staging step.
+- Cloudflare account `557f8dd4f971a942beb3057ddc74a248` is connected. D1 database `thuthayatethar-ingestion` (`e6631b37-bcbb-4550-b4c7-3acebb961484`) was created in APAC and the schema was applied and verified. R2 is not enabled yet, so no bucket exists; no Telegram setting was changed.
 - VPS deployment details are still required: hostname/IP, SSH user, deployment directory, Docker status, and preferred secret-storage method. Do not send private keys or bot/API secrets in chat. See `infra/vps/README.md`.
 
 ## Platform badge and continuation notes
@@ -40,7 +40,7 @@
 ## Large-file / host constraints
 
 - The group contains PDFs reported as 129 MB and 59 MB. Telegram's cloud Bot API `getFile` download limit is 20 MB. The official local Bot API server can remove that download limit in `--local` mode, but requires `api_id` and `api_hash` from `my.telegram.org` and a deliberate bot migration (`logOut` from `api.telegram.org` before switching). Expect a short delivery interruption during cutover.
-- No persistent Cloud Computer is available in the authorized device inventory. The only available host is the user's Mac. Docker CLI is present but the Docker daemon was not running; `cloudflared` is absent. The connected Cloudflare account has no existing tunnel or D1 database; R2 is not enabled. Do not create paid resources, new tunnels, expose a local API, or switch the bot without the user's explicit approval of the exact plan.
+- No persistent Cloud Computer is available in the authorized device inventory. The user's VPS is now the intended host for the Local Bot API and worker. Docker/SSH readiness and deployment details still need to be checked. The connected Cloudflare account has no existing tunnel; R2 is not enabled. Do not create paid resources, new tunnels, expose a local API, or switch the bot without the user's explicit approval of the exact plan.
 - If the Mac is used as the host, it must remain awake, online, and running Docker; a sleeping/offline Mac stops ingestion and file delivery. Prefer a dedicated always-on host for production reliability.
 
 ## Recommended continuation
