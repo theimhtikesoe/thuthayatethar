@@ -23,7 +23,7 @@
 - Private R2 bucket: `thuthayatethar-private-ingestion` in APAC Standard. Lifecycle cleanup is configured for incomplete multipart uploads (1 day), `tmp/` (2 days), `ocr-temp/` (7 days), and `failed/` (30 days); approved originals and rights evidence are not covered by those deletions.
 - Staging Worker `thuthayatethar-telegram-ingestion` is deployed, D1-bound, and available at `https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev`. Its `workers.dev` endpoint is enabled and preview URLs are disabled.
 - Verified live: `GET /health` returns HTTP 200. `POST /telegram/webhook` without a webhook secret returns HTTP 503 (`webhook_not_configured`). The secret is intentionally unset, so no real Telegram updates are accepted yet.
-- Current Worker persists Telegram update/file metadata, a `rights_status='missing'` record, and a `received` event to D1. It does **not** download file contents, write PDFs to R2, run OCR, or publish a book. R2 is not currently bound to this receiver.
+- Current source Worker binds the private R2 bucket, downloads files through the configured Telegram API, writes `originals/<intake-id>/...`, creates a draft, and records `stored_in_r2`/failure events. It still does not run OCR or auto-publish; rights approval is required before `POST /admin/publish/:slug` can publish.
 - PR #2 (`fix: fail closed when webhook secret is missing`) was merged; its regression test confirms the unconfigured-secret path returns 503. The worker source has 3 passing ingestion tests.
 
 ## Critical safety blockers
@@ -39,12 +39,12 @@
 
 ## Recommended continuation
 
-1. Implement the download/processing worker: claim persisted D1 items idempotently, retrieve the Telegram file, validate PDF signature/type/size/hash, and write originals privately to R2 with bounded retries and visible failure states.
+1. Deploy the updated Worker with the R2 binding and secrets; then run synthetic updates and verify the private R2 object plus D1 draft.
 2. For files over 20 MB, test the official Local Bot API on the approved always-on VPS. Confirm host access and secret storage first; do not migrate the bot until the test and rollback steps are explicit.
 3. Configure webhook and bot credentials only through a secure secret-entry mechanism, never in chat. Before changing Telegram, check `getWebhookInfo` and show the user the exact current and target URLs, allowed updates, pending-update behavior, and rollback. Do not use `drop_pending_updates=true`.
 4. Test the staging Worker end to end with synthetic updates and test files; verify D1 retry/deduplication and private R2 writes. Only then register Telegram to `https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev/telegram/webhook`.
 5. Review rights/licensing evidence per PDF and retain the evidence metadata. Add an approval/review step before any book becomes public.
-6. Implement the approved draft-to-catalog publish flow. The current site remains a static/sample catalog.
+6. Set Vercel `CATALOG_API_URL` to the Worker `/catalog` endpoint; the site will show published records and retain sample fallback when the endpoint is not configured.
 
 ## Official references checked
 

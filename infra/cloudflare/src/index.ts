@@ -2,6 +2,7 @@ type D1Statement = {
   bind: (...values: unknown[]) => D1Statement;
   run: () => Promise<{ meta: { changes: number } }>;
   first: <T = Record<string, unknown>>() => Promise<T | null>;
+  all?: <T = Record<string, unknown>>() => Promise<{ results: T[] }>;
 };
 
 type D1Database = {
@@ -9,33 +10,47 @@ type D1Database = {
   batch: (statements: D1Statement[]) => Promise<unknown>;
 };
 
+type R2Object = { key: string; size: number; httpEtag: string };
+type R2Bucket = {
+  put: (key: string, value: ArrayBuffer | ReadableStream, options?: Record<string, unknown>) => Promise<R2Object | null>;
+};
+type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
+
 export interface Env {
   DB: D1Database;
+  BUCKET?: R2Bucket;
   TELEGRAM_WEBHOOK_SECRET?: string;
   TELEGRAM_ALLOWED_CHAT_IDS: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  TELEGRAM_API_BASE_URL?: string;
+  MAX_FILE_BYTES?: string;
+  CATALOG_ORIGIN?: string;
+  ADMIN_TOKEN?: string;
 }
 
 type JsonRecord = Record<string, unknown>;
 type MediaType = "document" | "photo";
 const MAX_UPDATE_BYTES = 256 * 1024;
+const DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function json(body: JsonRecord, status = 200): Response {
+function json(body: JsonRecord, status = 200, origin?: string): Response {
   return Response.json(body, {
     status,
-    headers: { "Cache-Control": "no-store, max-age=0" },
+    headers: {
+      "Cache-Control": "no-store, max-age=0",
+      ...(origin ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {}),
+    },
   });
 }
 
 function constantTimeEqual(supplied: string | null, expected: string): boolean {
   if (!supplied || supplied.length !== expected.length || supplied.length > 256) return false;
   let difference = 0;
-  for (let index = 0; index < expected.length; index += 1) {
-    difference |= supplied.charCodeAt(index) ^ expected.charCodeAt(index);
-  }
+  for (let index = 0; index < expected.length; index += 1) difference |= supplied.charCodeAt(index) ^ expected.charCodeAt(index);
   return difference === 0;
 }
 
@@ -44,131 +59,144 @@ function allowedChatIds(value: string): Set<string> {
 }
 
 function findMessage(update: JsonRecord): JsonRecord | null {
-  const candidate = [update.message, update.edited_message].find(isRecord);
-  return candidate ?? null;
+  return [update.message, update.edited_message].find(isRecord) ?? null;
 }
 
 function mediaFor(message: JsonRecord): { type: MediaType; fileId: string; fileName: string | null; mimeType: string | null; byteSize: number | null } | null {
   const document = message.document;
   if (isRecord(document) && typeof document.file_id === "string") {
-    return {
-      type: "document",
-      fileId: document.file_id,
-      fileName: typeof document.file_name === "string" ? document.file_name : null,
-      mimeType: typeof document.mime_type === "string" ? document.mime_type : null,
-      byteSize: typeof document.file_size === "number" ? document.file_size : null,
-    };
+    return { type: "document", fileId: document.file_id, fileName: typeof document.file_name === "string" ? document.file_name : null, mimeType: typeof document.mime_type === "string" ? document.mime_type : null, byteSize: typeof document.file_size === "number" ? document.file_size : null };
   }
   const photos = message.photo;
   if (Array.isArray(photos)) {
     const photo = photos.filter(isRecord).find((item) => typeof item.file_id === "string");
-    if (photo && typeof photo.file_id === "string") {
-      return {
-        type: "photo",
-        fileId: photo.file_id,
-        fileName: null,
-        mimeType: "image/jpeg",
-        byteSize: typeof photo.file_size === "number" ? photo.file_size : null,
-      };
-    }
+    if (photo && typeof photo.file_id === "string") return { type: "photo", fileId: photo.file_id, fileName: null, mimeType: "image/jpeg", byteSize: typeof photo.file_size === "number" ? photo.file_size : null };
   }
   return null;
 }
 
-async function receive(request: Request, env: Env): Promise<Response> {
+function safeFileName(name: string | null, type: MediaType): string {
+  const fallback = type === "document" ? "book.pdf" : "cover.jpg";
+  const clean = (name ?? fallback).normalize("NFKC").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-").slice(0, 120);
+  return clean || fallback;
+}
+
+function titleFromFile(name: string): string {
+  return name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim().slice(0, 180) || "စာအုပ်အသစ်";
+}
+
+async function sha256(value: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", value);
+  const bytes = new Uint8Array(digest);
+  let result = "";
+  for (let index = 0; index < bytes.length; index += 1) result += bytes[index].toString(16).padStart(2, "0");
+  return result;
+}
+
+function maxFileBytes(env: Env): number {
+  const configured = Number(env.MAX_FILE_BYTES ?? DEFAULT_MAX_FILE_BYTES);
+  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_FILE_BYTES;
+}
+
+async function processIntake(intakeId: string, env: Env): Promise<void> {
+  if (!env.BUCKET || !env.TELEGRAM_BOT_TOKEN) return;
+  const item = await env.DB.prepare("SELECT * FROM intake_items WHERE id = ? LIMIT 1").bind(intakeId).first<JsonRecord>();
+  if (!item || typeof item.telegram_file_id !== "string") return;
+  const maxBytes = maxFileBytes(env);
+  try {
+    if (typeof item.byte_size === "number" && item.byte_size > maxBytes) throw new Error("file_too_large");
+    const base = (env.TELEGRAM_API_BASE_URL ?? "https://api.telegram.org").replace(/\/$/, "");
+    const infoResponse = await fetch(`${base}/bot${env.TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(item.telegram_file_id)}`);
+    const info = await infoResponse.json() as JsonRecord;
+    const result = isRecord(info.result) ? info.result : null;
+    if (!infoResponse.ok || info.ok !== true || !result || typeof result.file_path !== "string") throw new Error("telegram_file_lookup_failed");
+    const fileResponse = await fetch(`${base}/file/bot${env.TELEGRAM_BOT_TOKEN}/${result.file_path}`);
+    if (!fileResponse.ok) throw new Error("telegram_file_download_failed");
+    const contentLength = Number(fileResponse.headers.get("content-length") ?? "0");
+    if (contentLength > maxBytes) throw new Error("file_too_large");
+    const bytes = await fileResponse.arrayBuffer();
+    if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) throw new Error("file_too_large");
+    const key = `originals/${intakeId}/${safeFileName(typeof item.original_filename === "string" ? item.original_filename : null, item.media_type === "photo" ? "photo" : "document")}`;
+    const checksum = await sha256(bytes);
+    await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: typeof item.mime_type === "string" ? item.mime_type : "application/octet-stream" }, customMetadata: { intakeId, sha256: checksum, visibility: "private" } });
+    const now = new Date().toISOString();
+    const title = titleFromFile(key.split("/").pop() ?? "book.pdf");
+    const slug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "book"}-${intakeId.slice(0, 8)}`;
+    await env.DB.batch([
+      env.DB.prepare("UPDATE intake_items SET status = 'draft', storage_key = ?, sha256 = ?, byte_size = ?, updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(key, checksum, bytes.byteLength, now, intakeId),
+      env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, summary, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, "မူကြမ်းအဖြစ် စစ်ဆေးရန် စာအုပ်ဖိုင်ကို လက်ခံထားသည်။", JSON.stringify({ source: "telegram", assetKey: key, rightsStatus: "missing" }), now, now),
+      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'stored_in_r2', ?, ?)").bind(intakeId, JSON.stringify({ storageKey: key, byteSize: bytes.byteLength }), now),
+    ]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "processing_failed";
+    const now = new Date().toISOString();
+    await env.DB.prepare("UPDATE intake_items SET status = 'failed', failure_code = ?, failure_message = ?, retry_count = retry_count + 1, updated_at = ? WHERE id = ?").bind(message, message, now, intakeId).run();
+    await env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'processing_failed', ?, ?)").bind(intakeId, JSON.stringify({ code: message }), now).run();
+  }
+}
+
+async function receive(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const expectedSecret = env.TELEGRAM_WEBHOOK_SECRET;
   if (!expectedSecret) return json({ ok: false, error: "webhook_not_configured" }, 503);
-  if (!constantTimeEqual(request.headers.get("x-telegram-bot-api-secret-token"), expectedSecret)) {
-    return json({ ok: false, error: "unauthorized" }, 401);
-  }
-  if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) {
-    return json({ ok: false, error: "unsupported_content_type" }, 415);
-  }
+  if (!constantTimeEqual(request.headers.get("x-telegram-bot-api-secret-token"), expectedSecret)) return json({ ok: false, error: "unauthorized" }, 401);
+  if (!request.headers.get("content-type")?.toLowerCase().includes("application/json")) return json({ ok: false, error: "unsupported_content_type" }, 415);
   const contentLength = Number(request.headers.get("content-length") ?? "0");
   if (contentLength > MAX_UPDATE_BYTES) return json({ ok: false, error: "update_too_large" }, 413);
   const raw = await request.text();
   if (new TextEncoder().encode(raw).byteLength > MAX_UPDATE_BYTES) return json({ ok: false, error: "update_too_large" }, 413);
-
   let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return json({ ok: false, error: "invalid_json" }, 400);
-  }
-  if (!isRecord(parsed) || !Number.isSafeInteger(parsed.update_id) || (parsed.update_id as number) < 0) {
-    return json({ ok: false, error: "invalid_update" }, 400);
-  }
-
+  try { parsed = JSON.parse(raw); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
+  if (!isRecord(parsed) || !Number.isSafeInteger(parsed.update_id) || (parsed.update_id as number) < 0) return json({ ok: false, error: "invalid_update" }, 400);
   const message = findMessage(parsed);
   const chat = message && isRecord(message.chat) ? message.chat : null;
   const chatId = chat && (typeof chat.id === "number" || typeof chat.id === "string") ? String(chat.id) : null;
-  if (!message || !chat || !chatId || (chat.type !== "group" && chat.type !== "supergroup") || !allowedChatIds(env.TELEGRAM_ALLOWED_CHAT_IDS).has(chatId)) {
-    return json({ ok: true, status: "ignored" });
-  }
-
+  if (!message || !chat || !chatId || (chat.type !== "group" && chat.type !== "supergroup") || !allowedChatIds(env.TELEGRAM_ALLOWED_CHAT_IDS).has(chatId)) return json({ ok: true, status: "ignored" });
   const media = mediaFor(message);
   const messageId = message.message_id;
   if (!media || !Number.isSafeInteger(messageId)) return json({ ok: true, status: "ignored" });
-
   const now = new Date().toISOString();
   const intakeId = crypto.randomUUID();
-  const insert = await env.DB.prepare(`
-    INSERT OR IGNORE INTO intake_items
-      (id, telegram_update_id, telegram_file_id, media_type, source_chat_id, source_message_id,
-       status, original_filename, mime_type, byte_size, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?)
-  `).bind(
-    intakeId,
-    parsed.update_id,
-    media.fileId,
-    media.type,
-    chatId,
-    messageId,
-    media.fileName,
-    media.mimeType,
-    media.byteSize,
-    now,
-    now,
-  ).run();
-
+  const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_chat_id, source_message_id, status, original_filename, mime_type, byte_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?)`).bind(intakeId, parsed.update_id, media.fileId, media.type, chatId, messageId, media.fileName, media.mimeType, media.byteSize, now, now).run();
   const isNew = insert.meta.changes > 0;
-  const persistedIntake = isNew
-    ? { id: intakeId }
-    : await env.DB.prepare(`
-        SELECT id FROM intake_items
-        WHERE telegram_update_id = ? OR telegram_file_id = ?
-        ORDER BY CASE WHEN telegram_update_id = ? THEN 0 ELSE 1 END
-        LIMIT 1
-      `).bind(parsed.update_id, media.fileId, parsed.update_id).first<{ id: string }>();
-
-  // A previous request may have inserted the intake row but failed before its
-  // rights/event writes. Reconcile these idempotently before acknowledging any retry.
+  const persistedIntake = isNew ? { id: intakeId } : await env.DB.prepare("SELECT id FROM intake_items WHERE telegram_update_id = ? OR telegram_file_id = ? ORDER BY CASE WHEN telegram_update_id = ? THEN 0 ELSE 1 END LIMIT 1").bind(parsed.update_id, media.fileId, parsed.update_id).first<{ id: string }>();
   if (!persistedIntake?.id) throw new Error("persisted_intake_not_found");
   await env.DB.batch([
-    env.DB.prepare(`INSERT OR IGNORE INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)`)
-      .bind(crypto.randomUUID(), persistedIntake.id, now, now),
-    env.DB.prepare(`
-      INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at)
-      SELECT ?, 'received', '{}', ?
-      WHERE NOT EXISTS (
-        SELECT 1 FROM ingestion_events WHERE intake_id = ? AND event_type = 'received'
-      )
-    `).bind(persistedIntake.id, now, persistedIntake.id),
+    env.DB.prepare("INSERT OR IGNORE INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), persistedIntake.id, now, now),
+    env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) SELECT ?, 'received', '{}', ? WHERE NOT EXISTS (SELECT 1 FROM ingestion_events WHERE intake_id = ? AND event_type = 'received')").bind(persistedIntake.id, now, persistedIntake.id),
   ]);
+  if (isNew && ctx && env.BUCKET && env.TELEGRAM_BOT_TOKEN) ctx.waitUntil(processIntake(persistedIntake.id, env));
+  return json({ ok: true, status: isNew ? "accepted" : "duplicate", updateId: parsed.update_id, intakeId: persistedIntake.id });
+}
 
-  return json({
-    ok: true,
-    status: isNew ? "accepted" : "duplicate",
-    updateId: parsed.update_id,
-    intakeId: persistedIntake.id,
-  });
+async function catalog(request: Request, env: Env): Promise<Response> {
+  const origin = env.CATALOG_ORIGIN;
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": origin ?? "*", "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" } });
+  if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405, origin);
+  const statement = env.DB.prepare("SELECT id, title, slug, author, category, year, summary, reading_time, metadata_json, updated_at FROM book_drafts WHERE publication_status = 'published' ORDER BY updated_at DESC");
+  const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
+  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(isRecord(metadata.public) ? metadata.public : {}) }; });
+  return json({ ok: true, books }, 200, origin);
+}
+
+async function publish(request: Request, env: Env, slug: string): Promise<Response> {
+  if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+  const book = await env.DB.prepare("SELECT id, intake_id FROM book_drafts WHERE slug = ? LIMIT 1").bind(slug).first<{ id: string; intake_id: string }>();
+  if (!book) return json({ ok: false, error: "book_not_found" }, 404);
+  const rights = await env.DB.prepare("SELECT rights_status FROM rights_records WHERE intake_id = ? LIMIT 1").bind(book.intake_id).first<{ rights_status: string }>();
+  if (rights?.rights_status !== "approved") return json({ ok: false, error: "rights_not_approved" }, 409);
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE book_drafts SET publication_status = 'published', updated_at = ? WHERE id = ?").bind(now, book.id).run();
+  await env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'published', '{}', ?)").bind(book.intake_id, now).run();
+  return json({ ok: true, status: "published", slug });
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "telegram-ingestion" });
-    if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, env);
+    if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "telegram-ingestion", storage: Boolean(env.BUCKET), processor: Boolean(env.TELEGRAM_BOT_TOKEN) });
+    if (url.pathname === "/catalog") return catalog(request, env);
+    if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, env, ctx);
+    if (request.method === "POST" && url.pathname.startsWith("/admin/publish/")) return publish(request, env, decodeURIComponent(url.pathname.slice("/admin/publish/".length)));
     return json({ ok: false, error: "not_found" }, 404);
   },
 };

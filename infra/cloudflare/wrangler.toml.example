@@ -2,7 +2,6 @@ name = "thuthayatethar-telegram-ingestion"
 main = "src/index.ts"
 compatibility_date = "2026-10-07"
 
-# Identifiers are not secrets; webhook and storage credentials stay out of Git.
 account_id = "557f8dd4f971a942beb3057ddc74a248"
 
 [[d1_databases]]
@@ -10,8 +9,17 @@ binding = "DB"
 database_name = "thuthayatethar-ingestion"
 database_id = "e6631b37-bcbb-4550-b4c7-3acebb961484"
 
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "thuthayatethar-private-ingestion"
+
 [vars]
 TELEGRAM_ALLOWED_CHAT_IDS = "<approved-group-chat-id>"
+TELEGRAM_API_BASE_URL = "https://api.telegram.org"
+MAX_FILE_BYTES = "20971520"
+CATALOG_ORIGIN = "https://thuthayatethar.rz99systems.com"
 
-# Set this with `wrangler secret put TELEGRAM_WEBHOOK_SECRET`.
-# Do not put the value in this file.
+# Set secrets out-of-band:
+# wrangler secret put TELEGRAM_WEBHOOK_SECRET
+# wrangler secret put TELEGRAM_BOT_TOKEN
+# wrangler secret put ADMIN_TOKEN
