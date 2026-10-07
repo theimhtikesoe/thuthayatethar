@@ -1,3 +1,3 @@
 export default {
-  logoUrl: "https://raw.githubusercontent.com/theimhtikesoe/thutayote/main/public/logo.svg"
+  logoUrl: "https://files.manuscdn.com/user_upload_by_module/session_file/310519663936528954/KGPjEXeWUYqrtlit.svg"
 };
