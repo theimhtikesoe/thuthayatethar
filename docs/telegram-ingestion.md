@@ -4,7 +4,7 @@
 
 - **Bot:** [@ThuThaYateTharBot](https://t.me/ThuThaYateTharBot)
 - **Review/test group:** [သုတရိပ်သာ group](https://t.me/+MliKH1H_FQNmMGQ9)
-- **Potential book source channel:** [@sarpaymyr](https://t.me/sarpaymyr)
+- **Potential source channels:** [@sarpaymyr](https://t.me/sarpaymyr), [@RO_Bookshelf](https://t.me/RO_Bookshelf)
 - **Production website:** `https://thuthayatethar.rz99systems.com/`
 - **Bot token:** WebDev production project secret `TELEGRAM_BOT_TOKEN` အဖြစ်သာသိမ်းပြီး source code, log သို့မဟုတ် chat ထဲသို့ မထည့်ရ။
 
@@ -21,6 +21,8 @@ Bot ကို group ထဲထည့်ရမည်။ Public channel `@sarpaymyr
 ## Source channel နှင့် မူပိုင်ခွင့်
 
 `@sarpaymyr` public preview တွင် copyright concern ရှိပါက ဆက်သွယ်ရန်နှင့် original owner များကို credit ပေးကြောင်းသာဖော်ပြထားပြီး ပြန်လည်ကူးယူ/ထုတ်ဝေခွင့်လိုင်စင် မဖော်ပြထားပါ။ Public channel ဖြစ်ခြင်း၊ credit ပေးထားခြင်း သို့မဟုတ် bot ကို admin လုပ်ထားခြင်းသည် စာအုပ်အပြည့်အစုံကို ပြန်လည်ထုတ်ဝေခွင့်မဟုတ်ပါ။ Rights holder ၏ ခွင့်ပြုချက်/evidence မရမချင်း channel မှဖိုင်များကို download, OCR, store သို့မဟုတ် catalog publish မလုပ်ရ။
+
+`@RO_Bookshelf` public bio တွင် “Free books” ဟုဖော်ပြပြီး မူရင်းစာရေးဆရာများနှင့် ထုတ်ဝေသူများကို credit ပေးကြောင်း ရေးထားသည်။ Post များတွင် `@readerodyssey_filesbot` မှတစ်ဆင့် စာဖတ်ရန် link များပါရှိသည်။ သို့သော် public preview တွင် redistribution license သို့မဟုတ် စာအုပ်အပြည့်အစုံကို အခြား website ပေါ် ပြန်တင်ခွင့်ကို မဖော်ပြထားပါ။ Rights-holder ခွင့်ပြုချက်/evidence မရမချင်း ထို channel မှစာအုပ်များကို download, OCR, store သို့မဟုတ် သုတရိပ်သာပေါ် publish မလုပ်ရ။ Source: https://t.me/RO_Bookshelf
 
 ## လက်ရှိအဆင့် — webhook receiver
 
