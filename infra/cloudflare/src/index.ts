@@ -11,9 +11,10 @@ type D1Database = {
 };
 
 type R2Object = { key: string; size: number; httpEtag: string; body: ReadableStream; httpMetadata?: { contentType?: string } };
+type R2Range = { offset: number; length: number };
 type R2Bucket = {
   put: (key: string, value: ArrayBuffer | ReadableStream, options?: Record<string, unknown>) => Promise<R2Object | null>;
-  get: (key: string) => Promise<R2Object | null>;
+  get: (key: string, options?: { range?: R2Range }) => Promise<R2Object | null>;
   delete: (key: string) => Promise<void>;
 };
 type SecretStoreBinding = { get: () => Promise<string> };
@@ -350,11 +351,29 @@ async function deleteBook(request: Request, env: RuntimeEnv, slug: string): Prom
 
 async function bookPdf(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
   if (!env.BUCKET) return json({ ok: false, error: "storage_unavailable" }, 503);
-  const book = await env.DB.prepare("SELECT storage_key FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? AND b.publication_status = 'published' AND i.status = 'published' LIMIT 1").bind(slug).first<{ storage_key: string | null }>();
+  const book = await env.DB.prepare("SELECT i.storage_key, i.byte_size FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? AND b.publication_status = 'published' AND i.status = 'published' LIMIT 1").bind(slug).first<{ storage_key: string | null; byte_size: number | null }>();
   if (!book?.storage_key) return json({ ok: false, error: "book_not_published" }, 404);
-  const object = await env.BUCKET.get(book.storage_key);
+  const totalSize = typeof book.byte_size === "number" && book.byte_size > 0 ? book.byte_size : null;
+  const requested = request.headers.get("range");
+  let range: R2Range | undefined;
+  let contentRange: string | undefined;
+  if (requested && totalSize) {
+    const match = requested.match(/^bytes=(\d*)-(\d*)$/);
+    if (match) {
+      const start = match[1] ? Number(match[1]) : Math.max(0, totalSize - Number(match[2] || 0));
+      const end = match[2] ? Number(match[2]) : totalSize - 1;
+      if (Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end >= start && start < totalSize) {
+        const boundedEnd = Math.min(end, totalSize - 1);
+        range = { offset: start, length: boundedEnd - start + 1 };
+        contentRange = `bytes ${start}-${boundedEnd}/${totalSize}`;
+      }
+    }
+  }
+  const object = await env.BUCKET.get(book.storage_key, range ? { range } : undefined);
   if (!object) return json({ ok: false, error: "file_not_found" }, 404);
-  return new Response(object.body, { headers: { "Content-Type": object.httpMetadata?.contentType ?? "application/pdf", "Content-Disposition": "inline", "Cache-Control": "public, max-age=300", "Accept-Ranges": "bytes", ...(env.CATALOG_ORIGIN ? { "Access-Control-Allow-Origin": env.CATALOG_ORIGIN } : {}) } });
+  const headers: Record<string, string> = { "Content-Type": object.httpMetadata?.contentType ?? "application/pdf", "Content-Disposition": "inline", "Cache-Control": "public, max-age=300", "Accept-Ranges": "bytes", "Content-Length": String(object.size), ...(env.CATALOG_ORIGIN ? { "Access-Control-Allow-Origin": env.CATALOG_ORIGIN } : {}) };
+  if (contentRange) headers["Content-Range"] = contentRange;
+  return new Response(request.method === "HEAD" ? null : object.body, { status: contentRange ? 206 : 200, headers });
 }
 
 async function publish(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {

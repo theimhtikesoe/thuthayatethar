@@ -77,7 +77,7 @@ export default function FlipBook({ url, title }: { url: string; title: string })
 
   useEffect(() => {
     if (!doc) return;
-    for (let n = current - 1; n <= current + 6; n++) renderPage(n);
+    for (let n = current - 1; n <= current + 2; n++) renderPage(n);
   }, [doc, current, renderPage]);
 
   useEffect(() => {
