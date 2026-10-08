@@ -51,6 +51,11 @@
 - `docs/telegram-ingestion.md` — webhook လုပ်ဆောင်ပုံ၊ configuration နှင့် နောက်အဆင့် pipeline မှတ်စုများ။
 - `TODO.md` — approved deliverables and acceptance clauses.
 
+## PDF Myanmar text correction
+
+- PDF.js text fragments များကို တစ်ကြောင်းချင်း မဆုံးဖြတ်ဘဲ စာမျက်နှာတစ်မျက်နှာလုံး၏ Myanmar text ကို Zawgyi detector ဖြင့် စစ်မည်။ Strong Zawgyi confidence ရသော page များတွင်သာ converted text overlay ပြမည်၊ ထို့ကြောင့် မှန်ကန်သော Unicode စာသားများကို မဖုံးအုပ်စေရ။
+- PDF reader header တွင် Unicode overlay ကို ဖွင့်/ပိတ်နိုင်သည့် button ထည့်မည်။ ပိတ်ထားချိန်တွင် မူရင်း PDF image ကိုသာ ပြပြီး၊ ဖွင့်ထားချိန်တွင် Zawgyi page များအတွက် Unicode overlay ကို ပြမည်။
+
 ## Telegram webhook phase
 
 Webhook အဆင့်တွင် `POST /api/telegram/webhook` သည် အသုံးပြုသူ၏ allowlist ထဲရှိ upload group မှ `message`/`edited_message` update များအတွင်းက document/photo candidate ကိုသာ acknowledge လုပ်မည်။ Endpoint သည် file ကိုမဒေါင်းလုပ်ရယူသဖြင့် `accepted` ကို file scan ပြီးစီးသည်ဟု မယူဆရ၊ catalog ထဲတွင်လည်း မည်သည့်အကြောင်းအရာမျှ မထုတ်ဝေပါ။ နောက်အဆင့် pipeline တွင် Telegram `getFile`, file type/size/MIME/checksum/malware validation, private storage, OCR/text extraction, metadata draft နှင့် idempotent queue ပါဝင်မည်။ File တစ်ခုချင်းစီ၏ rights evidence ကို review အတည်ပြုပြီးမှ catalog ပေါ်တင်မည်; အချက်အလက်မပြည့်စုံလျှင် draft/quarantine တွင်ထားမည်။ Public channel များကို source အဖြစ်မသုံးပါ။

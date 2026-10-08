@@ -6,6 +6,7 @@
 - [ ] **စာအုပ်တစ်အုပ်ချင်းစီအတွက် မျက်နှာဖုံး၊ စာရေးဆရာ၊ အမျိုးအစား၊ ဖတ်ရှုချိန်နှင့် စာအုပ်အကျဉ်းချုပ်ပါဝင်သည့် အသေးစိတ်စာမျက်နှာ** — selected book detail panel တွင် metadata နှင့် rights status ပါရမည်။
 - [ ] **တရားဝင်ဖတ်ရှုခွင့်ရှိသော စာအုပ်အပြည့်အစုံများအတွက် စာမျက်နှာပြောင်းဖတ်နိုင်သည့် read-only reader** — reader တွင် previous/next page၊ page count နှင့် close action ပါရမည်။
 - [ ] **Reader အတွင်း စာလုံးအရွယ်အစား၊ စာကြောင်းအကွာအဝေးနှင့် နောက်ခံဖတ်ရှုမုဒ်တို့ကို ချိန်ညှိနိုင်မှု** — type scale၊ leading နှင့် paper/sepia/night themes ပြောင်းနိုင်ရမည်။
+- [ ] **PDF ထဲရှိ Zawgyi/Unicode စာသားကို မမှားယွင်းစွာ ပြသနိုင်မှုနှင့် ပြောင်းလဲထားသော Unicode overlay ကို ဖွင့်/ပိတ်နိုင်မှု** — detector သည် text fragment တိုတိုအစား page-level Myanmar text ကို အခြေခံရမည်၊ strong Zawgyi page များတွင်သာ overlay ပြရမည်၊ reader header button ဖြင့် overlay ကို ဖွင့်/ပိတ်နိုင်ရမည်။
 - [ ] **စာသားရွေးချယ်ကူးယူခြင်း၊ ပုံမှန် download လုပ်ခြင်းနှင့် print ထုတ်ခြင်းတို့ကို UI အဆင့်တွင် တားဆီးထားသည့် read-only အတွေ့အကြုံ** — reader surface သည် selection မရ၊ context menu မရ၊ print CSS တွင် reader ကို မပြရ။
 - [ ] **Desktop၊ tablet နှင့် mobile မျက်နှာပြင်များတွင် မြန်မာစာကို ကြည်လင်ဖတ်ရလွယ်ကူစွာ ပြသသည့် responsive UI** — 960px နှင့် 640px breakpoints တွင် layout ပြန်စီရမည်။
 - [ ] **စာအုပ်အပြည့်အစုံ မပြသနိုင်သည့်အခါ မူပိုင်ခွင့်အခြေအနေကို ရှင်းလင်းဖော်ပြပြီး အကျဉ်းချုပ်နှင့် metadata ကိုသာ ပြသမှု** — summary-only book များတွင် reader action အစား rights notice ပြရမည်။

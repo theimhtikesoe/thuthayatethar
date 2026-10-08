@@ -2,7 +2,7 @@
 
 import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import HTMLFlipBook from "react-pageflip";
-import { normalizeMyanmarText } from "./zawgyi";
+import { convertZawgyiText, detectMyanmarText } from "./zawgyi";
 
 type PdfDoc = { numPages: number; getPage: (n: number) => Promise<any> };
 type OverlayItem = { text: string; left: number; top: number; width: number; fontSize: number; isZawgyi: boolean };
@@ -23,7 +23,7 @@ const Page = forwardRef<HTMLDivElement, { src?: string; number: number; total: n
   </div>;
 });
 
-export default function FlipBook({ url, title, progressKey }: { url: string; title: string; progressKey: string }) {
+export default function FlipBook({ url, title, progressKey, overlayEnabled = true }: { url: string; title: string; progressKey: string; overlayEnabled?: boolean }) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<Record<number, string>>({});
@@ -87,18 +87,23 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
           const page = await doc.getPage(n);
           const content = await page.getTextContent();
           const base = page.getViewport({ scale: 1 });
+          const rawItems = content.items as Array<{ str?: string; transform?: number[]; width?: number }>;
+          const pageText = rawItems.map((raw) => raw.str ?? "").join(" ");
+          const pageDetection = await detectMyanmarText(pageText);
           const items: OverlayItem[] = [];
-          for (const raw of content.items as Array<{ str?: string; transform?: number[]; width?: number }>) {
+          for (const raw of rawItems) {
             if (!raw.str?.trim() || !raw.transform) continue;
             foundText = true;
-            const converted = await normalizeMyanmarText(raw.str);
-            if (!converted.isZawgyi) continue;
+            // Detect against the whole page, not each tiny PDF text fragment.
+            // Short fragments make the detector misclassify valid Unicode and
+            // the resulting overlay then hides the correct source text.
+            if (!pageDetection.isZawgyi) continue;
             foundZawgyi = true;
             const scale = size.w / base.width;
             const fontSize = Math.max(7, Math.abs(raw.transform[3] || raw.transform[0] || 10) * scale);
             const x = (raw.transform[4] || 0) / base.width * 100;
             const y = (1 - (raw.transform[5] || 0) / base.height) * 100 - fontSize / base.height * 100;
-            items.push({ text: converted.text, left: x, top: Math.max(0, y), width: Math.max(4, (raw.width || 20) / base.width * 100), fontSize, isZawgyi: true });
+            items.push({ text: await convertZawgyiText(raw.str), left: x, top: Math.max(0, y), width: Math.max(4, (raw.width || 20) / base.width * 100), fontSize, isZawgyi: true });
           }
           if (items.length) next[n] = items;
         } catch { /* A page without extractable text is handled as image-only. */ }
@@ -328,7 +333,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
       {error && <div className="flip-status">{error} <a href={url} target="_blank" rel="noreferrer">သီးခြားဖွင့်မည် ↗</a></div>}
       {!error && !doc && <div className="flip-status"><span className="flip-spinner"></span>စာအုပ်ကို ဖွင့်နေသည်…</div>}
       {doc && overlayState === "image-only" && <div className="pdf-overlay-note">ပုံ-only PDF — OCR overlay မပါ</div>}
-      {doc && overlayState === "ready" && Object.keys(overlays).length > 0 && <div className="pdf-overlay-note is-ready">Zawgyi စာကို Unicode overlay ဖြင့် ဖတ်နိုင်သည်</div>}
+      {doc && overlayState === "ready" && Object.keys(overlays).length > 0 && <div className="pdf-overlay-note is-ready">{overlayEnabled ? "Zawgyi စာကို Unicode ဖြင့် ပြထားသည်" : "မူရင်း PDF စာသားကို ပြထားသည်"}</div>}
       {doc && <div className="flipbook-holder" style={{ width: size.single ? size.w : size.w * 2, height: size.h }}>
         <HTMLFlipBook
           key={`${size.w}-${size.single}-${bookResetVersion}`}
@@ -349,7 +354,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
           startZIndex={0} autoSize={false} clickEventForward useMouseEvents={!zoomed} swipeDistance={30} showPageCorners={!zoomed} disableFlipByClick
           onFlip={(e: any) => { setCurrent(e.data); saveProgress(e.data); }}
         >
-          {Array.from({ length: total }, (_, i) => <Page key={i} number={i + 1} total={total} title={title} src={images[i + 1]} overlay={overlays[i + 1]} />)}
+          {Array.from({ length: total }, (_, i) => <Page key={i} number={i + 1} total={total} title={title} src={images[i + 1]} overlay={overlayEnabled ? overlays[i + 1] : undefined} />)}
         </HTMLFlipBook>
       </div>}
       {doc && zoomed && <div className="flip-zoom-layer" aria-label="ချဲ့ကြည့်နေသည်">
