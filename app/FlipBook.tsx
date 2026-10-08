@@ -1,7 +1,8 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
+import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import HTMLFlipBook from "react-pageflip";
+import { adjacentPage, visiblePages } from "./reader-navigation.mjs";
 
 type PdfDoc = { numPages: number; getPage: (n: number) => Promise<any> };
 
@@ -10,7 +11,9 @@ const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.5;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-const Page = forwardRef<HTMLDivElement, { src?: string; number: number; total: number; title: string }>(function Page({ src, number, total, title }, ref) {
+const PageImages = createContext<Record<number, string>>({});
+const Page = forwardRef<HTMLDivElement, { number: number; total: number; title: string }>(function Page({ number, total, title }, ref) {
+  const src = useContext(PageImages)[number];
   const isCover = number === 1;
   return <div className={`flip-page${isCover ? " is-cover" : ""}`} ref={ref}>
     <div className="flip-page-inner">
@@ -34,7 +37,6 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
       return Number.isInteger(saved) && saved >= 0 ? saved : 0;
     } catch { return 0; }
   });
-  const [bookResetVersion, setBookResetVersion] = useState(0);
   const [size, setSize] = useState({ w: 420, h: 594, single: false });
   const [ratio, setRatio] = useState(1.414);
   const [zoom, setZoom] = useState(1);
@@ -43,7 +45,6 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
   const stage = useRef<HTMLDivElement>(null);
   const rendering = useRef(new Set<string>());
   const passwordUpdater = useRef<((password: string) => void) | null>(null);
-  const jumpResetTimer = useRef<number | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ dist: number; zoom: number; x: number; y: number; px: number; py: number } | null>(null);
   const lastTap = useRef(0);
@@ -100,7 +101,8 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
       const single = el.clientWidth < 760;
       const maxW = single ? availW : availW / 2;
       const w = Math.max(200, Math.floor(Math.min(maxW, availH / ratio)));
-      setSize((prev) => (prev.w === w && prev.single === single ? prev : { w, h: Math.floor(w * ratio), single }));
+      const h = Math.floor(w * ratio);
+      setSize((prev) => (prev.w === w && prev.h === h && prev.single === single ? prev : { w, h, single }));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -109,13 +111,16 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
   }, [ratio, doc]);
 
   const draw = useCallback(async (n: number, cssWidth: number) => {
-    const page = await doc!.getPage(n);
+    if (!doc) throw new Error("PDF is not ready");
+    const page = await doc.getPage(n);
     const base = page.getViewport({ scale: 1 }).width;
     const px = Math.min(cssWidth * Math.min(window.devicePixelRatio || 1, 1.6), 2400);
     const vp = page.getViewport({ scale: px / base });
     const canvas = document.createElement("canvas");
     canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
-    await page.render({ canvasContext: canvas.getContext("2d")!, viewport: vp }).promise;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Canvas is not available");
+    await page.render({ canvasContext: context, viewport: vp }).promise;
     return canvas.toDataURL("image/jpeg", 0.84);
   }, [doc]);
 
@@ -160,12 +165,13 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
 
   // Pages visible on the current spread (1-based).
   const total = doc?.numPages ?? 0;
-  const visible = (() => {
-    const p = current + 1;
-    if (size.single || p === 1) return [p];
-    const left = p % 2 === 0 ? p : p - 1;
-    return [left, left + 1].filter((n) => n <= total);
-  })();
+  const visible = visiblePages(current, total, size.single);
+  const atEnd = (visible[visible.length - 1] ?? 0) >= total;
+  // Keep the library's children stable. Image updates must not call
+  // updateFromHtml(), which interrupts page flips and resets its handlers.
+  const pages = useMemo(() => Array.from({ length: total }, (_, i) =>
+    <Page key={i} number={i + 1} total={total} title={title} />
+  ), [total, title]);
 
   // Sharper render for the zoom layer.
   const zoomLevel = zoom > 2 ? 4 : 2;
@@ -207,31 +213,33 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
     });
   }, [clampPan]);
 
-  const goTo = (p: number, deferReset = false) => {
+  const goTo = (p: number) => {
     const next = clamp(p, 0, Math.max(0, total - 1));
-    setCurrent(next);
-    saveProgress(next);
-    if (jumpResetTimer.current !== null) window.clearTimeout(jumpResetTimer.current);
-    if (deferReset) {
-      jumpResetTimer.current = window.setTimeout(() => setBookResetVersion((version) => version + 1), 120);
-    } else setBookResetVersion((version) => version + 1);
+    const controller = book.current?.pageFlip();
+    if (!controller || total === 0) return;
+    // A single immediate navigation path also works while zoomed, after
+    // scrubbing, and during rapid clicks, without remounting the book.
+    controller.turnToPage(next);
+    const actual = controller.getCurrentPageIndex();
+    setCurrent(actual);
+    saveProgress(actual);
     setPan({ x: 0, y: 0 });
   };
   const goPrevious = () => {
-    if (zoomed) goTo(Math.max(0, current - (size.single ? 1 : 2)));
-    else book.current?.pageFlip()?.flipPrev();
+    goTo(adjacentPage(current, total, size.single, -1));
   };
   const goNext = () => {
-    if (zoomed) goTo(Math.min(total - 1, current + visible.length));
-    else book.current?.pageFlip()?.flipNext();
+    if (!atEnd) goTo(adjacentPage(current, total, size.single, 1));
   };
-  useEffect(() => () => { if (jumpResetTimer.current !== null) window.clearTimeout(jumpResetTimer.current); }, []);
   const zoomed = zoom > 1;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowRight") { zoomed ? goTo(Math.min(total - 1, current + visible.length)) : goNext(); }
-      if (e.key === "ArrowLeft") { zoomed ? goTo(Math.max(0, current - (size.single ? 1 : 2))) : goPrevious(); }
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.target instanceof HTMLElement && e.target.closest("input,textarea,select,button,[contenteditable]")) return;
+      if (["ArrowRight", "ArrowLeft", "+", "=", "-", "0", "Escape"].includes(e.key)) e.preventDefault();
+      if (e.key === "ArrowRight") goNext();
+      if (e.key === "ArrowLeft") goPrevious();
       if (e.key === "+" || e.key === "=") setZoomTo(zoom + ZOOM_STEP);
       if (e.key === "-") setZoomTo(zoom - ZOOM_STEP);
       if (e.key === "0" || e.key === "Escape") setZoomTo(1);
@@ -260,7 +268,8 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
   }, [zoom, zoomed, setZoomTo, clampPan]);
 
   const localPoint = (e: { clientX: number; clientY: number }) => {
-    const r = stage.current!.getBoundingClientRect();
+    const r = stage.current?.getBoundingClientRect();
+    if (!r) return { x: 0, y: 0 };
     return { x: e.clientX - r.left - r.width / 2, y: e.clientY - r.top - r.height / 2 };
   };
 
@@ -280,7 +289,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     }
     const now = Date.now();
-    if (pts.length === 1 && now - lastTap.current < 300) {
+    if (e.pointerType === "touch" && pts.length === 1 && now - lastTap.current < 300) {
       e.stopPropagation();
       setZoomTo(zoomed ? 1 : 2, localPoint(e));
       lastTap.current = 0;
@@ -305,6 +314,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
     }
   };
   const onPointerUp = (e: React.PointerEvent) => {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
     pointers.current.delete(e.pointerId);
     if (pointers.current.size === 0) {
       gesture.current = null;
@@ -331,9 +341,9 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
         <button type="submit">ဖွင့်မည် →</button>
       </form>}
       {!error && !doc && <div className="flip-status"><span className="flip-spinner"></span>စာအုပ်ကို ဖွင့်နေသည်…</div>}
-      {doc && <div className="flipbook-holder" style={{ width: size.single ? size.w : size.w * 2, height: size.h }}>
+      {doc && <PageImages.Provider value={images}><div className="flipbook-holder" style={{ width: size.single ? size.w : size.w * 2, height: size.h }}>
         <HTMLFlipBook
-          key={`${size.w}-${size.single}-${bookResetVersion}`}
+          key={`${size.w}-${size.h}-${size.single}`}
           ref={book}
           width={size.w}
           height={size.h}
@@ -351,9 +361,9 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
           startZIndex={0} autoSize={false} clickEventForward useMouseEvents={!zoomed} swipeDistance={30} showPageCorners={!zoomed} disableFlipByClick
           onFlip={(e: any) => { setCurrent(e.data); saveProgress(e.data); }}
         >
-          {Array.from({ length: total }, (_, i) => <Page key={i} number={i + 1} total={total} title={title} src={images[i + 1]} />)}
+          {pages}
         </HTMLFlipBook>
-      </div>}
+      </div></PageImages.Provider>}
       {doc && zoomed && <div className="flip-zoom-layer" aria-label="ချဲ့ကြည့်နေသည်">
         <div className="flip-zoom-spread" style={{ width: size.w * visible.length, height: size.h, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
           {visible.map((n) => {
@@ -365,19 +375,19 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
       </div>}
     </div>
     {doc && <footer className="flip-nav">
-      <button type="button" className="flip-nav-btn" onClick={goPrevious} disabled={current === 0} aria-label="ရှေ့စာမျက်နှာ">‹<span> ရှေ့သို့</span></button>
+      <button type="button" className="flip-nav-btn" onClick={goPrevious} disabled={current === 0} aria-label="အရင်စာမျက်နှာ">‹<span> အရင်သို့</span></button>
       <div className="flip-progress">
         <button type="button" className="flip-skip-btn" onClick={() => goTo(0)} disabled={current === 0} aria-label="ပထမစာမျက်နှာသို့ သွားမည်" title="ပထမစာမျက်နှာ">«</button>
-        <input type="range" min={1} max={total} value={current + 1} onChange={(e) => goTo(Number(e.target.value) - 1, true)} aria-label="စာမျက်နှာ ရွေးရန်" />
-        <span className="flip-count">{current + 1}<small> / {total}</small></span>
-        <button type="button" className="flip-skip-btn" onClick={() => goTo(total - 1)} disabled={current >= total - 1} aria-label="နောက်ဆုံးစာမျက်နှာသို့ သွားမည်" title="နောက်ဆုံးစာမျက်နှာ">»</button>
+        <input type="range" min={1} max={total} value={current + 1} onChange={(e) => goTo(Number(e.target.value) - 1)} aria-label="စာမျက်နှာ ရွေးရန်" />
+        <span className="flip-count" aria-live="polite">{visible.join("–")}<small> / {total}</small></span>
+        <button type="button" className="flip-skip-btn" onClick={() => goTo(total - 1)} disabled={atEnd} aria-label="နောက်ဆုံးစာမျက်နှာသို့ သွားမည်" title="နောက်ဆုံးစာမျက်နှာ">»</button>
       </div>
       <div className="flip-zoom" role="group" aria-label="ချဲ့/ချုံ့">
         <button type="button" onClick={() => setZoomTo(zoom - ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label="ချုံ့မည်">−</button>
         <button type="button" className="flip-zoom-value" onClick={() => setZoomTo(zoomed ? 1 : 2)} aria-label="ချဲ့မှုပြန်ညှိမည်">{Math.round(zoom * 100)}%</button>
         <button type="button" onClick={() => setZoomTo(zoom + ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label="ချဲ့မည်">+</button>
       </div>
-      <button type="button" className="flip-nav-btn" onClick={goNext} disabled={current >= total - 1} aria-label="နောက်စာမျက်နှာ"><span>နောက်သို့ </span>›</button>
+      <button type="button" className="flip-nav-btn" onClick={goNext} disabled={atEnd} aria-label="နောက်စာမျက်နှာ"><span>နောက်သို့ </span>›</button>
     </footer>}
   </div>;
 }
