@@ -414,8 +414,14 @@ function BookCard({ book, index, onOpen }: { book: Book; index: number; onOpen: 
 
 function BookCover({ book, label }: { book: Book; label: string }) {
   const [pdfCover, setPdfCover] = useState<string | null>(null);
+  const [coverImageFailed, setCoverImageFailed] = useState(false);
+  const usePdfCover = !book.coverImage || coverImageFailed;
   useEffect(() => {
-    if (book.coverImage || !book.pdfUrl) return;
+    setCoverImageFailed(false);
+    setPdfCover(null);
+  }, [book.coverImage, book.pdfUrl]);
+  useEffect(() => {
+    if (!usePdfCover || !book.pdfUrl) return;
     let active = true;
     (async () => {
       try {
@@ -433,9 +439,9 @@ function BookCover({ book, label }: { book: Book; label: string }) {
       } catch { /* Keep the colored cover fallback if the PDF cannot be opened. */ }
     })();
     return () => { active = false; };
-  }, [book.coverImage, book.pdfUrl]);
-  const backgroundImage = book.coverImage ?? pdfCover;
-  return <div className="book-cover" style={backgroundImage ? { backgroundImage: `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${backgroundImage})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}><span className="cover-number">{label}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div>;
+  }, [book.pdfUrl, usePdfCover]);
+  const backgroundImage = usePdfCover ? pdfCover : book.coverImage;
+  return <div className="book-cover" style={backgroundImage ? { backgroundImage: `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${backgroundImage})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}>{book.coverImage && <img className="cover-image-probe" src={book.coverImage} onError={() => setCoverImageFailed(true)} alt="" aria-hidden="true" />}{usePdfCover && !pdfCover && book.pdfUrl && <span className="cover-loading">…</span>}<span className="cover-number">{label}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div>;
 }
 
 function BookDetail({ book, onClose, onRead }: { book: Book; onClose: () => void; onRead: () => void }) {
