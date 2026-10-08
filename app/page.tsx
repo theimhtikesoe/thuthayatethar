@@ -286,32 +286,39 @@ export default function HomePage() {
       .then((response) => response.json())
       .then((payload: { ok?: boolean; configured?: boolean; books?: Array<Partial<Book> & { id?: string | number; pages?: string[]; pdfUrl?: string }> }) => {
         if (payload.ok !== true || payload.configured === false || !Array.isArray(payload.books)) { if (!cached) setCatalogBooks([]); return; }
-        const nextBooks: Book[] = payload.books.map((book, index) => ({
-          id: typeof book.id === "number" ? book.id : index + 1,
-          title: book.title ?? "စာအုပ်အသစ်",
-          author: book.author ?? "မသိရသေးသော စာရေးသူ",
-          category: book.category ?? "အခြား",
-          year: book.year ?? "—",
-          readingTime: book.readingTime ?? 10,
-          pages: book.pages ?? [],
-          summary: book.summary ?? "",
-          color: book.color ?? coverPalette[index % coverPalette.length][0],
-          accent: book.accent ?? coverPalette[index % coverPalette.length][1],
-          mark: book.mark ?? "စာ",
-          rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
-          tag: book.tag ?? "ထုတ်ဝေထားသည်",
-          // Keep the ingestion PDF URL when available so PDF.js can use the
-          // origin's byte ranges for reliable page-1 cover rendering. The
-          // local proxy remains the fallback for older catalog records.
-          pdfUrl: book.pdfUrl ?? (book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : undefined),
-          // The catalog may omit coverImage even when ingestion stored a cover
-          // in R2. Probe the stable cover endpoint first, then let BookCover
-          // fall back to PDF page 1 when that endpoint returns 404.
-          coverImage: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/cover` : book.coverImage,
-          externalUrl: book.externalUrl,
-          sourceType: book.sourceType,
-          slug: book.slug,
-        }));
+        const nextBooks: Book[] = payload.books.map((book, index) => {
+          const isTianGuanCiFu = book.slug?.startsWith("tian-guan-ci-fu-") ||
+            book.title?.toLowerCase().includes("tian guan ci fu");
+          return {
+            id: typeof book.id === "number" ? book.id : index + 1,
+            title: book.title ?? "စာအုပ်အသစ်",
+            author: book.author ?? "မသိရသေးသော စာရေးသူ",
+            category: book.category ?? "အခြား",
+            year: book.year ?? "—",
+            readingTime: book.readingTime ?? 10,
+            pages: book.pages ?? [],
+            summary: book.summary ?? "",
+            color: book.color ?? coverPalette[index % coverPalette.length][0],
+            accent: book.accent ?? coverPalette[index % coverPalette.length][1],
+            mark: book.mark ?? "စာ",
+            rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
+            tag: book.tag ?? "ထုတ်ဝေထားသည်",
+            // Keep the ingestion PDF URL when available so PDF.js can use the
+            // origin's byte ranges for reliable page-1 cover rendering. The
+            // local proxy remains the fallback for older catalog records.
+            pdfUrl: book.pdfUrl ?? (book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : undefined),
+            // Use a bundled cover for every chapter in this series because the
+            // ingestion catalog currently has no cover object for these PDFs.
+            coverImage: isTianGuanCiFu
+              ? "/covers/tian-guan-ci-fu.jpg"
+              : book.slug
+                ? `/api/books/${encodeURIComponent(book.slug)}/cover`
+                : book.coverImage,
+            externalUrl: book.externalUrl,
+            sourceType: book.sourceType,
+            slug: book.slug,
+          };
+        });
         setCatalogBooks(nextBooks);
         localStorage.setItem("thuthayatethar:catalog", JSON.stringify(nextBooks));
       })
@@ -352,7 +359,7 @@ export default function HomePage() {
           const response = await fetch(book.pdfUrl!, { cache: "no-store" });
           if (!response.ok) throw new Error("offline_pack_pdf_failed");
           await cache.put(book.pdfUrl!, response.clone());
-          if (book.coverImage) {
+          if (book.coverImage && !(await cache.match(book.coverImage))) {
             const coverResponse = await fetch(book.coverImage, { cache: "no-store" });
             if (coverResponse.ok) await cache.put(book.coverImage, coverResponse.clone());
           }
