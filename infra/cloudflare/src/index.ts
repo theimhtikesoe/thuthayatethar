@@ -138,7 +138,7 @@ function safeFileName(name: string | null, type: MediaType): string {
 }
 
 function titleFromFile(name: string): string {
-  return name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim().slice(0, 180) || "စာအုပ်အသစ်";
+  return name.normalize("NFKC").replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 180) || "စာအုပ်အသစ်";
 }
 
 async function sha256(value: ArrayBuffer): Promise<string> {
@@ -211,7 +211,7 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
       byteSize = stored.size;
     }
     const now = new Date().toISOString();
-    const title = titleFromFile(key.split("/").pop() ?? "book.pdf");
+    const title = titleFromFile(typeof item.original_filename === "string" ? item.original_filename : "book.pdf");
     const slug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "book"}-${intakeId.slice(0, 8)}`;
     await env.DB.batch([
       env.DB.prepare("UPDATE intake_items SET status = 'draft', storage_key = ?, sha256 = ?, byte_size = ?, updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(key, checksum, byteSize, now, intakeId),
