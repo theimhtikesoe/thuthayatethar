@@ -27,7 +27,7 @@ const Page = forwardRef<HTMLDivElement, { number: number; total: number; title: 
   </div>;
 });
 
-export default function FlipBook({ url, title, progressKey }: { url: string; title: string; progressKey: string }) {
+export default function FlipBook({ url, offlineUrl, title, progressKey }: { url: string; offlineUrl?: string; title: string; progressKey: string }) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [passwordPrompt, setPasswordPrompt] = useState(false);
@@ -360,7 +360,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
       onPointerUpCapture={onPointerUp}
       onPointerCancelCapture={onPointerUp}
     >
-      {error && <div className="flip-status">{error} <a href={url} target="_blank" rel="noreferrer">သီးခြားဖွင့်မည် ↗</a></div>}
+      {error && <div className="flip-status">{error} <a href={offlineUrl ?? url} target="_blank" rel="noreferrer">သီးခြားဖွင့်မည် ↗</a></div>}
       {passwordPrompt && <form className="pdf-password-prompt" onSubmit={(event) => { event.preventDefault(); passwordUpdater.current?.(passwordValue); setPasswordPrompt(false); }}>
         <span className="password-lock" aria-hidden="true">▣</span>
         <strong>စကားဝှက်ဖြင့် ဖတ်ရှုရန်</strong>
