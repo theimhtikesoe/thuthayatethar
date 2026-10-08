@@ -321,6 +321,8 @@ export default function HomePage() {
   const [lineHeight, setLineHeight] = useState(1.8);
   const [offlinePackState, setOfflinePackState] = useState<"idle" | "saving" | "done" | "error">("idle");
   const [offlinePackProgress, setOfflinePackProgress] = useState(0);
+  const [offlinePickerOpen, setOfflinePickerOpen] = useState(false);
+  const [selectedOfflineBooks, setSelectedOfflineBooks] = useState<string[]>([]);
   const [progressRevision, setProgressRevision] = useState(0);
   useEffect(() => { writeLocalValue("thuthayatethar:reader-theme", theme); }, [theme]);
   useEffect(() => {
@@ -412,6 +414,22 @@ export default function HomePage() {
   const downloadableBooks = availableBooks.filter((book) => book.rights === "full" && Boolean(book.pdfUrl));
   const recentReadings = useMemo(() => getRecentReadings(availableBooks), [availableBooks, progressRevision]);
 
+  const offlineBookKey = (book: Book) => book.slug ?? String(book.id);
+  async function cacheBookOffline(book: Book) {
+    if (!book.pdfUrl || !("caches" in window)) throw new Error("offline_unavailable");
+    const response = await fetch(book.pdfUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error("offline_pdf_failed");
+    const cache = await caches.open("thuthayatethar-books");
+    await cache.put(book.pdfUrl, response.clone());
+    const proxyUrl = bookPdfProxyUrl(book);
+    if (proxyUrl) await cache.put(proxyUrl, response.clone());
+    if (book.coverImage && !(await cache.match(book.coverImage))) {
+      const coverResponse = await fetch(book.coverImage, { cache: "no-store" });
+      if (coverResponse.ok) await cache.put(book.coverImage, coverResponse.clone());
+    }
+    writeLocalValue(`thuthayatethar:offline:${offlineBookKey(book)}`, "1");
+  }
+
   async function saveOfflinePack() {
     if (!("caches" in window) || !downloadableBooks.length) return;
     setOfflinePackState("saving");
@@ -419,20 +437,12 @@ export default function HomePage() {
     let failed = false;
     try {
       if ("serviceWorker" in navigator) await navigator.serviceWorker.ready;
-      const cache = await caches.open("thuthayatethar-books");
       const shell = await caches.open("thuthayatethar-shell-v4");
       await shell.addAll(["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js"]);
       for (let index = 0; index < downloadableBooks.length; index += 1) {
         const book = downloadableBooks[index];
         try {
-          const response = await fetch(book.pdfUrl!, { cache: "no-store" });
-          if (!response.ok) throw new Error("offline_pack_pdf_failed");
-          await cache.put(book.pdfUrl!, response.clone());
-          if (book.slug) await cache.put(`/api/books/${encodeURIComponent(book.slug)}/pdf`, response.clone());
-          if (book.coverImage && !(await cache.match(book.coverImage))) {
-            const coverResponse = await fetch(book.coverImage, { cache: "no-store" });
-            if (coverResponse.ok) await cache.put(book.coverImage, coverResponse.clone());
-          }
+          await cacheBookOffline(book);
         } catch { failed = true; }
         setOfflinePackProgress(index + 1);
       }
@@ -440,6 +450,18 @@ export default function HomePage() {
     } catch {
       setOfflinePackState("error");
     }
+  }
+  async function saveSelectedOfflineBooks() {
+    const selected = downloadableBooks.filter((book) => selectedOfflineBooks.includes(offlineBookKey(book)));
+    if (!selected.length) return;
+    setOfflinePackState("saving");
+    setOfflinePackProgress(0);
+    let failed = false;
+    for (let index = 0; index < selected.length; index += 1) {
+      try { await cacheBookOffline(selected[index]); } catch { failed = true; }
+      setOfflinePackProgress(index + 1);
+    }
+    setOfflinePackState(failed ? "error" : "done");
   }
 
   const filteredBooks = useMemo(() => {
@@ -508,7 +530,8 @@ export default function HomePage() {
       </header>
 
       <section className="catalog-section" id="catalog">
-        <div className="section-heading"><div><p className="eyebrow">စာကြည့်တိုက်</p><h2>ဒီနေ့ ဖတ်စရာများ</h2></div><div className="catalog-actions"><span className="result-count">{filteredGroups.length} အုပ် ရှာတွေ့သည်</span><button type="button" className="offline-pack-button" onClick={saveOfflinePack} disabled={offlinePackState === "saving" || !downloadableBooks.length}>{offlinePackState === "saving" ? `Offline သိမ်းနေသည် ${offlinePackProgress}/${downloadableBooks.length}` : offlinePackState === "done" ? "✓ Offline အသင့်" : "Offline အားလုံးသိမ်းမည်"}</button>{offlinePackState === "error" && <small className="offline-pack-error">အချို့စာအုပ်များ မသိမ်းနိုင်ပါ။ Internet ကို စစ်ပါ။</small>}</div></div>
+        <div className="section-heading"><div><p className="eyebrow">စာကြည့်တိုက်</p><h2>ဒီနေ့ ဖတ်စရာများ</h2></div><div className="catalog-actions"><span className="result-count">{filteredGroups.length} အုပ် ရှာတွေ့သည်</span><button type="button" className="offline-pack-button" onClick={saveOfflinePack} disabled={offlinePackState === "saving" || !downloadableBooks.length}>{offlinePackState === "saving" ? `Offline သိမ်းနေသည် ${offlinePackProgress}/${downloadableBooks.length}` : offlinePackState === "done" ? "✓ Offline အသင့်" : "Offline အားလုံးသိမ်းမည်"}</button><button type="button" className="offline-select-button" onClick={() => setOfflinePickerOpen((open) => !open)} disabled={!downloadableBooks.length}>{offlinePickerOpen ? "ရွေးချယ်မှု ပိတ်မည်" : "စာအုပ်ရွေးသိမ်းမည်"}</button>{offlinePackState === "error" && <small className="offline-pack-error">အချို့စာအုပ်များ မသိမ်းနိုင်ပါ။ Internet ကို စစ်ပါ။</small>}</div></div>
+        {offlinePickerOpen && <section className="offline-picker" aria-label="Offline သိမ်းရန် စာအုပ်ရွေးချယ်ရန်"><div className="offline-picker-head"><strong>Offline သိမ်းမည့်စာအုပ်များ ရွေးပါ</strong><span>{selectedOfflineBooks.length} အုပ် ရွေးထားသည်</span></div><div className="offline-picker-list">{downloadableBooks.map((book) => { const key = offlineBookKey(book); return <label className="offline-picker-item" key={key}><input type="checkbox" checked={selectedOfflineBooks.includes(key)} onChange={() => setSelectedOfflineBooks((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key])} /><span><strong>{book.title}</strong><small>{book.author}{book.slug ? ` · ${book.slug}` : ""}</small></span></label>; })}</div><button type="button" className="offline-save-selected" onClick={saveSelectedOfflineBooks} disabled={offlinePackState === "saving" || !selectedOfflineBooks.length}>{offlinePackState === "saving" ? `ရွေးထားသည်များ သိမ်းနေသည် ${offlinePackProgress}/${selectedOfflineBooks.length}` : "ရွေးထားသည်များ Offline သိမ်းမည်"}</button></section>}
         {recentReadings.length > 0 && <section className="continue-reading" aria-labelledby="continue-reading-title">
           <div className="continue-heading"><div><p className="eyebrow">ဖတ်လက်စ</p><h3 id="continue-reading-title">ဆက်လက်ဖတ်ရှုရန်</h3></div><span>ဒီစက်တွင် သိမ်းထားသော ဖတ်ရှုနေရာ</span></div>
           <div className="continue-grid">{recentReadings.map((item) => {

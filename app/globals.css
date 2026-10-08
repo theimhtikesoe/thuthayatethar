@@ -269,6 +269,20 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .reader-shell .pdf-reader-workspace { display: flex; place-items: initial; padding: 0; }
 .reader-shell .pdf-reader-workspace > .flipbook-wrap { width: 100%; height: 100%; }
 .reader-shell .pdf-reader-workspace + .reader-nav { min-height: 0; padding: 8px 16px; font-size: 10px; line-height: 1.5; text-align: center; opacity: .7; }
+.offline-select-button, .offline-save-selected { border: 1px solid rgba(73,109,99,.35); border-radius: 999px; background: #edf5f0; color: var(--green); padding: 10px 14px; font-size: 10px; cursor: pointer; }
+.offline-select-button:disabled, .offline-save-selected:disabled { opacity: .45; cursor: not-allowed; }
+.offline-picker { margin: -8px 0 28px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: #fbf8f2; box-shadow: var(--shadow); }
+.offline-picker-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 14px; color: var(--ink); font-size: 12px; }
+.offline-picker-head span { color: var(--muted); font-size: 10px; }
+.offline-picker-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-height: 260px; overflow: auto; }
+.offline-picker-item { display: flex; align-items: flex-start; gap: 9px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 7px; background: white; cursor: pointer; }
+.offline-picker-item:has(input:checked) { border-color: rgba(73,109,99,.55); background: #f0f7f2; }
+.offline-picker-item input { margin-top: 3px; accent-color: var(--green); }
+.offline-picker-item span { min-width: 0; display: grid; gap: 3px; }
+.offline-picker-item strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.offline-picker-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 9px; }
+.offline-save-selected { display: block; margin-top: 14px; }
+@media (max-width: 640px) { .offline-picker-list { grid-template-columns: 1fr; }.offline-picker-head { align-items: flex-start; flex-direction: column; }.offline-select-button { width: 100%; }.offline-save-selected { width: 100%; } }
 
 /* Modern catalog cards: tactile cover motion, restrained depth, and staggered reveal. */
 .book-card { position: relative; animation: card-reveal .56s cubic-bezier(.22,.8,.25,1) both; animation-delay: calc(var(--index, 0) * 55ms); transition: transform .28s cubic-bezier(.22,.8,.25,1); }
