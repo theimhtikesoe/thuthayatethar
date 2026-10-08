@@ -404,7 +404,7 @@ export default function HomePage() {
 function BookCard({ book, index, onOpen }: { book: Book; index: number; onOpen: () => void }) {
   return <article className="book-card" style={{ "--book-color": book.color, "--book-accent": book.accent } as CSSProperties}>
     <button type="button" className="cover-wrap" onClick={onOpen} aria-label={`${book.title} အသေးစိတ်ကြည့်ရန်`}>
-      <div className="book-cover" style={book.coverImage ? { backgroundImage: `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${book.coverImage})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}><span className="cover-number">{String(index + 1).padStart(2, "0")}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div>
+      <BookCover book={book} label={String(index + 1).padStart(2, "0")} />
       {book.rights === "summary" && <span className="summary-ribbon">အကျဉ်းချုပ်သာ</span>}
     </button>
     <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{book.title}</h3><p className="book-author">{book.author}</p>{book.externalUrl && <small className="external-source-label">Wattpad မူရင်းစာမျက်နှာမှ ဖတ်ရှုရန်</small>}</div><button className="round-arrow" type="button" onClick={onOpen} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
@@ -412,10 +412,36 @@ function BookCard({ book, index, onOpen }: { book: Book; index: number; onOpen: 
   </article>;
 }
 
+function BookCover({ book, label }: { book: Book; label: string }) {
+  const [pdfCover, setPdfCover] = useState<string | null>(null);
+  useEffect(() => {
+    if (book.coverImage || !book.pdfUrl) return;
+    let active = true;
+    (async () => {
+      try {
+        const pdfjs: any = await import("pdfjs-dist");
+        pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
+        const pdf = await pdfjs.getDocument({ url: book.pdfUrl, withCredentials: false, disableAutoFetch: true, disableStream: false }).promise;
+        const page = await pdf.getPage(1);
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: Math.min(1.25, 900 / base.width) });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.floor(viewport.width); canvas.height = Math.floor(viewport.height);
+        await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
+        if (active) setPdfCover(canvas.toDataURL("image/jpeg", 0.82));
+        await pdf.destroy();
+      } catch { /* Keep the colored cover fallback if the PDF cannot be opened. */ }
+    })();
+    return () => { active = false; };
+  }, [book.coverImage, book.pdfUrl]);
+  const backgroundImage = book.coverImage ?? pdfCover;
+  return <div className="book-cover" style={backgroundImage ? { backgroundImage: `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${backgroundImage})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}><span className="cover-number">{label}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div>;
+}
+
 function BookDetail({ book, onClose, onRead }: { book: Book; onClose: () => void; onRead: () => void }) {
   return <div className="overlay" role="dialog" aria-modal="true" aria-label="စာအုပ်အသေးစိတ်"><div className="detail-panel">
     <button className="close-button" type="button" onClick={onClose} aria-label="ပိတ်မည်">×</button>
-    <div className="detail-cover" style={{ "--book-color": book.color, "--book-accent": book.accent } as CSSProperties}><div className="book-cover" style={book.coverImage ? { backgroundImage: `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${book.coverImage})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}><span className="cover-number">{book.year}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div></div>
+    <div className="detail-cover" style={{ "--book-color": book.color, "--book-accent": book.accent } as CSSProperties}><BookCover book={book} label={book.year} /></div>
     <div className="detail-content"><p className="eyebrow">{book.externalUrl ? "WATTPAD မူရင်း" : book.tag}</p><h2>{book.title}</h2><p className="detail-author">{book.author}</p><div className="detail-facts"><span><b>အမျိုးအစား</b>{book.category}</span><span><b>ဖတ်ရှုချိန်</b>{book.readingTime} မိနစ်</span><span><b>ထုတ်ဝေသည့်နှစ်</b>{book.year}</span></div><div className="detail-summary"><p className="label">{book.externalUrl ? "မူရင်းစာမျက်နှာ" : "အကျဉ်းချုပ်"}</p><p>{book.externalUrl ? "ဤစာအုပ်ကို မူရင်း Wattpad စာမျက်နှာတွင်သာ ဖတ်ရှုပါ။" : book.summary}</p></div>
       {book.externalUrl ? <a className="primary-button wide-button" href={book.externalUrl} target="_blank" rel="noreferrer">Wattpad တွင်ဖတ်မည် <span>↗</span></a> : book.rights === "full" ? <button className="primary-button wide-button" type="button" onClick={onRead}>စာမျက်နှာဖွင့်မည် <span>→</span></button> : <div className="rights-alert"><span>i</span><p><strong>လက်ရှိတွင် အကျဉ်းချုပ်သာ ဖတ်ရှုနိုင်သည်</strong><br />မူပိုင်ခွင့်ခွင့်ပြုချက်ရရှိပြီးနောက် စာအုပ်အပြည့်အစုံကို ထည့်သွင်းပေးမည်။</p></div>}
     </div>
