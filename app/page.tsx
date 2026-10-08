@@ -432,20 +432,13 @@ function BookCard({ book, index, onOpen }: { book: Book; index: number; onOpen: 
 function BookCover({ book, label }: { book: Book; label: string }) {
   const [pdfCover, setPdfCover] = useState<string | null>(null);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
-  const [pdfCoverRequested, setPdfCoverRequested] = useState(false);
-  const usePdfCover = coverImageFailed || (!book.coverImage && pdfCoverRequested);
+  // A PDF's first page is a valid cover fallback when ingestion did not
+  // receive a separate Telegram thumbnail/cover image.
+  const usePdfCover = Boolean(book.pdfUrl) && (!book.coverImage || coverImageFailed);
   useEffect(() => {
     setCoverImageFailed(false);
     setPdfCover(null);
-    setPdfCoverRequested(false);
   }, [book.coverImage, book.pdfUrl]);
-  useEffect(() => {
-    if (book.coverImage || !book.pdfUrl || coverImageFailed) return;
-    // Do not let a missing cover make every catalog card compete for PDF data.
-    // The colored cover is shown first; the PDF cover is only a quiet fallback.
-    const timer = window.setTimeout(() => setPdfCoverRequested(true), 900);
-    return () => window.clearTimeout(timer);
-  }, [book.coverImage, book.pdfUrl, coverImageFailed]);
   useEffect(() => {
     if (!usePdfCover || !book.pdfUrl) return;
     let active = true;
