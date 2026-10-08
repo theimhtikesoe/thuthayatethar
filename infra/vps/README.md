@@ -12,6 +12,20 @@ A Cloudflare Tunnel named `thuthayatethar-pdf-relay` and the hostname `pdf-relay
 
 The Cloudflare Access self-hosted app and Service Auth policy are already created for `pdf-relay.rz99systems.com`; the policy permits only the dedicated Telegram-ingestion Worker service token. Its client ID and secret are stored as Worker secret bindings, not in the repository. The Local Bot API port, relay port, bot token, API ID/hash, Access credentials, and Tunnel connector token must never be published in Git or sent in chat.
 
+## Install relay and Tunnel connector
+
+From the existing VPS root shell, run:
+
+```bash
+git clone --depth 1 --branch feat/telegram-pdf-reader \
+  https://github.com/theimhtikesoe/thuthayatethar.git /opt/thuthayatethar
+bash /opt/thuthayatethar/infra/vps/install-relay.sh
+```
+
+The installer checks that the existing Local Bot API container, Compose file, `.env`, and data volume are present. It preserves the existing `.env`, copies the relay override, then prompts without echoing for the Tunnel connector token. Get the token in Cloudflare Dashboard → Networking → Tunnels → `thuthayatethar-pdf-relay` → Add a replica. The token is saved only to `/opt/telegram-local-bot-api/tunnel-token` with mode `600`; it is not printed, committed, or sent here. The connector uses Cloudflare's `--token-file` option (cloudflared 2025.4.0 or newer).
+
+The installer starts only the relay and Tunnel containers. It does **not** call Bot API `logOut`, change `setWebhook`, or discard pending updates; that separate bot cutover must be planned and verified after the relay is healthy.
+
 ## Cutover safety
 
 Do not call Bot API `logOut`, change `setWebhook`, or discard pending updates as part of relay setup. These actions belong to a separate cutover after the relay is deployed and tested. Telegram's Local Bot API mode returns absolute VPS file paths, so a Cloudflare Worker cannot download a large local-mode file merely by changing `TELEGRAM_API_BASE_URL`; the relay is required.

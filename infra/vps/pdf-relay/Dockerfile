@@ -8,9 +8,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 COPY server.py /app/server.py
-RUN useradd --system --no-create-home --uid 10001 relay
-USER 10001:10001
+# The Local Bot API data volume may be owned by its own container UID. This
+# read-only, unprivileged container needs read access to those files.
+USER 0:0
 EXPOSE 8090
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2)"
 CMD ["python", "/app/server.py"]
