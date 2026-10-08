@@ -358,10 +358,11 @@ export default function HomePage() {
             mark: book.mark ?? "စာ",
             rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
             tag: book.tag ?? "ထုတ်ဝေထားသည်",
-            // Keep the ingestion PDF URL when available so PDF.js can use the
-            // origin's byte ranges for reliable page-1 cover rendering. The
-            // local proxy remains the fallback for older catalog records.
-            pdfUrl: book.pdfUrl ?? (book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : undefined),
+            // Always use the same-origin proxy when a slug is available. This
+            // keeps PDF.js, the password fallback link, and the service-worker
+            // cache on one URL so offline reading never jumps to the external
+            // ingestion worker URL.
+            pdfUrl: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl,
             // Use a bundled cover for every chapter in this series because the
             // ingestion catalog currently has no cover object for these PDFs.
             coverImage: isTianGuanCiFu
