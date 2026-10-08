@@ -84,6 +84,8 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .book-card { min-width: 0; animation: lift-in .5s both; animation-delay: calc(var(--index, 0) * 40ms); }
 .cover-wrap { border: 0; background: transparent; padding: 0; width: 100%; position: relative; display: block; }
 .book-cover { background: var(--book-color); color: var(--book-accent); aspect-ratio: .73; border-radius: 4px 10px 10px 4px; box-shadow: 11px 13px 22px rgba(57,48,38,.11); position: relative; overflow: hidden; padding: 20px 19px; display: flex; flex-direction: column; align-items: flex-start; text-align: left; transition: transform .2s ease, box-shadow .2s ease; }
+.cover-image-probe { display: none; }
+.cover-loading { position: absolute; right: 15px; top: 12px; z-index: 2; color: rgba(255,255,255,.8); font-size: 16px; }
 .book-cover:before { content: ''; position: absolute; top: 0; bottom: 0; left: 11px; width: 1px; background: rgba(255,255,255,.48); }
 .book-cover:after { content: ''; position: absolute; width: 130px; height: 130px; border: 1px solid rgba(255,255,255,.5); border-radius: 50%; right: -54px; bottom: -33px; }
 .cover-wrap:hover .book-cover { transform: translateY(-5px) rotate(-1deg); box-shadow: 13px 21px 27px rgba(57,48,38,.14); }
@@ -118,9 +120,9 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .flip-page-inner { position: relative; width: 100%; height: 100%; }
 .flip-page img, .flip-zoom-page img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }
 .zawgyi-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.zawgyi-overlay span { position: absolute; display: block; min-height: 1.1em; overflow: hidden; padding: 1px 3px; border-radius: 2px; background: rgba(255,253,249,.92); color: #17212b; font-family: 'Noto Sans Myanmar', 'Myanmar Text', 'Padauk', sans-serif; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 1px 2px rgba(23,33,43,.12); }
-.theme-sepia .zawgyi-overlay span { background: rgba(241,229,204,.94); color: #4b4035; }
-.theme-night .zawgyi-overlay span { background: rgba(28,37,40,.95); color: #ddd5ca; }
+.zawgyi-overlay span { position: absolute; display: block; min-height: 1.1em; overflow: hidden; padding: 1px 3px; border-radius: 2px; background: rgba(255, 211, 228, .94); color: #6c2847; font-family: 'Noto Sans Myanmar', 'Myanmar Text', 'Padauk', sans-serif; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 1px 2px rgba(139, 53, 91, .18); }
+.theme-sepia .zawgyi-overlay span { background: rgba(255, 207, 223, .95); color: #6c2847; }
+.theme-night .zawgyi-overlay span { background: rgba(105, 46, 73, .96); color: #ffe6f0; }
 .pdf-overlay-note { position: absolute; z-index: 4; left: 50%; top: 12px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 6px 10px; border: 1px solid rgba(143,116,76,.25); border-radius: 999px; background: rgba(255,253,249,.9); color: #8f744c; font-size: 9px; text-align: center; pointer-events: none; }
 .pdf-overlay-note.is-ready { color: var(--green); border-color: rgba(73,109,99,.25); }
 .theme-night .pdf-overlay-note { background: rgba(28,37,40,.92); }

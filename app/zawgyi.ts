@@ -4,6 +4,8 @@ type MyanmarTools = { ZawgyiConverter: new () => { zawgyiToUnicode: (value: stri
 let converter: { zawgyiToUnicode: (value: string) => string } | null = null;
 let detector: { getZawgyiProbability: (value: string) => number } | null = null;
 let toolsPromise: Promise<MyanmarTools> | null = null;
+const STRONG_ZAWGYI_THRESHOLD = 0.9;
+const MYANMAR_CHARACTERS = /[\u1000-\u109f\uaa60-\uaa7f]/;
 
 function loadMyanmarTools() {
   if (typeof window === "undefined") return Promise.reject(new Error("browser_only"));
@@ -26,7 +28,7 @@ function loadMyanmarTools() {
 }
 
 export async function normalizeMyanmarText(value: string) {
-  if (!value.trim()) return { text: value, isZawgyi: false, probability: 0 };
+  if (!value.trim() || !MYANMAR_CHARACTERS.test(value)) return { text: value, isZawgyi: false, probability: 0 };
   try {
     if (!converter || !detector) {
       const tools = await loadMyanmarTools();
@@ -34,9 +36,10 @@ export async function normalizeMyanmarText(value: string) {
       detector = new tools.ZawgyiDetector();
     }
     const probability = detector.getZawgyiProbability(value);
+    const isZawgyi = probability >= STRONG_ZAWGYI_THRESHOLD;
     return {
-      text: probability >= 0.45 ? converter.zawgyiToUnicode(value) : value,
-      isZawgyi: probability >= 0.45,
+      text: isZawgyi ? converter.zawgyiToUnicode(value) : value,
+      isZawgyi,
       probability,
     };
   } catch {

@@ -80,7 +80,9 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
       let foundText = false;
       let foundZawgyi = false;
       const next: Record<number, OverlayItem[]> = {};
-      for (let n = 1; n <= doc.numPages; n += 1) {
+      const firstPageToCheck = Math.max(1, current);
+      const lastPageToCheck = Math.min(doc.numPages, current + 4);
+      for (let n = firstPageToCheck; n <= lastPageToCheck; n += 1) {
         try {
           const page = await doc.getPage(n);
           const content = await page.getTextContent();
@@ -107,7 +109,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
       }
     })();
     return () => { cancelled = true; };
-  }, [doc, size.w]);
+  }, [doc, size.w, current]);
 
   useEffect(() => {
     const el = stage.current;
