@@ -1,0 +1,2 @@
+# Reader implementation rules
+- Keep white-margin detection in a pure, tested helper and remove only blank top/bottom rows through transparent image variants; this preserves page geometry, text, and flip navigation in normal and zoomed views.

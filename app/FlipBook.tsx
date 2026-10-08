@@ -3,6 +3,7 @@
 import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import HTMLFlipBook from "react-pageflip";
 import { adjacentPage, visiblePages } from "./reader-navigation.mjs";
+import { whiteMarginBounds } from "./reader-margins.mjs";
 
 type PdfDoc = { numPages: number; getPage: (n: number) => Promise<any> };
 
@@ -11,9 +12,12 @@ const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.5;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-const PageImages = createContext<Record<number, string>>({});
+type PageImage = { original: string; trimmed: string };
+const PageImages = createContext<{ images: Record<number, PageImage>; hideMargins: boolean }>({ images: {}, hideMargins: false });
 const Page = forwardRef<HTMLDivElement, { number: number; total: number; title: string }>(function Page({ number, total, title }, ref) {
-  const src = useContext(PageImages)[number];
+  const { images, hideMargins } = useContext(PageImages);
+  const image = images[number];
+  const src = hideMargins ? image?.trimmed : image?.original;
   const isCover = number === 1;
   return <div className={`flip-page${isCover ? " is-cover" : ""}`} ref={ref}>
     <div className="flip-page-inner">
@@ -29,8 +33,9 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
   const [passwordPrompt, setPasswordPrompt] = useState(false);
   const [passwordValue, setPasswordValue] = useState("tgcf");
   const [passwordIncorrect, setPasswordIncorrect] = useState(false);
-  const [images, setImages] = useState<Record<number, string>>({});
-  const [hires, setHires] = useState<Record<string, string>>({});
+  const [images, setImages] = useState<Record<number, PageImage>>({});
+  const [hires, setHires] = useState<Record<string, PageImage>>({});
+  const [hideMargins, setHideMargins] = useState(false);
   const [current, setCurrent] = useState(() => {
     try {
       const saved = Number(localStorage.getItem(progressKey));
@@ -121,7 +126,12 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Canvas is not available");
     await page.render({ canvasContext: context, viewport: vp }).promise;
-    return canvas.toDataURL("image/jpeg", 0.84);
+    const original = canvas.toDataURL("image/jpeg", 0.84);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    const { top, bottom } = whiteMarginBounds(pixels.data, canvas.width, canvas.height);
+    context.clearRect(0, 0, canvas.width, top);
+    context.clearRect(0, bottom, canvas.width, canvas.height - bottom);
+    return { original, trimmed: top > 0 || bottom < canvas.height ? canvas.toDataURL("image/png") : original };
   }, [doc]);
 
   const renderPage = useCallback(async (n: number) => {
@@ -322,7 +332,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
     }
   };
 
-  return <div className={`flipbook-wrap${zoomed ? " is-zoomed" : ""}`}>
+  return <div className={`flipbook-wrap${zoomed ? " is-zoomed" : ""}${hideMargins ? " hides-white-margins" : ""}`}>
     <div
       className="flipbook-stage"
       ref={stage}
@@ -341,7 +351,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
         <button type="submit">ဖွင့်မည် →</button>
       </form>}
       {!error && !doc && <div className="flip-status"><span className="flip-spinner"></span>စာအုပ်ကို ဖွင့်နေသည်…</div>}
-      {doc && <PageImages.Provider value={images}><div className="flipbook-holder" style={{ width: size.single ? size.w : size.w * 2, height: size.h }}>
+      {doc && <PageImages.Provider value={{ images, hideMargins }}><div className="flipbook-holder" style={{ width: size.single ? size.w : size.w * 2, height: size.h }}>
         <HTMLFlipBook
           key={`${size.w}-${size.h}-${size.single}`}
           ref={book}
@@ -367,7 +377,8 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
       {doc && zoomed && <div className="flip-zoom-layer" aria-label="ချဲ့ကြည့်နေသည်">
         <div className="flip-zoom-spread" style={{ width: size.w * visible.length, height: size.h, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
           {visible.map((n) => {
-            const src = hires[`${n}@${zoomLevel}`] ?? hires[`${n}@2`] ?? images[n];
+            const image = hires[`${n}@${zoomLevel}`] ?? hires[`${n}@2`] ?? images[n];
+            const src = hideMargins ? image?.trimmed : image?.original;
             return <div key={n} className="flip-zoom-page" style={{ width: size.w, height: size.h }}>{src && <img src={src} alt={`${title} စာမျက်နှာ ${n}`} draggable={false} />}</div>;
           })}
         </div>
@@ -387,6 +398,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
         <button type="button" className="flip-zoom-value" onClick={() => setZoomTo(zoomed ? 1 : 2)} aria-label="ချဲ့မှုပြန်ညှိမည်">{Math.round(zoom * 100)}%</button>
         <button type="button" onClick={() => setZoomTo(zoom + ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label="ချဲ့မည်">+</button>
       </div>
+      <button type="button" className="flip-margin-toggle" onClick={() => setHideMargins((value) => !value)} aria-pressed={hideMargins} aria-label="အဖြူအစွန်း ဖျောက်/ဖော်" title={hideMargins ? "အဖြူအစွန်း ပြန်ဖော်မည်" : "အဖြူအစွန်း ဖျောက်မည်"}>↥↧</button>
       <button type="button" className="flip-nav-btn" onClick={goNext} disabled={atEnd} aria-label="နောက်စာမျက်နှာ"><span>နောက်သို့ </span>›</button>
     </footer>}
   </div>;

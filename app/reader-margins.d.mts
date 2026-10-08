@@ -1,0 +1,1 @@
+export function whiteMarginBounds(data: Uint8ClampedArray, width: number, height: number, padding?: number): { top: number; bottom: number };
