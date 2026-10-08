@@ -202,6 +202,14 @@ function readingProgressKey(book: Book) {
   return `thuthayatethar:progress:${book.slug ?? book.id}`;
 }
 
+function bookPdfProxyUrl(book: Pick<Book, "slug" | "pdfUrl">) {
+  return book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl;
+}
+
+function bookCoverProxyUrl(book: Pick<Book, "slug" | "coverImage">) {
+  return book.slug ? `/api/books/${encodeURIComponent(book.slug)}/cover` : book.coverImage;
+}
+
 function readLocalValue(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
 }
@@ -331,7 +339,13 @@ export default function HomePage() {
       try {
         const cachedBooks = JSON.parse(cached) as Book[];
         if (Array.isArray(cachedBooks)) {
-          setCatalogBooks(cachedBooks);
+          const offlineSafeBooks = cachedBooks.map((book) => ({
+            ...book,
+            pdfUrl: bookPdfProxyUrl(book),
+            coverImage: bookCoverProxyUrl(book),
+          }));
+          setCatalogBooks(offlineSafeBooks);
+          writeLocalValue("thuthayatethar:catalog", JSON.stringify(offlineSafeBooks));
           // Show cached cards immediately while the network refresh runs.
           setCatalogLoading(false);
         }
@@ -362,14 +376,12 @@ export default function HomePage() {
             // keeps PDF.js, the password fallback link, and the service-worker
             // cache on one URL so offline reading never jumps to the external
             // ingestion worker URL.
-            pdfUrl: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl,
+            pdfUrl: bookPdfProxyUrl(book),
             // Use a bundled cover for every chapter in this series because the
             // ingestion catalog currently has no cover object for these PDFs.
             coverImage: isTianGuanCiFu
               ? "/covers/tian-guan-ci-fu.jpg"
-              : book.slug
-                ? `/api/books/${encodeURIComponent(book.slug)}/cover`
-                : book.coverImage,
+              : bookCoverProxyUrl(book),
             externalUrl: book.externalUrl,
             sourceType: book.sourceType,
             slug: book.slug,
