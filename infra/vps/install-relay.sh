@@ -36,21 +36,28 @@ fi
 install -d -m 700 "$COMPOSE_DIR"
 install -m 600 "$REPO_DIR/infra/vps/compose.override.yaml.example" "$COMPOSE_DIR/compose.override.yaml"
 
-printf '%s\n' "A Cloudflare Tunnel connector token will be saved locally with mode 600." \
-  "Retrieve it in Cloudflare Dashboard > Networking > Tunnels > thuthayatethar-pdf-relay > Add a replica." \
-  "Paste only the token value; input will not be displayed. Do not send it in chat."
-read -r -s -p "Tunnel token: " tunnel_token
-printf '\n'
-if [[ -z "$tunnel_token" ]]; then
-  echo "No token entered; stopping before starting the Tunnel." >&2
-  exit 1
+if [[ -s "$TOKEN_FILE" ]]; then
+  chown root:root "$TOKEN_FILE"
+  chmod 600 "$TOKEN_FILE"
+  echo "Keeping the existing Tunnel token file; its value will not be displayed."
+else
+  printf '%s\n' "A Cloudflare Tunnel connector token will be saved locally with mode 600." \
+    "Retrieve it in Cloudflare Dashboard > Networking > Tunnels > thuthayatethar-pdf-relay > Add a replica." \
+    "Paste only the token value; input will not be displayed. Do not send it in chat."
+  read -r -s -p "Tunnel token: " tunnel_token
+  printf '\n'
+  if [[ -z "$tunnel_token" ]]; then
+    echo "No token entered; stopping before starting the Tunnel." >&2
+    exit 1
+  fi
+  umask 077
+  tmp_token_file="$(mktemp "$COMPOSE_DIR/.tunnel-token.XXXXXX")"
+  printf '%s\n' "$tunnel_token" > "$tmp_token_file"
+  unset tunnel_token
+  chown root:root "$tmp_token_file"
+  chmod 600 "$tmp_token_file"
+  mv -f "$tmp_token_file" "$TOKEN_FILE"
 fi
-umask 077
-tmp_token_file="$(mktemp "$COMPOSE_DIR/.tunnel-token.XXXXXX")"
-printf '%s\n' "$tunnel_token" > "$tmp_token_file"
-unset tunnel_token
-chmod 600 "$tmp_token_file"
-mv -f "$tmp_token_file" "$TOKEN_FILE"
 
 cd "$COMPOSE_DIR"
 docker compose up -d --build pdf-relay

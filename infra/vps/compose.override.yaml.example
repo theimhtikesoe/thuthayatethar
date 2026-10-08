@@ -25,6 +25,16 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: pdf-relay-cloudflared
     restart: unless-stopped
+    # The mounted token file is mode 600 and owned by root on the VPS.
+    # Keep root confined to this read-only, capability-free container.
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
     profiles:
       - tunnel
     secrets:
