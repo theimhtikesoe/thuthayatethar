@@ -170,11 +170,20 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
   }, [doc, current, size.single, renderPage]);
 
   const saveProgress = useCallback((page: number) => {
-    try { localStorage.setItem(progressKey, String(page)); } catch { /* Storage may be disabled. */ }
+    try {
+      localStorage.setItem(progressKey, String(page));
+      localStorage.setItem(`${progressKey}:updatedAt`, String(Date.now()));
+    } catch { /* Storage may be disabled. */ }
+    window.dispatchEvent(new Event("thuthayatethar:progress"));
   }, [progressKey]);
 
   // Pages visible on the current spread (1-based).
   const total = doc?.numPages ?? 0;
+  useEffect(() => {
+    if (!doc) return;
+    try { localStorage.setItem(`${progressKey}:total`, String(doc.numPages)); } catch { /* Storage may be disabled. */ }
+    saveProgress(current);
+  }, [doc, progressKey, current, saveProgress]);
   const visible = visiblePages(current, total, size.single);
   const atEnd = (visible[visible.length - 1] ?? 0) >= total;
   // Keep the library's children stable. Image updates must not call
@@ -232,7 +241,6 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
     controller.turnToPage(next);
     const actual = controller.getCurrentPageIndex();
     setCurrent(actual);
-    saveProgress(actual);
     setPan({ x: 0, y: 0 });
   };
   const goPrevious = () => {
@@ -380,7 +388,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
           className="flipbook"
           style={{}}
           startZIndex={0} autoSize={false} clickEventForward useMouseEvents={!zoomed} swipeDistance={30} showPageCorners={!zoomed} disableFlipByClick
-          onFlip={(e: any) => { setCurrent(e.data); saveProgress(e.data); }}
+          onFlip={(e: any) => { setCurrent(e.data); }}
         >
           {pages}
         </HTMLFlipBook>
