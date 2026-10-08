@@ -27,6 +27,7 @@ type Book = {
   coverImage?: string;
   externalUrl?: string;
   sourceType?: string;
+  slug?: string;
 };
 
 const books: Book[] = [
@@ -200,11 +201,13 @@ export default function HomePage() {
   const [lineHeight, setLineHeight] = useState(1.8);
 
   useEffect(() => {
+    const cached = localStorage.getItem("thuthayatethar:catalog");
+    if (cached) { try { setCatalogBooks(JSON.parse(cached)); } catch {} }
     fetch("/api/catalog", { cache: "no-store" })
       .then((response) => response.json())
       .then((payload: { ok?: boolean; configured?: boolean; books?: Array<Partial<Book> & { id?: string | number; pages?: string[]; pdfUrl?: string }> }) => {
         if (payload.ok !== true || payload.configured === false || !Array.isArray(payload.books)) { setCatalogBooks([]); return; }
-        setCatalogBooks(payload.books.map((book, index) => ({
+        const nextBooks: Book[] = payload.books.map((book, index) => ({
           id: typeof book.id === "number" ? book.id : index + 1,
           title: book.title ?? "စာအုပ်အသစ်",
           author: book.author ?? "မသိရသေးသော စာရေးသူ",
@@ -216,17 +219,26 @@ export default function HomePage() {
           color: book.color ?? "#d6c6a9",
           accent: book.accent ?? "#655139",
           mark: book.mark ?? "စာ",
-          rights: book.rights === "summary" ? "summary" : "full",
+          rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
           tag: book.tag ?? "ထုတ်ဝေထားသည်",
-          pdfUrl: book.pdfUrl,
+          pdfUrl: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl,
           coverImage: book.coverImage,
           externalUrl: book.externalUrl,
           sourceType: book.sourceType,
-        })));
+          slug: book.slug,
+        }));
+        setCatalogBooks(nextBooks);
+        localStorage.setItem("thuthayatethar:catalog", JSON.stringify(nextBooks));
       })
-      .catch(() => setCatalogBooks([]))
+      .catch(() => { if (!cached) setCatalogBooks([]); })
       .finally(() => setCatalogLoading(false));
   }, []);
+  useEffect(() => {
+    const slug = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("read");
+    if (!slug || !catalogBooks) return;
+    const book = catalogBooks.find((item) => item.slug === slug);
+    if (book) { setReaderBook(book); setPage(0); document.body.classList.add("reader-open"); }
+  }, [catalogBooks]);
 
   const availableBooks = catalogBooks ?? [];
 
@@ -255,11 +267,13 @@ export default function HomePage() {
     setSelected(null);
     setReaderBook(book);
     setPage(0);
+    window.history.replaceState(null, "", `#read=${encodeURIComponent(book.slug ?? String(book.id))}`);
     document.body.classList.add("reader-open");
   };
 
   const closeReader = () => {
     setReaderBook(null);
+    window.history.replaceState(null, "", "#catalog");
     document.body.classList.remove("reader-open");
   };
 
@@ -358,6 +372,8 @@ type ReaderProps = { book: Book; page: number; setPage: (page: number) => void; 
 function PdfReader({ book, theme, onClose }: { book: Book; theme: Theme; onClose: () => void }) {
   const shell = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [offlineSaved, setOfflineSaved] = useState(false);
+  const [savingOffline, setSavingOffline] = useState(false);
   useEffect(() => {
     const onChange = () => setFullscreen(document.fullscreenElement === shell.current);
     document.addEventListener("fullscreenchange", onChange);
@@ -369,7 +385,13 @@ function PdfReader({ book, theme, onClose }: { book: Book; theme: Theme; onClose
       else await shell.current?.requestFullscreen?.();
     } catch { setFullscreen(false); }
   }
-  return <div ref={shell} className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose}>← <span>စာကြည့်တိုက်သို့ ပြန်မည်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-header-actions"><button type="button" className="reader-fullscreen" onClick={toggleFullscreen} aria-label={fullscreen ? "အပြည့်မျက်နှာပြင်ပိတ်မည်" : "အပြည့်မျက်နှာပြင်ဖွင့်မည်"}>{fullscreen ? "⤢" : "⛶"}<span>{fullscreen ? "ပိတ်မည်" : "အပြည့်"}</span></button><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></div></header><div className="pdf-reader-workspace"><FlipBook url={book.pdfUrl ?? ""} title={book.title} /></div><footer className="reader-nav"><span>လက်နှစ်ချောင်းဖြင့် ချဲ့ကြည့်နိုင်ပါသည်။</span></footer></div>;
+  async function saveOffline() {
+    if (!book.pdfUrl || !("caches" in window)) return;
+    setSavingOffline(true);
+    try { const response = await fetch(book.pdfUrl, { cache: "no-store" }); if (!response.ok) throw new Error("offline_download_failed"); const cache = await caches.open("thuthayatethar-books-v1"); await cache.put(book.pdfUrl, response.clone()); localStorage.setItem(`thuthayatethar:offline:${book.slug ?? book.id}`, "1"); setOfflineSaved(true); } catch { setOfflineSaved(false); } finally { setSavingOffline(false); }
+  }
+  useEffect(() => { setOfflineSaved(localStorage.getItem(`thuthayatethar:offline:${book.slug ?? book.id}`) === "1"); }, [book.id, book.slug]);
+  return <div ref={shell} className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose}>← <span>စာကြည့်တိုက်သို့ ပြန်မည်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-header-actions"><button type="button" className="reader-offline" onClick={saveOffline} disabled={savingOffline} aria-label="Offline သိမ်းမည်">{savingOffline ? "…" : offlineSaved ? "✓" : "⇩"}<span>{offlineSaved ? "Offline သိမ်းပြီး" : "Offline သိမ်းမည်"}</span></button><button type="button" className="reader-fullscreen" onClick={toggleFullscreen} aria-label={fullscreen ? "အပြည့်မျက်နှာပြင်ပိတ်မည်" : "အပြည့်မျက်နှာပြင်ဖွင့်မည်"}>{fullscreen ? "⤢" : "⛶"}<span>{fullscreen ? "ပိတ်မည်" : "အပြည့်"}</span></button><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></div></header><div className="pdf-reader-workspace"><FlipBook url={book.pdfUrl ?? ""} title={book.title} /></div><footer className="reader-nav"><span>လက်နှစ်ချောင်းဖြင့် ချဲ့ကြည့်နိုင်ပါသည်။</span></footer></div>;
 }
 function Reader({ book, page, setPage, theme, setTheme, fontScale, setFontScale, lineHeight, setLineHeight, onClose }: ReaderProps) {
   if (book.pages.length === 0 && book.pdfUrl) return <PdfReader book={book} theme={theme} onClose={onClose} />;

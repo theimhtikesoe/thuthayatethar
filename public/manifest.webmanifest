@@ -1,0 +1,13 @@
+{
+  "name": "သုတရိပ်သာ",
+  "short_name": "သုတရိပ်သာ",
+  "description": "မြန်မာစာအုပ်များကို offline ဖတ်ရှုနိုင်သော digital library",
+  "start_url": "/#catalog",
+  "display": "standalone",
+  "background_color": "#f4efe7",
+  "theme_color": "#17212b",
+  "lang": "my",
+  "icons": [
+    { "src": "/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -157,6 +157,9 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .reader-shell:fullscreen { width: 100vw; height: 100dvh; background: #e9e3d9; }
 .reader-header-actions { display: flex; align-items: center; gap: 14px; }
 .reader-fullscreen { border: 1px solid rgba(81,73,60,.22); border-radius: 999px; background: transparent; color: inherit; padding: 7px 10px; font-size: 14px; line-height: 1; }
+.reader-offline { border: 1px solid rgba(81,73,60,.22); border-radius: 999px; background: transparent; color: inherit; padding: 7px 10px; font-size: 14px; line-height: 1; }
+.reader-offline:disabled { opacity: .55; }
+.reader-offline span { font-size: 9px; margin-left: 5px; vertical-align: 1px; }
 .reader-fullscreen span { font-size: 9px; margin-left: 5px; vertical-align: 1px; }
 .reader-header { padding-top: env(safe-area-inset-top); min-height: calc(69px + env(safe-area-inset-top)); }
 .reader-nav { padding-bottom: env(safe-area-inset-bottom); min-height: calc(75px + env(safe-area-inset-bottom)); }
@@ -166,6 +169,8 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
   .reader-title { max-width: 42vw; overflow: hidden; }
   .reader-title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
   .reader-header-actions { gap: 6px; }
+  .reader-offline { padding: 7px 8px; }
+  .reader-offline span { display: none; }
   .reader-fullscreen { padding: 7px 8px; }
   .reader-fullscreen span { display: none; }
   .reader-lock { display: none; }

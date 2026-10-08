@@ -1,0 +1,44 @@
+const SHELL_CACHE = "thuthayatethar-shell-v1";
+const BOOK_CACHE = "thuthayatethar-books-v1";
+const SHELL = ["/", "/#catalog", "/manifest.webmanifest", "/logo.svg"];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  if (request.method !== "GET") return;
+  const url = new URL(request.url);
+  if (url.pathname.startsWith("/api/books/") && url.pathname.endsWith("/pdf")) {
+    event.respondWith((async () => {
+      const cache = await caches.open(BOOK_CACHE);
+      const cached = await cache.match(request.url);
+      if (cached) return cached;
+      try {
+        const response = await fetch(request);
+        if (response.ok && !request.headers.has("range")) await cache.put(request.url, response.clone());
+        return response;
+      } catch { return cached || new Response("Offline", { status: 503 }); }
+    })());
+    return;
+  }
+  if (url.pathname === "/api/catalog") {
+    event.respondWith((async () => {
+      const cache = await caches.open(SHELL_CACHE);
+      try {
+        const response = await fetch(request);
+        if (response.ok) await cache.put(request.url, response.clone());
+        return response;
+      } catch { return (await cache.match(request.url)) || new Response(JSON.stringify({ ok: false, books: [] }), { headers: { "content-type": "application/json" } }); }
+    })());
+    return;
+  }
+  if (url.origin === self.location.origin && (url.pathname === "/" || url.pathname === "/admin")) {
+    event.respondWith(fetch(request).catch(() => caches.match("/")));
+  }
+});
