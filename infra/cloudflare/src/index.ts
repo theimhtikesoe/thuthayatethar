@@ -10,9 +10,11 @@ type D1Database = {
   batch: (statements: D1Statement[]) => Promise<unknown>;
 };
 
-type R2Object = { key: string; size: number; httpEtag: string };
+type R2Object = { key: string; size: number; httpEtag: string; body: ReadableStream; httpMetadata?: { contentType?: string } };
 type R2Bucket = {
   put: (key: string, value: ArrayBuffer | ReadableStream, options?: Record<string, unknown>) => Promise<R2Object | null>;
+  get: (key: string) => Promise<R2Object | null>;
+  delete: (key: string) => Promise<void>;
 };
 type SecretStoreBinding = { get: () => Promise<string> };
 type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
@@ -24,6 +26,8 @@ export interface Env {
   TELEGRAM_ALLOWED_CHAT_IDS?: string | SecretStoreBinding;
   TELEGRAM_BOT_TOKEN?: string | SecretStoreBinding;
   TELEGRAM_API_BASE_URL?: string;
+  FILE_RELAY_ACCESS_ID?: string | SecretStoreBinding;
+  FILE_RELAY_ACCESS_SECRET?: string | SecretStoreBinding;
   MAX_FILE_BYTES?: string;
   CATALOG_ORIGIN?: string | SecretStoreBinding;
   ADMIN_TOKEN?: string | SecretStoreBinding;
@@ -32,12 +36,14 @@ export interface Env {
   ADMIN_TOKEN_STORE?: SecretStoreBinding;
 }
 
-type RuntimeEnv = Omit<Env, "TELEGRAM_WEBHOOK_SECRET" | "TELEGRAM_ALLOWED_CHAT_IDS" | "TELEGRAM_BOT_TOKEN" | "CATALOG_ORIGIN" | "ADMIN_TOKEN"> & {
+type RuntimeEnv = Omit<Env, "TELEGRAM_WEBHOOK_SECRET" | "TELEGRAM_ALLOWED_CHAT_IDS" | "TELEGRAM_BOT_TOKEN" | "CATALOG_ORIGIN" | "ADMIN_TOKEN" | "FILE_RELAY_ACCESS_ID" | "FILE_RELAY_ACCESS_SECRET"> & {
   TELEGRAM_WEBHOOK_SECRET?: string;
   TELEGRAM_ALLOWED_CHAT_IDS?: string;
   TELEGRAM_BOT_TOKEN?: string;
   CATALOG_ORIGIN?: string;
   ADMIN_TOKEN?: string;
+  FILE_RELAY_ACCESS_ID?: string;
+  FILE_RELAY_ACCESS_SECRET?: string;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -57,6 +63,8 @@ async function resolveSecrets(env: Env): Promise<RuntimeEnv> {
     ADMIN_TOKEN: await secretValue(env.ADMIN_TOKEN_STORE ?? env.ADMIN_TOKEN),
     TELEGRAM_ALLOWED_CHAT_IDS: await secretValue(env.TELEGRAM_ALLOWED_CHAT_IDS),
     CATALOG_ORIGIN: await secretValue(env.CATALOG_ORIGIN),
+    FILE_RELAY_ACCESS_ID: await secretValue(env.FILE_RELAY_ACCESS_ID),
+    FILE_RELAY_ACCESS_SECRET: await secretValue(env.FILE_RELAY_ACCESS_SECRET),
   };
 }
 
@@ -102,6 +110,27 @@ function mediaFor(message: JsonRecord): { type: MediaType; fileId: string; fileN
   return null;
 }
 
+function wattpadUrlFor(message: JsonRecord): string | null {
+  const values: string[] = [];
+  for (const key of ["text", "caption"]) if (typeof message[key] === "string") values.push(message[key] as string);
+  for (const key of ["entities", "caption_entities"]) {
+    const entities = message[key];
+    if (Array.isArray(entities)) for (const entity of entities) if (isRecord(entity) && typeof entity.url === "string") values.push(entity.url);
+  }
+  const match = values.join(" ").match(/https?:\/\/(?:www\.)?wattpad\.com\/story\/\d+(?:[^\s<>]*)?/i);
+  if (!match) return null;
+  try {
+    const url = new URL(match[0]);
+    return `https://www.wattpad.com${url.pathname}`;
+  } catch { return null; }
+}
+
+function wattpadMetadata(message: JsonRecord): { title: string; author: string | null } {
+  const text = [message.text, message.caption].find((value) => typeof value === "string") as string | undefined;
+  const match = text?.match(/["“](.+?)["”]\s+by\s+\*?([^*\n]+?)(?:\s+on\s+Wattpad|\s+https?:\/\/|$)/i);
+  return { title: match?.[1]?.trim().slice(0, 180) || "Wattpad စာအုပ်", author: match?.[2]?.trim().slice(0, 180) || null };
+}
+
 function safeFileName(name: string | null, type: MediaType): string {
   const fallback = type === "document" ? "book.pdf" : "cover.jpg";
   const clean = (name ?? fallback).normalize("NFKC").replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-").slice(0, 120);
@@ -129,16 +158,22 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
   if (!env.BUCKET || !env.TELEGRAM_BOT_TOKEN) return;
   const item = await env.DB.prepare("SELECT * FROM intake_items WHERE id = ? LIMIT 1").bind(intakeId).first<JsonRecord>();
   if (!item || typeof item.telegram_file_id !== "string") return;
+  if (item.source_type === "wattpad_link") return;
   const maxBytes = maxFileBytes(env);
   try {
     if (typeof item.byte_size === "number" && item.byte_size > maxBytes) throw new Error("file_too_large");
     const base = (env.TELEGRAM_API_BASE_URL ?? "https://api.telegram.org").replace(/\/$/, "");
-    const infoResponse = await fetch(`${base}/bot${env.TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(item.telegram_file_id)}`);
+    const relayHeaders: HeadersInit = {};
+    if (env.FILE_RELAY_ACCESS_ID && env.FILE_RELAY_ACCESS_SECRET) {
+      relayHeaders["CF-Access-Client-Id"] = env.FILE_RELAY_ACCESS_ID;
+      relayHeaders["CF-Access-Client-Secret"] = env.FILE_RELAY_ACCESS_SECRET;
+    }
+    const infoResponse = await fetch(`${base}/bot${env.TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(item.telegram_file_id)}`, { headers: relayHeaders });
     const info = await infoResponse.json() as JsonRecord;
     const result = isRecord(info.result) ? info.result : null;
-    if (!infoResponse.ok || info.ok !== true || !result || typeof result.file_path !== "string") throw new Error("telegram_file_lookup_failed");
-    const fileResponse = await fetch(`${base}/file/bot${env.TELEGRAM_BOT_TOKEN}/${result.file_path}`);
-    if (!fileResponse.ok) throw new Error("telegram_file_download_failed");
+    if (!infoResponse.ok || info.ok !== true || !result || typeof result.file_path !== "string") throw new Error(`telegram_file_lookup_failed_${infoResponse.status}`);
+    const fileResponse = await fetch(`${base}/relay/file?path=${encodeURIComponent(result.file_path)}`, { headers: relayHeaders });
+    if (!fileResponse.ok) throw new Error(`telegram_file_download_failed_${fileResponse.status}`);
     const contentLength = Number(fileResponse.headers.get("content-length") ?? "0");
     const expectedBytes = contentLength > 0 ? contentLength : (typeof item.byte_size === "number" ? item.byte_size : 0);
     if (expectedBytes > maxBytes) {
@@ -207,8 +242,26 @@ async function receive(request: Request, env: RuntimeEnv, ctx?: ExecutionContext
   const chat = message && isRecord(message.chat) ? message.chat : null;
   const chatId = chat && (typeof chat.id === "number" || typeof chat.id === "string") ? String(chat.id) : null;
   if (!message || !chat || !chatId || (chat.type !== "group" && chat.type !== "supergroup") || !allowedChatIds(env.TELEGRAM_ALLOWED_CHAT_IDS ?? "").has(chatId)) return json({ ok: true, status: "ignored" });
-  const media = mediaFor(message);
+  const wattpadUrl = wattpadUrlFor(message);
   const messageId = message.message_id;
+  if (wattpadUrl && Number.isSafeInteger(messageId)) {
+    const now = new Date().toISOString();
+    const intakeId = crypto.randomUUID();
+    const linkKey = `wattpad:${wattpadUrl}`;
+    const metadata = wattpadMetadata(message);
+    const slugBase = metadata.title.toLowerCase().replace(/[^a-z0-9\u1000-\u109f]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "wattpad-book";
+    const slug = `${slugBase}-${intakeId.slice(0, 8)}`;
+    const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_type, source_url, source_chat_id, source_message_id, status, original_filename, mime_type, created_at, updated_at) VALUES (?, ?, ?, 'document', 'wattpad_link', ?, ?, ?, 'draft', ?, 'text/html', ?, ?)`).bind(intakeId, parsed.update_id, linkKey, wattpadUrl, chatId, messageId, metadata.title, now, now).run();
+    const persisted = insert.meta.changes > 0 ? { id: intakeId } : await env.DB.prepare("SELECT id FROM intake_items WHERE telegram_update_id = ? OR telegram_file_id = ? LIMIT 1").bind(parsed.update_id, linkKey).first<{ id: string }>();
+    if (!persisted?.id) throw new Error("persisted_link_not_found");
+    if (insert.meta.changes > 0) await env.DB.batch([
+      env.DB.prepare("INSERT INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), persisted.id, now, now),
+      env.DB.prepare("INSERT INTO book_drafts (id, intake_id, title, slug, author, summary, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), persisted.id, metadata.title, slug, metadata.author, "Wattpad မူရင်းစာမျက်နှာသို့ သွားဖတ်ရန် link card ဖြစ်သည်။", JSON.stringify({ source: "telegram", sourceType: "wattpad_link", sourceUrl: wattpadUrl, public: { sourceType: "wattpad", externalUrl: wattpadUrl } }), now, now),
+      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'wattpad_link_received', ?, ?)").bind(persisted.id, JSON.stringify({ url: wattpadUrl }), now),
+    ]);
+    return json({ ok: true, status: insert.meta.changes > 0 ? "accepted" : "duplicate", updateId: parsed.update_id, intakeId: persisted.id, sourceType: "wattpad_link" });
+  }
+  const media = mediaFor(message);
   if (!media || !Number.isSafeInteger(messageId)) return json({ ok: true, status: "ignored" });
   const now = new Date().toISOString();
   const intakeId = crypto.randomUUID();
@@ -230,8 +283,78 @@ async function catalog(request: Request, env: RuntimeEnv): Promise<Response> {
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405, origin);
   const statement = env.DB.prepare("SELECT id, title, slug, author, category, year, summary, reading_time, metadata_json, updated_at FROM book_drafts WHERE publication_status = 'published' ORDER BY updated_at DESC");
   const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
-  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(isRecord(metadata.public) ? metadata.public : {}) }; });
+  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString(), ...(isRecord(metadata.public) ? metadata.public : {}) }; });
   return json({ ok: true, books }, 200, origin);
+}
+
+async function adminDrafts(request: Request, env: RuntimeEnv): Promise<Response> {
+  if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+  if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
+  const statement = env.DB.prepare(`SELECT b.id, b.intake_id, b.title, b.slug, b.author, b.category, b.year, b.summary, b.metadata_json, b.publication_status, b.updated_at, i.status AS intake_status, i.original_filename, i.storage_key, i.source_type, i.source_url, r.rights_status, r.rights_holder, r.evidence_note, r.allowed_uses, r.reviewer, r.reviewed_at FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id LEFT JOIN rights_records r ON r.intake_id = b.intake_id ORDER BY b.updated_at DESC`);
+  const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
+  return json({ ok: true, drafts: result.results });
+}
+
+async function approveAndPublish(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
+  if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+  const book = await env.DB.prepare("SELECT id, intake_id FROM book_drafts WHERE slug = ? LIMIT 1").bind(slug).first<{ id: string; intake_id: string }>();
+  if (!book) return json({ ok: false, error: "book_not_found" }, 404);
+  let body: JsonRecord = {};
+  try { body = await request.json() as JsonRecord; } catch {}
+  const evidenceNote = typeof body.evidenceNote === "string" ? body.evidenceNote.slice(0, 500) : "Admin dashboard confirmation";
+  const rightsHolder = typeof body.rightsHolder === "string" ? body.rightsHolder.slice(0, 180) : null;
+  const allowedUses = typeof body.allowedUses === "string" ? body.allowedUses.slice(0, 180) : "Website catalog reading";
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE rights_records SET rights_status = 'approved', rights_holder = ?, evidence_note = ?, allowed_uses = ?, reviewer = 'admin', reviewed_at = ?, updated_at = ? WHERE intake_id = ?").bind(rightsHolder, evidenceNote, allowedUses, now, now, book.intake_id),
+    env.DB.prepare("UPDATE book_drafts SET publication_status = 'published', updated_at = ? WHERE id = ?").bind(now, book.id),
+    env.DB.prepare("UPDATE intake_items SET status = 'published', updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(now, book.intake_id),
+    env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'rights_approved', ?, ?)").bind(book.intake_id, JSON.stringify({ reviewer: "admin" }), now),
+    env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'published', '{}', ?)").bind(book.intake_id, now),
+  ]);
+  return json({ ok: true, status: "published", rightsStatus: "approved", slug });
+}
+
+async function updateBook(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
+  if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+  let body: JsonRecord;
+  try { body = await request.json() as JsonRecord; } catch { return json({ ok: false, error: "invalid_json" }, 400); }
+  const book = await env.DB.prepare("SELECT id, metadata_json FROM book_drafts WHERE slug = ? LIMIT 1").bind(slug).first<{ id: string; metadata_json: string }>();
+  if (!book) return json({ ok: false, error: "book_not_found" }, 404);
+  const text = (key: string, max: number) => typeof body[key] === "string" ? String(body[key]).trim().slice(0, max) : null;
+  let metadata: JsonRecord = {};
+  try { metadata = JSON.parse(book.metadata_json || "{}"); } catch {}
+  const publicMeta = isRecord(metadata.public) ? metadata.public : {};
+  const coverImage = text("coverImage", 1000);
+  const nextPublic = { ...publicMeta, ...(coverImage ? { coverImage } : {}) };
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE book_drafts SET title = COALESCE(?, title), author = COALESCE(?, author), category = COALESCE(?, category), year = COALESCE(?, year), summary = COALESCE(?, summary), metadata_json = ?, updated_at = ? WHERE id = ?").bind(text("title", 180), text("author", 180), text("category", 100), text("year", 20), text("summary", 1000), JSON.stringify({ ...metadata, public: nextPublic }), now, book.id).run();
+  return json({ ok: true, status: "updated", slug });
+}
+
+async function deleteBook(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
+  if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+  const book = await env.DB.prepare("SELECT id, intake_id FROM book_drafts WHERE slug = ? LIMIT 1").bind(slug).first<{ id: string; intake_id: string }>();
+  if (!book) return json({ ok: false, error: "book_not_found" }, 404);
+  const item = await env.DB.prepare("SELECT storage_key FROM intake_items WHERE id = ? LIMIT 1").bind(book.intake_id).first<{ storage_key: string | null }>();
+  const now = new Date().toISOString();
+  if (item?.storage_key && env.BUCKET) await env.BUCKET.delete(item.storage_key);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM ingestion_events WHERE intake_id = ?").bind(book.intake_id),
+    env.DB.prepare("DELETE FROM rights_records WHERE intake_id = ?").bind(book.intake_id),
+    env.DB.prepare("DELETE FROM book_drafts WHERE id = ?").bind(book.id),
+    env.DB.prepare("DELETE FROM intake_items WHERE id = ?").bind(book.intake_id),
+  ]);
+  return json({ ok: true, status: "deleted", slug, deletedAt: now });
+}
+
+async function bookPdf(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
+  if (!env.BUCKET) return json({ ok: false, error: "storage_unavailable" }, 503);
+  const book = await env.DB.prepare("SELECT storage_key FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? AND b.publication_status = 'published' AND i.status = 'published' LIMIT 1").bind(slug).first<{ storage_key: string | null }>();
+  if (!book?.storage_key) return json({ ok: false, error: "book_not_published" }, 404);
+  const object = await env.BUCKET.get(book.storage_key);
+  if (!object) return json({ ok: false, error: "file_not_found" }, 404);
+  return new Response(object.body, { headers: { "Content-Type": object.httpMetadata?.contentType ?? "application/pdf", "Content-Disposition": "inline", "Cache-Control": "public, max-age=300", "Accept-Ranges": "bytes", ...(env.CATALOG_ORIGIN ? { "Access-Control-Allow-Origin": env.CATALOG_ORIGIN } : {}) } });
 }
 
 async function publish(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
@@ -241,8 +364,11 @@ async function publish(request: Request, env: RuntimeEnv, slug: string): Promise
   const rights = await env.DB.prepare("SELECT rights_status FROM rights_records WHERE intake_id = ? LIMIT 1").bind(book.intake_id).first<{ rights_status: string }>();
   if (rights?.rights_status !== "approved") return json({ ok: false, error: "rights_not_approved" }, 409);
   const now = new Date().toISOString();
-  await env.DB.prepare("UPDATE book_drafts SET publication_status = 'published', updated_at = ? WHERE id = ?").bind(now, book.id).run();
-  await env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'published', '{}', ?)").bind(book.intake_id, now).run();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE book_drafts SET publication_status = 'published', updated_at = ? WHERE id = ?").bind(now, book.id),
+    env.DB.prepare("UPDATE intake_items SET status = 'published', updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(now, book.intake_id),
+    env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'published', '{}', ?)").bind(book.intake_id, now),
+  ]);
   return json({ ok: true, status: "published", slug });
 }
 
@@ -253,7 +379,12 @@ export default {
     if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "telegram-ingestion", storage: Boolean(runtimeEnv.BUCKET), processor: Boolean(runtimeEnv.TELEGRAM_BOT_TOKEN) });
     if (url.pathname === "/catalog") return catalog(request, runtimeEnv);
     if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv, ctx);
+    if (url.pathname === "/admin/drafts") return adminDrafts(request, runtimeEnv);
+    if (request.method === "POST" && url.pathname.startsWith("/admin/approve-publish/")) return approveAndPublish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/approve-publish/".length)));
+    if (request.method === "PUT" && url.pathname.startsWith("/admin/update/")) return updateBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/update/".length)));
+    if (request.method === "DELETE" && url.pathname.startsWith("/admin/delete/")) return deleteBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/delete/".length)));
     if (request.method === "POST" && url.pathname.startsWith("/admin/publish/")) return publish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/publish/".length)));
+    if (request.method === "GET" && url.pathname.startsWith("/book/") && url.pathname.endsWith("/pdf")) return bookPdf(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -4)));
     return json({ ok: false, error: "not_found" }, 404);
   },
 };
