@@ -25,6 +25,7 @@ export interface Env {
   BUCKET?: R2Bucket;
   TELEGRAM_WEBHOOK_SECRET?: string | SecretStoreBinding;
   TELEGRAM_ALLOWED_CHAT_IDS?: string | SecretStoreBinding;
+  TELEGRAM_REQUIRED_CHAT_IDS?: string | SecretStoreBinding;
   TELEGRAM_BOT_TOKEN?: string | SecretStoreBinding;
   TELEGRAM_API_BASE_URL?: string;
   FILE_RELAY_ACCESS_ID?: string | SecretStoreBinding;
@@ -37,9 +38,10 @@ export interface Env {
   ADMIN_TOKEN_STORE?: SecretStoreBinding;
 }
 
-type RuntimeEnv = Omit<Env, "TELEGRAM_WEBHOOK_SECRET" | "TELEGRAM_ALLOWED_CHAT_IDS" | "TELEGRAM_BOT_TOKEN" | "CATALOG_ORIGIN" | "ADMIN_TOKEN" | "FILE_RELAY_ACCESS_ID" | "FILE_RELAY_ACCESS_SECRET"> & {
+type RuntimeEnv = Omit<Env, "TELEGRAM_WEBHOOK_SECRET" | "TELEGRAM_ALLOWED_CHAT_IDS" | "TELEGRAM_REQUIRED_CHAT_IDS" | "TELEGRAM_BOT_TOKEN" | "CATALOG_ORIGIN" | "ADMIN_TOKEN" | "FILE_RELAY_ACCESS_ID" | "FILE_RELAY_ACCESS_SECRET"> & {
   TELEGRAM_WEBHOOK_SECRET?: string;
   TELEGRAM_ALLOWED_CHAT_IDS?: string;
+  TELEGRAM_REQUIRED_CHAT_IDS?: string;
   TELEGRAM_BOT_TOKEN?: string;
   CATALOG_ORIGIN?: string;
   ADMIN_TOKEN?: string;
@@ -51,6 +53,7 @@ type JsonRecord = Record<string, unknown>;
 type MediaType = "document" | "photo";
 const MAX_UPDATE_BYTES = 256 * 1024;
 const DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024;
+const BOT_HELP = `🚀 စာအုပ်ရှာဖွေရေး Bot အသုံးပြုနည်း\n\n1️⃣ လိုအပ်သော channel များကို အရင် join လုပ်ပါ။\n2️⃣ ဒီ group ထဲတွင် /search [စာအုပ်အမည် သို့မဟုတ် စာရေးသူ] ဟု ရိုက်ပါ။\n   ဥပမာ — /search ရွှေဥဒေါင်း\n3️⃣ ရှာတွေ့သော စာအုပ်ကို နှိပ်ပြီး chat ထဲသို့ ဖိုင်အဖြစ် ရယူပါ။\n\n🍀 approved catalog ထဲမှ စာအုပ်များကိုသာ ပေးပို့ပါသည်။`;
 
 async function secretValue(value: string | SecretStoreBinding | undefined): Promise<string | undefined> {
   return typeof value === "string" ? value : value ? await value.get() : undefined;
@@ -63,6 +66,7 @@ async function resolveSecrets(env: Env): Promise<RuntimeEnv> {
     TELEGRAM_BOT_TOKEN: await secretValue(env.TELEGRAM_BOT_TOKEN_STORE ?? env.TELEGRAM_BOT_TOKEN),
     ADMIN_TOKEN: await secretValue(env.ADMIN_TOKEN_STORE ?? env.ADMIN_TOKEN),
     TELEGRAM_ALLOWED_CHAT_IDS: await secretValue(env.TELEGRAM_ALLOWED_CHAT_IDS),
+    TELEGRAM_REQUIRED_CHAT_IDS: await secretValue(env.TELEGRAM_REQUIRED_CHAT_IDS),
     CATALOG_ORIGIN: await secretValue(env.CATALOG_ORIGIN),
     FILE_RELAY_ACCESS_ID: await secretValue(env.FILE_RELAY_ACCESS_ID),
     FILE_RELAY_ACCESS_SECRET: await secretValue(env.FILE_RELAY_ACCESS_SECRET),
@@ -159,6 +163,14 @@ function maxFileBytes(env: Env): number {
   const configured = Number(env.MAX_FILE_BYTES ?? DEFAULT_MAX_FILE_BYTES);
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_FILE_BYTES;
 }
+
+function requiredChats(value: string | undefined): string[] { return (value ?? "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 20); }
+function commandFor(message: JsonRecord): { name: string; argument: string } | null { if (typeof message.text !== "string") return null; const m=message.text.trim().match(/^\/(start|help|search)(?:@[^\s]+)?(?:\s+([\s\S]*))?$/i); return m ? { name:m[1].toLowerCase(), argument:(m[2]??"").trim().slice(0,120) } : null; }
+async function telegramCall(env: RuntimeEnv, method: string, body: Record<string, unknown>): Promise<JsonRecord | null> { if (!env.TELEGRAM_BOT_TOKEN) return null; const base=(env.TELEGRAM_API_BASE_URL??"https://api.telegram.org").replace(/\/$/,""); const r=await fetch(`${base}/bot${env.TELEGRAM_BOT_TOKEN}/${method}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}); const x=await r.json() as unknown; return isRecord(x)?x:null; }
+async function memberOfRequired(env: RuntimeEnv, userId: string|number): Promise<boolean> { for (const chatId of requiredChats(env.TELEGRAM_REQUIRED_CHAT_IDS)) { const r=await telegramCall(env,"getChatMember",{chat_id:chatId,user_id:userId}); const m=r&&isRecord(r.result)?r.result:null; const status=typeof m?.status==="string"?m.status:""; if (!(status==="creator"||status==="administrator"||status==="member"||(status==="restricted"&&m?.is_member===true))) return false; } return true; }
+async function sendMessage(env: RuntimeEnv, chatId: string, text: string, markup?: JsonRecord): Promise<void> { await telegramCall(env,"sendMessage",{chat_id:chatId,text,...(markup?{reply_markup:markup}:{})}); }
+async function sendBook(env: RuntimeEnv, chatId: string, bookId: string): Promise<void> { if (!env.BUCKET||!env.TELEGRAM_BOT_TOKEN) return; const book=await env.DB.prepare("SELECT b.title,i.storage_key,i.original_filename,i.mime_type FROM book_drafts b JOIN intake_items i ON i.id=b.intake_id WHERE b.id=? AND b.publication_status='published' AND i.status='published' LIMIT 1").bind(bookId).first<JsonRecord>(); if (!book||typeof book.storage_key!=="string") { await sendMessage(env,chatId,"ဒီစာအုပ်ကို လောလောဆယ် ရယူ၍မရသေးပါ။"); return; } const object=await env.BUCKET.get(book.storage_key); if (!object) { await sendMessage(env,chatId,"ဒီစာအုပ်ဖိုင်ကို မတွေ့ပါ။ Admin ကို အသိပေးပါ။"); return; } const base=(env.TELEGRAM_API_BASE_URL??"https://api.telegram.org").replace(/\/$/,""); const form=new FormData(); form.append("chat_id",chatId); form.append("caption",`📚 ${String(book.title??"စာအုပ်")}\nဖတ်ရှုရန် ပေးပို့ထားပါသည်။`); form.append("document",new File([await new Response(object.body).arrayBuffer()],typeof book.original_filename==="string"?book.original_filename:"book.pdf",{type:typeof book.mime_type==="string"?book.mime_type:"application/pdf"})); const r=await fetch(`${base}/bot${env.TELEGRAM_BOT_TOKEN}/sendDocument`,{method:"POST",body:form}); if(!r.ok) await sendMessage(env,chatId,"ဖိုင်ပေးပို့ရာတွင် အခက်အခဲရှိနေပါသည်။ နောက်မှ ထပ်ကြိုးစားပါ။"); }
+async function handleBot(update: JsonRecord, env: RuntimeEnv): Promise<boolean> { const cb=isRecord(update.callback_query)?update.callback_query:null; const msg=cb&&isRecord(cb.message)?cb.message:findMessage(update); const chat=msg&&isRecord(msg.chat)?msg.chat:null; const chatId=chat&&(typeof chat.id==="number"||typeof chat.id==="string")?String(chat.id):null; if(!msg||!chat||!chatId||(chat.type!=="group"&&chat.type!=="supergroup")||!allowedChatIds(env.TELEGRAM_ALLOWED_CHAT_IDS??"").has(chatId)) return false; const from=cb&&isRecord(cb.from)?cb.from:(isRecord(msg.from)?msg.from:null); const userId=from&&(typeof from.id==="number"||typeof from.id==="string")?from.id:null; if(userId===null) return false; if(!(await memberOfRequired(env,userId))) { await sendMessage(env,chatId,"🔒 လိုအပ်သော channel များကို အရင် join လုပ်ပြီး /search ကို ထပ်သုံးပါ။"); return true; } if(cb) { const data=typeof cb.data==="string"?cb.data.match(/^book:(.+)$/):null; if(data) await sendBook(env,chatId,decodeURIComponent(data[1])); return true; } const cmd=commandFor(msg); if(!cmd) return false; if(cmd.name==="start"||cmd.name==="help") { await sendMessage(env,chatId,BOT_HELP); return true; } if(!cmd.argument) { await sendMessage(env,chatId,"ရှာလိုသော စာအုပ်အမည် သို့မဟုတ် စာရေးသူနာမည် ထည့်ပေးပါ။\nဥပမာ — /search ရွှေဥဒေါင်း"); return true; } const term=`%${cmd.argument.replace(/[\\%_]/g,"\\$&")}%`; const q=env.DB.prepare("SELECT id,title,author,slug FROM book_drafts WHERE publication_status='published' AND (title LIKE ? ESCAPE '\\\\' OR author LIKE ? ESCAPE '\\\\' OR category LIKE ? ESCAPE '\\\\' OR summary LIKE ? ESCAPE '\\\\') ORDER BY updated_at DESC LIMIT 8").bind(term,term,term,term); const rows=q.all?(await q.all<JsonRecord>()).results:[]; if(!rows.length) { await sendMessage(env,chatId,`🔎 “${cmd.argument}” အတွက် စာအုပ်မတွေ့သေးပါ။`); return true; } const keyboard=rows.filter(x=>typeof x.slug==="string").map(x=>[{text:`📖 ${String(x.title??"စာအုပ်")}${x.author?` — ${String(x.author)}`:""}`.slice(0,100),callback_data:`book:${String(x.id)}`}]); await sendMessage(env,chatId,`🔎 “${cmd.argument}” အတွက် ${rows.length} အုပ် တွေ့ပါသည်။\nဖိုင်ရယူလိုသော စာအုပ်ကို ရွေးပါ။`,{inline_keyboard:keyboard}); return true; }
 
 async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
   if (!env.BUCKET || !env.TELEGRAM_BOT_TOKEN) return;
@@ -260,6 +272,7 @@ async function receive(request: Request, env: RuntimeEnv, ctx?: ExecutionContext
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { return json({ ok: false, error: "invalid_json" }, 400); }
   if (!isRecord(parsed) || !Number.isSafeInteger(parsed.update_id) || (parsed.update_id as number) < 0) return json({ ok: false, error: "invalid_update" }, 400);
+  if (await handleBot(parsed, env)) return json({ ok: true, status: "bot_handled", updateId: parsed.update_id });
   const message = findMessage(parsed);
   const chat = message && isRecord(message.chat) ? message.chat : null;
   const chatId = chat && (typeof chat.id === "number" || typeof chat.id === "string") ? String(chat.id) : null;

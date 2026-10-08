@@ -30,7 +30,10 @@ secret_name = "TELEGRAM_BOT_TOKEN"
 # secret_name = "ADMIN_TOKEN"
 
 [vars]
+# Replace with the new private group numeric chat ID before deployment.
 TELEGRAM_ALLOWED_CHAT_IDS = "-1004314141664"
+# Optional comma-separated required channel IDs/usernames.
+TELEGRAM_REQUIRED_CHAT_IDS = "@RO_Bookshelf"
 TELEGRAM_API_BASE_URL = "https://pdf-relay.rz99systems.com"
 MAX_FILE_BYTES = "167772160"
 CATALOG_ORIGIN = "https://thuthayatethar.rz99systems.com"
