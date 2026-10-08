@@ -35,6 +35,14 @@ type BookGroup = {
   chapters: Book[];
 };
 
+type RecentReading = {
+  group: BookGroup;
+  book: Book;
+  page: number;
+  totalPages: number;
+  updatedAt: number;
+};
+
 const books: Book[] = [
   {
     id: 1,
@@ -210,6 +218,35 @@ function getReadingProgress(book: Book) {
   } catch { return 0; }
 }
 
+function getRecentReadings(booksToRead: Book[]): RecentReading[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const readableBooks = booksToRead.filter((book) => book.rights === "full" && !book.externalUrl && Boolean(book.pdfUrl || book.pages.length));
+    const recent: RecentReading[] = [];
+    for (const group of groupBooks(readableBooks)) {
+      const chapterEntries: RecentReading[] = [];
+      for (const book of group.chapters) {
+        const key = readingProgressKey(book);
+        const storedPage = localStorage.getItem(key);
+        if (storedPage === null) continue;
+        const page = Number(storedPage);
+        if (!Number.isInteger(page) || page < 0) continue;
+        const storedTotal = Number(localStorage.getItem(`${key}:total`));
+        chapterEntries.push({
+          group,
+          book,
+          page,
+          totalPages: Number.isInteger(storedTotal) && storedTotal > 0 ? storedTotal : book.pages.length,
+          updatedAt: Number(localStorage.getItem(`${key}:updatedAt`)) || 0,
+        });
+      }
+      chapterEntries.sort((left, right) => right.updatedAt - left.updatedAt);
+      if (chapterEntries[0]) recent.push(chapterEntries[0]);
+    }
+    return recent.sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 3);
+  } catch { return []; }
+}
+
 function matchesTime(minutes: number, time: string) {
   if (time === "၁၅ မိနစ်အောက်") return minutes < 15;
   if (time === "၁၅–၂၅ မိနစ်") return minutes >= 15 && minutes <= 25;
@@ -276,7 +313,17 @@ export default function HomePage() {
   const [lineHeight, setLineHeight] = useState(1.8);
   const [offlinePackState, setOfflinePackState] = useState<"idle" | "saving" | "done" | "error">("idle");
   const [offlinePackProgress, setOfflinePackProgress] = useState(0);
+  const [progressRevision, setProgressRevision] = useState(0);
   useEffect(() => { writeLocalValue("thuthayatethar:reader-theme", theme); }, [theme]);
+  useEffect(() => {
+    const refreshProgress = () => setProgressRevision((revision) => revision + 1);
+    window.addEventListener("thuthayatethar:progress", refreshProgress);
+    window.addEventListener("storage", refreshProgress);
+    return () => {
+      window.removeEventListener("thuthayatethar:progress", refreshProgress);
+      window.removeEventListener("storage", refreshProgress);
+    };
+  }, []);
 
   useEffect(() => {
     const cached = readLocalValue("thuthayatethar:catalog");
@@ -294,32 +341,39 @@ export default function HomePage() {
       .then((response) => response.json())
       .then((payload: { ok?: boolean; configured?: boolean; books?: Array<Partial<Book> & { id?: string | number; pages?: string[]; pdfUrl?: string }> }) => {
         if (payload.ok !== true || payload.configured === false || !Array.isArray(payload.books)) { if (!cached) setCatalogBooks([]); return; }
-        const nextBooks: Book[] = payload.books.map((book, index) => ({
-          id: typeof book.id === "number" ? book.id : index + 1,
-          title: book.title ?? "စာအုပ်အသစ်",
-          author: book.author ?? "မသိရသေးသော စာရေးသူ",
-          category: book.category ?? "အခြား",
-          year: book.year ?? "—",
-          readingTime: book.readingTime ?? 10,
-          pages: book.pages ?? [],
-          summary: book.summary ?? "",
-          color: book.color ?? coverPalette[index % coverPalette.length][0],
-          accent: book.accent ?? coverPalette[index % coverPalette.length][1],
-          mark: book.mark ?? "စာ",
-          rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
-          tag: book.tag ?? "ထုတ်ဝေထားသည်",
-          // Keep the ingestion PDF URL when available so PDF.js can use the
-          // origin's byte ranges for reliable page-1 cover rendering. The
-          // local proxy remains the fallback for older catalog records.
-          pdfUrl: book.pdfUrl ?? (book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : undefined),
-          // The catalog may omit coverImage even when ingestion stored a cover
-          // in R2. Probe the stable cover endpoint first, then let BookCover
-          // fall back to PDF page 1 when that endpoint returns 404.
-          coverImage: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/cover` : book.coverImage,
-          externalUrl: book.externalUrl,
-          sourceType: book.sourceType,
-          slug: book.slug,
-        }));
+        const nextBooks: Book[] = payload.books.map((book, index) => {
+          const isTianGuanCiFu = book.slug?.startsWith("tian-guan-ci-fu-") ||
+            book.title?.toLowerCase().includes("tian guan ci fu");
+          return {
+            id: typeof book.id === "number" ? book.id : index + 1,
+            title: book.title ?? "စာအုပ်အသစ်",
+            author: book.author ?? "မသိရသေးသော စာရေးသူ",
+            category: book.category ?? "အခြား",
+            year: book.year ?? "—",
+            readingTime: book.readingTime ?? 10,
+            pages: book.pages ?? [],
+            summary: book.summary ?? "",
+            color: book.color ?? coverPalette[index % coverPalette.length][0],
+            accent: book.accent ?? coverPalette[index % coverPalette.length][1],
+            mark: book.mark ?? "စာ",
+            rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
+            tag: book.tag ?? "ထုတ်ဝေထားသည်",
+            // Keep the ingestion PDF URL when available so PDF.js can use the
+            // origin's byte ranges for reliable page-1 cover rendering. The
+            // local proxy remains the fallback for older catalog records.
+            pdfUrl: book.pdfUrl ?? (book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : undefined),
+            // Use a bundled cover for every chapter in this series because the
+            // ingestion catalog currently has no cover object for these PDFs.
+            coverImage: isTianGuanCiFu
+              ? "/covers/tian-guan-ci-fu.jpg"
+              : book.slug
+                ? `/api/books/${encodeURIComponent(book.slug)}/cover`
+                : book.coverImage,
+            externalUrl: book.externalUrl,
+            sourceType: book.sourceType,
+            slug: book.slug,
+          };
+        });
         setCatalogBooks(nextBooks);
         writeLocalValue("thuthayatethar:catalog", JSON.stringify(nextBooks));
       })
@@ -343,6 +397,7 @@ export default function HomePage() {
 
   const availableBooks = catalogBooks ?? [];
   const downloadableBooks = availableBooks.filter((book) => book.rights === "full" && Boolean(book.pdfUrl));
+  const recentReadings = useMemo(() => getRecentReadings(availableBooks), [availableBooks, progressRevision]);
 
   async function saveOfflinePack() {
     if (!("caches" in window) || !downloadableBooks.length) return;
@@ -360,7 +415,7 @@ export default function HomePage() {
           const response = await fetch(book.pdfUrl!, { cache: "no-store" });
           if (!response.ok) throw new Error("offline_pack_pdf_failed");
           await cache.put(book.pdfUrl!, response.clone());
-          if (book.coverImage) {
+          if (book.coverImage && !(await cache.match(book.coverImage))) {
             const coverResponse = await fetch(book.coverImage, { cache: "no-store" });
             if (coverResponse.ok) await cache.put(book.coverImage, coverResponse.clone());
           }
@@ -405,7 +460,13 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!readerBook || readerBook.pages.length === 0) return;
-    try { localStorage.setItem(readingProgressKey(readerBook), String(page)); } catch { /* Storage may be disabled. */ }
+    try {
+      const key = readingProgressKey(readerBook);
+      localStorage.setItem(key, String(page));
+      localStorage.setItem(`${key}:total`, String(readerBook.pages.length));
+      localStorage.setItem(`${key}:updatedAt`, String(Date.now()));
+      window.dispatchEvent(new Event("thuthayatethar:progress"));
+    } catch { /* Storage may be disabled. */ }
   }, [readerBook, page]);
 
   const closeReader = () => {
@@ -434,6 +495,22 @@ export default function HomePage() {
 
       <section className="catalog-section" id="catalog">
         <div className="section-heading"><div><p className="eyebrow">စာကြည့်တိုက်</p><h2>ဒီနေ့ ဖတ်စရာများ</h2></div><div className="catalog-actions"><span className="result-count">{filteredGroups.length} အုပ် ရှာတွေ့သည်</span><button type="button" className="offline-pack-button" onClick={saveOfflinePack} disabled={offlinePackState === "saving" || !downloadableBooks.length}>{offlinePackState === "saving" ? `Offline သိမ်းနေသည် ${offlinePackProgress}/${downloadableBooks.length}` : offlinePackState === "done" ? "✓ Offline အသင့်" : "Offline အားလုံးသိမ်းမည်"}</button>{offlinePackState === "error" && <small className="offline-pack-error">အချို့စာအုပ်များ မသိမ်းနိုင်ပါ။ Internet ကို စစ်ပါ။</small>}</div></div>
+        {recentReadings.length > 0 && <section className="continue-reading" aria-labelledby="continue-reading-title">
+          <div className="continue-heading"><div><p className="eyebrow">ဖတ်လက်စ</p><h3 id="continue-reading-title">ဆက်လက်ဖတ်ရှုရန်</h3></div><span>ဒီစက်တွင် သိမ်းထားသော ဖတ်ရှုနေရာ</span></div>
+          <div className="continue-grid">{recentReadings.map((item) => {
+            const progress = item.totalPages > 0 ? Math.min(100, Math.round(((item.page + 1) / item.totalPages) * 100)) : 0;
+            return <article className="continue-card" key={item.book.slug ?? item.book.id}>
+              <div className="continue-book-mark" style={{ "--book-color": item.book.color, "--book-accent": item.book.accent } as CSSProperties} aria-hidden="true"><span /></div>
+              <div className="continue-info">
+                <p className="continue-book-title">{groupTitle(item.group)}</p>
+                <h4>{item.group.chapters.length > 1 ? chapterLabel(item.book) : "စာအုပ်တစ်အုပ်လုံး"}</h4>
+                <div className="continue-position"><span>{item.totalPages > 0 ? `စာမျက်နှာ ${item.page + 1} / ${item.totalPages}` : `စာမျက်နှာ ${item.page + 1}`}</span>{item.totalPages > 0 && <span>{progress}%</span>}</div>
+                {item.totalPages > 0 && <div className="continue-progress" role="progressbar" aria-label={`${groupTitle(item.group)} ဖတ်ရှုမှု`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>}
+                <button type="button" className="continue-resume" onClick={() => openReader(item.book)} aria-label={`${groupTitle(item.group)} ကို ဆက်ဖတ်မည်`}>ဆက်ဖတ်မည် →</button>
+              </div>
+            </article>;
+          })}</div>
+        </section>}
         <div className="catalog-layout">
           <aside className="filters" aria-label="စာအုပ်စစ်ထုတ်မှုများ">
             <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="စာအုပ်ရှာရန်..." aria-label="စာအုပ်ရှာရန်" /><kbd>⌘ K</kbd></label>
@@ -461,16 +538,13 @@ function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; o
   const { book, chapters } = group;
   const [selectedChapterId, setSelectedChapterId] = useState<number>(chapters[0]?.id ?? 0);
   const selectedChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0];
-  // Keep catalog cards short: a long pill list pushes the next row below
-  // the fold, so switch to the compact picker after three visible chapters.
-  const manyChapters = chapters.length > 3;
   return <article className="book-card" style={{ "--book-color": book.color, "--book-accent": book.accent, "--index": index } as CSSProperties}>
     <button type="button" className="cover-wrap" onClick={() => onOpen(book)} aria-label={`${book.title} အသေးစိတ်ကြည့်ရန်`}>
       <BookCover book={book} label={String(index + 1).padStart(2, "0")} />
-      {book.rights === "summary" && <span className="summary-ribbon">အကျဉ်းချုပ်သာ</span>}
+      {book.rights === "summary" && !book.coverImage && !book.pdfUrl && <span className="summary-ribbon">အကျဉ်းချုပ်သာ</span>}
     </button>
     <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{groupTitle(group)}</h3><p className="book-author">{book.author}</p>{book.externalUrl && <small className="external-source-label">Wattpad မူရင်းစာမျက်နှာမှ ဖတ်ရှုရန်</small>}</div><button className="round-arrow" type="button" onClick={() => onOpen(book)} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
-    {chapters.length > 1 && <div className={`chapter-list${manyChapters ? " chapter-list-compact" : ""}`} aria-label={`${groupTitle(group)} အခန်းများ`}><span className="chapter-list-label">အခန်း {chapters.length} ခန်း</span>{manyChapters ? <div className="chapter-picker"><label htmlFor={`chapter-picker-${book.id}`}>ရွေးရန်</label><select id={`chapter-picker-${book.id}`} value={selectedChapterId} onChange={(event) => setSelectedChapterId(Number(event.target.value))}>{chapters.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapterLabel(chapter)}</option>)}</select><button type="button" className="chapter-open-button" onClick={() => selectedChapter && onOpen(selectedChapter)}>ဖတ်မည် →</button></div> : <div className="chapter-pills">{chapters.map((chapter) => <button key={chapter.id} type="button" className="chapter-pill" onClick={() => onOpen(chapter)}><span>{chapterLabel(chapter)}</span><b>ဖတ်မည် →</b></button>)}</div>}</div>}
+    {chapters.length > 1 && <div className="chapter-list" aria-label={`${groupTitle(group)} အခန်းများ`}><span className="chapter-list-label">အခန်း {chapters.length} ခန်း · ဖတ်လိုသည့်အခန်း</span><div className="chapter-picker"><div className="chapter-select-wrap"><select id={`chapter-picker-${book.id}`} value={selectedChapterId} onChange={(event) => setSelectedChapterId(Number(event.target.value))} aria-label={`${groupTitle(group)} အခန်းရွေးရန်`}>{chapters.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapterLabel(chapter)}</option>)}</select></div><button type="button" className="chapter-open-button" onClick={() => selectedChapter && onOpen(selectedChapter)}>ဖတ်မည် →</button></div></div>}
     <div className="book-stats"><span>{chapters.length > 1 ? `◷ ${chapters.length} ခန်း` : book.externalUrl ? "Wattpad မူရင်း link" : `◷ ${book.readingTime} မိနစ်`}</span><span className={book.externalUrl ? "rights-summary" : book.rights === "full" ? "rights-full" : "rights-summary"}>{book.externalUrl ? "မူရင်းမှာဖတ်မည်" : book.rights === "full" ? "ဖတ်ရှုနိုင်သည်" : "အကျဉ်းချုပ်"}</span></div>
   </article>;
 }
@@ -506,7 +580,29 @@ function BookCover({ book, label }: { book: Book; label: string }) {
     return () => { active = false; };
   }, [book.pdfUrl, usePdfCover]);
   const backgroundImage = usePdfCover ? pdfCover : book.coverImage;
-  return <div className="book-cover" style={backgroundImage ? { backgroundImage: `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${backgroundImage})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}>{book.coverImage && <img className="cover-image-probe" src={book.coverImage} onError={() => setCoverImageFailed(true)} alt="" aria-hidden="true" />}{usePdfCover && !pdfCover && book.pdfUrl && <span className="cover-loading">…</span>}<span className="cover-number">{label}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div>;
+  const hasArtwork = Boolean(backgroundImage) && (!usePdfCover || Boolean(pdfCover));
+  const coverStyle: CSSProperties | undefined = backgroundImage
+    ? {
+        backgroundImage: hasArtwork
+          ? `url(${backgroundImage})`
+          : `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${backgroundImage})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+      }
+    : undefined;
+  return (
+    <div className={hasArtwork ? "book-cover book-cover-artwork" : "book-cover"} style={coverStyle}>
+      {book.coverImage && <img className="cover-image-probe" src={book.coverImage} onError={() => setCoverImageFailed(true)} alt="" aria-hidden="true" />}
+      {usePdfCover && !pdfCover && book.pdfUrl && <span className="cover-loading" aria-hidden="true" />}
+      {!hasArtwork && <>
+        <span className="cover-number">{label}</span>
+        <span className="cover-mark">{book.mark}</span>
+        <strong>{book.title}</strong>
+        <small>{book.author}</small>
+        <i aria-hidden="true">✦</i>
+      </>}
+    </div>
+  );
 }
 
 function BookDetail({ book, onClose, onRead }: { book: Book; onClose: () => void; onRead: () => void }) {
@@ -540,18 +636,18 @@ function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Them
   async function saveOffline() {
     if (!book.pdfUrl || !("caches" in window)) return;
     setSavingOffline(true);
-    try { const response = await fetch(book.pdfUrl, { cache: "no-store" }); if (!response.ok) throw new Error("offline_download_failed"); const cache = await caches.open("thuthayatethar-books-v2"); await cache.put(book.pdfUrl, response.clone()); localStorage.setItem(`thuthayatethar:offline:${book.slug ?? book.id}`, "1"); setOfflineSaved(true); } catch { setOfflineSaved(false); } finally { setSavingOffline(false); }
+    try { const response = await fetch(book.pdfUrl, { cache: "no-store" }); if (!response.ok) throw new Error("offline_download_failed"); const cache = await caches.open("thuthayatethar-books-v3"); await cache.put(book.pdfUrl, response.clone()); writeLocalValue(`thuthayatethar:offline:${book.slug ?? book.id}`, "1"); setOfflineSaved(true); } catch { setOfflineSaved(false); } finally { setSavingOffline(false); }
   }
-  useEffect(() => { setOfflineSaved(localStorage.getItem(`thuthayatethar:offline:${book.slug ?? book.id}`) === "1"); }, [book.id, book.slug]);
+  useEffect(() => { setOfflineSaved(readLocalValue(`thuthayatethar:offline:${book.slug ?? book.id}`) === "1"); }, [book.id, book.slug]);
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const cache = await caches.open("thuthayatethar-books-v2");
+        const cache = await caches.open("thuthayatethar-books-v3");
         const cached = await cache.match(book.pdfUrl!);
         const saved = Boolean(cached);
         if (active) setOfflineSaved(saved);
-        if (!saved) localStorage.removeItem(`thuthayatethar:offline:${book.slug ?? book.id}`);
+        if (!saved) try { localStorage.removeItem(`thuthayatethar:offline:${book.slug ?? book.id}`); } catch { /* Storage may be unavailable. */ };
       } catch { if (active) setOfflineSaved(false); }
     })();
     return () => { active = false; };
