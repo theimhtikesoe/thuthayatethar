@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
+import dynamic from "next/dynamic";
+
+const FlipBook = dynamic(() => import("./FlipBook"), { ssr: false });
 
 type Rights = "full" | "summary";
 type Theme = "paper" | "sepia" | "night";
@@ -353,7 +356,7 @@ function BookDetail({ book, onClose, onRead }: { book: Book; onClose: () => void
 type ReaderProps = { book: Book; page: number; setPage: (page: number) => void; theme: Theme; setTheme: (theme: Theme) => void; fontScale: number; setFontScale: (scale: number) => void; lineHeight: number; setLineHeight: (height: number) => void; onClose: () => void };
 
 function PdfReader({ book, theme, onClose }: { book: Book; theme: Theme; onClose: () => void }) {
-  return <div className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose}>← <span>စာကြည့်တိုက်သို့ ပြန်မည်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></header><div className="pdf-reader-workspace"><iframe className="pdf-reader-frame" src={book.pdfUrl} title={`${book.title} PDF`} /></div><footer className="reader-nav"><span>စာအုပ်အပြည့်အစုံကို browser ထဲတွင်သာ ဖတ်ရှုနိုင်ပါသည်။</span></footer></div>;
+  return <div className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose}>← <span>စာကြည့်တိုက်သို့ ပြန်မည်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></header><div className="pdf-reader-workspace"><FlipBook url={book.pdfUrl ?? ""} title={book.title} /></div><footer className="reader-nav"><span>စာအုပ်အပြည့်အစုံကို browser ထဲတွင်သာ ဖတ်ရှုနိုင်ပါသည်။</span></footer></div>;
 }
 
 function Reader({ book, page, setPage, theme, setTheme, fontScale, setFontScale, lineHeight, setLineHeight, onClose }: ReaderProps) {

@@ -1,0 +1,55 @@
+# Copy to /opt/telegram-local-bot-api/compose.override.yaml after cloning the repo.
+# Keep the base compose.yaml and its existing API-ID/HASH .env unchanged.
+services:
+  pdf-relay:
+    build:
+      context: /opt/thuthayatethar/infra/vps/pdf-relay
+    container_name: pdf-relay
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - telegram-local-api
+    expose:
+      - "8090"
+    volumes:
+      - telegram-bot-api-data:/var/lib/telegram-bot-api:ro
+    networks:
+      - default
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: pdf-relay-cloudflared
+    restart: unless-stopped
+    # The mounted token file is mode 600 and owned by root on the VPS.
+    # Keep root confined to this read-only, capability-free container.
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    profiles:
+      - tunnel
+    secrets:
+      - tunnel_token
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token-file
+      - /run/secrets/tunnel_token
+    depends_on:
+      - pdf-relay
+    networks:
+      - default
+
+secrets:
+  tunnel_token:
+    file: /opt/telegram-local-bot-api/tunnel-token
