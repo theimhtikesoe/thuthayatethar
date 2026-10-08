@@ -119,14 +119,18 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     if (!doc) throw new Error("PDF is not ready");
     const page = await doc.getPage(n);
     const base = page.getViewport({ scale: 1 }).width;
-    const px = Math.min(cssWidth * Math.min(window.devicePixelRatio || 1, 1.6), 2400);
+    // Render above the CSS size so scanned text stays sharp on Retina displays
+    // and remains readable when the high-resolution zoom layer is shown.
+    const px = Math.min(cssWidth * Math.min(window.devicePixelRatio || 1, 2), 3200);
     const vp = page.getViewport({ scale: px / base });
     const canvas = document.createElement("canvas");
     canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Canvas is not available");
     await page.render({ canvasContext: context, viewport: vp }).promise;
-    const original = canvas.toDataURL("image/jpeg", 0.84);
+    // A higher JPEG quality avoids blocky glyphs and thin Myanmar strokes while
+    // keeping memory usage much lower than a PNG for scanned pages.
+    const original = canvas.toDataURL("image/jpeg", 0.94);
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
     const { top, bottom } = whiteMarginBounds(pixels.data, canvas.width, canvas.height);
     context.clearRect(0, 0, canvas.width, top);
