@@ -403,33 +403,8 @@ export default function HomePage() {
         </a>
         <nav className="topnav" aria-label="အဓိကမီနူး">
           <a className="active" href="#catalog">စာအုပ်များ</a>
-          <a href="#about">အကြောင်း</a>
-          <button className="quiet-button" type="button" onClick={() => setSelected(books[0])}>ဒီနေ့ဖတ်ရန် <span>↗</span></button>
         </nav>
       </header>
-
-      <section className="hero" id="top">
-        <div className="hero-copy">
-          <p className="eyebrow"><span className="eyebrow-dot"></span> မြန်မာစာပေ စုစည်းရာ</p>
-          <h1>ဖတ်ချင်စိတ်ကို<br /><em>ဒီမှာ</em> စတင်ပါ</h1>
-          <p className="hero-intro">စာမျက်နှာတစ်မျက်နှာချင်းစီမှာ အေးဆေးတဲ့အချိန်တစ်ခု ရှိနေတယ်။ စာအုပ်ကောင်းတွေကို ရှာဖွေပြီး ကိုယ့်ရဲ့နေ့ရက်ထဲမှာ နေရာပေးလိုက်ပါ။</p>
-          <div className="hero-actions">
-            <a className="primary-button" href="#catalog">စာအုပ်များကြည့်မည် <span>↓</span></a>
-            <span className="hero-note">မူပိုင်ခွင့်ခွင့်ပြုချက်ရှိသော<br />အကြောင်းအရာများကိုသာ ဖတ်ရှုနိုင်သည်</span>
-          </div>
-        </div>
-        <div className="hero-visual" aria-label="စာအုပ်ဖွင့်ထားသော ပုံရိပ်">
-          <div className="orbit orbit-one"></div><div className="orbit orbit-two"></div>
-          <div className="hero-book hero-book-back"><span>စာဖတ်ခြင်း<br />ဟာ ခရီးတစ်ခု</span></div>
-          <div className="hero-book hero-book-main"><div className="hero-book-line"></div><strong>သုတ<br />ရိပ်သာ</strong><small>စာမျက်နှာတွေကြားက<br />ငြိမ်သက်မှု</small><i>✦</i></div>
-          <div className="book-caption"><span>01</span><p>ယနေ့အတွက် စာအုပ်တစ်အုပ်<br /><b>လမ်းလျှောက်ရင်း ဖတ်မလား?</b></p></div>
-        </div>
-      </section>
-
-      <section className="collection-intro" id="about">
-        <div><p className="eyebrow">ကျွန်ုပ်တို့ရဲ့ ရည်ရွယ်ချက်</p><h2>စာအုပ်တစ်အုပ်က<br />အချိန်တစ်ခုကို <em>ပေးတယ်</em></h2></div>
-        <p className="collection-copy">သုတရိပ်သာမှာ မြန်မာစာရေးဆရာတွေရဲ့ အသံတွေ၊ ဇာတ်လမ်းတွေ၊ အတွေးတွေကို စုစည်းထားပါတယ်။ အလျင်မလိုဘဲ ရှာဖွေပါ။ ကိုယ့်စိတ်နဲ့ ကိုက်ညီတဲ့ စာအုပ်ကိုတွေ့တဲ့အခါ စာမျက်နှာကို ဖြည်းဖြည်းဖွင့်ပါ။</p>
-      </section>
 
       <section className="catalog-section" id="catalog">
         <div className="section-heading"><div><p className="eyebrow">စာကြည့်တိုက်</p><h2>ဒီနေ့ ဖတ်စရာများ</h2></div><div className="catalog-actions"><span className="result-count">{filteredGroups.length} အုပ် ရှာတွေ့သည်</span><button type="button" className="offline-pack-button" onClick={saveOfflinePack} disabled={offlinePackState === "saving" || !downloadableBooks.length}>{offlinePackState === "saving" ? `Offline သိမ်းနေသည် ${offlinePackProgress}/${downloadableBooks.length}` : offlinePackState === "done" ? "✓ Offline အသင့်" : "Offline အားလုံးသိမ်းမည်"}</button>{offlinePackState === "error" && <small className="offline-pack-error">အချို့စာအုပ်များ မသိမ်းနိုင်ပါ။ Internet ကို စစ်ပါ။</small>}</div></div>
@@ -439,7 +414,6 @@ export default function HomePage() {
             <div className="filter-block"><p>အမျိုးအစား</p>{categories.map((item) => <button type="button" key={item} className={category === item ? "filter-pill selected" : "filter-pill"} onClick={() => setCategory(item)}>{item}<span>{item === "အားလုံး" ? availableBooks.length : availableBooks.filter((book) => book.category === item).length}</span></button>)}</div>
             <div className="filter-block"><p>ဖတ်ရှုချိန်</p>{times.map((item) => <button type="button" key={item} className={time === item ? "filter-pill selected" : "filter-pill"} onClick={() => setTime(item)}>{item}</button>)}</div>
             {(query || category !== "အားလုံး" || time !== "အားလုံး") && <button type="button" className="reset-button" onClick={resetFilters}>စစ်ထုတ်မှုများ ရှင်းမည် ↺</button>}
-            <div className="rights-note"><span>✓</span><div><strong>ဖတ်ရှုရန်သီးသန့်</strong><small>PDF ဖိုင်ကို download မလုပ်နိုင်ပါ၊ browser ထဲ offline ဖတ်ရန် သိမ်းနိုင်သည်။</small></div></div>
           </aside>
           <div className="book-grid" aria-live="polite">
             {catalogLoading && <div className="empty-state"><span>…</span><h3>စာအုပ်များကို ရယူနေသည်</h3><p>နောက်ဆုံး catalog ကို ခဏစောင့်ပေးပါ။</p></div>}
