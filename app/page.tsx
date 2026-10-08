@@ -222,7 +222,16 @@ export default function HomePage() {
 
   useEffect(() => {
     const cached = localStorage.getItem("thuthayatethar:catalog");
-    if (cached) { try { setCatalogBooks(JSON.parse(cached)); } catch {} }
+    if (cached) {
+      try {
+        const cachedBooks = JSON.parse(cached) as Book[];
+        if (Array.isArray(cachedBooks)) {
+          setCatalogBooks(cachedBooks);
+          // Show cached cards immediately while the network refresh runs.
+          setCatalogLoading(false);
+        }
+      } catch { /* Ignore a stale/corrupt cache and use the network response. */ }
+    }
     fetch("/api/catalog", { cache: "no-store" })
       .then((response) => response.json())
       .then((payload: { ok?: boolean; configured?: boolean; books?: Array<Partial<Book> & { id?: string | number; pages?: string[]; pdfUrl?: string }> }) => {
@@ -415,11 +424,20 @@ function BookCard({ book, index, onOpen }: { book: Book; index: number; onOpen: 
 function BookCover({ book, label }: { book: Book; label: string }) {
   const [pdfCover, setPdfCover] = useState<string | null>(null);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
-  const usePdfCover = !book.coverImage || coverImageFailed;
+  const [pdfCoverRequested, setPdfCoverRequested] = useState(false);
+  const usePdfCover = coverImageFailed || (!book.coverImage && pdfCoverRequested);
   useEffect(() => {
     setCoverImageFailed(false);
     setPdfCover(null);
+    setPdfCoverRequested(false);
   }, [book.coverImage, book.pdfUrl]);
+  useEffect(() => {
+    if (book.coverImage || !book.pdfUrl || coverImageFailed) return;
+    // Do not let a missing cover make every catalog card compete for PDF data.
+    // The colored cover is shown first; the PDF cover is only a quiet fallback.
+    const timer = window.setTimeout(() => setPdfCoverRequested(true), 900);
+    return () => window.clearTimeout(timer);
+  }, [book.coverImage, book.pdfUrl, coverImageFailed]);
   useEffect(() => {
     if (!usePdfCover || !book.pdfUrl) return;
     let active = true;

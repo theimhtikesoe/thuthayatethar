@@ -51,12 +51,17 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
         const pdfjs: any = await import("pdfjs-dist");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
         const loaded = await pdfjs.getDocument({ url, withCredentials: false, disableAutoFetch: true, disableStream: false, rangeChunkSize: 262144 }).promise;
-        const first = await loaded.getPage(1);
-        const vp = first.getViewport({ scale: 1 });
         if (cancelled) return;
         setCurrent((page) => Math.min(Math.max(0, page), loaded.numPages - 1));
-        setRatio(vp.height / vp.width);
         setDoc(loaded);
+        // The document already exposes numPages at this point. Start rendering
+        // the saved/current page immediately instead of blocking on page 1 just
+        // to calculate the aspect ratio; refine the layout when page 1 arrives.
+        loaded.getPage(1).then((first: any) => {
+          if (cancelled) return;
+          const vp = first.getViewport({ scale: 1 });
+          setRatio(vp.height / vp.width);
+        }).catch(() => { /* Keep the default book ratio if metadata is slow. */ });
       } catch {
         if (!cancelled) setError("PDF ကို ဖွင့်၍ မရပါ။");
       }

@@ -15,6 +15,7 @@ export async function GET(_request: Request, { params }: { params: { slug: strin
       const value = response.headers.get(name);
       if (value) headers.set(name, value);
     }
+    if (!headers.has("cache-control")) headers.set("cache-control", "public, max-age=3600, stale-while-revalidate=86400");
     return new Response(response.body, { status: response.status, headers });
   } catch {
     return NextResponse.json({ ok: false, error: "cover_unavailable" }, { status: 502 });

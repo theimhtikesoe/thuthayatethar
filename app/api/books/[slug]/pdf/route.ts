@@ -18,6 +18,7 @@ export async function GET(request: Request, { params }: { params: { slug: string
       const value = response.headers.get(name);
       if (value) responseHeaders.set(name, value);
     }
+    if (!responseHeaders.has("cache-control")) responseHeaders.set("cache-control", "public, max-age=3600, stale-while-revalidate=86400");
     return new Response(response.body, { status: response.status, headers: responseHeaders });
   } catch { return NextResponse.json({ ok: false, error: "pdf_unavailable" }, { status: 502 }); }
 }
