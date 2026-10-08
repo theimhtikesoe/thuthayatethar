@@ -387,7 +387,7 @@ export default function HomePage() {
           </aside>
           <div className="book-grid" aria-live="polite">
             {catalogLoading && <div className="empty-state"><span>…</span><h3>စာအုပ်များကို ရယူနေသည်</h3><p>နောက်ဆုံး catalog ကို ခဏစောင့်ပေးပါ။</p></div>}
-            {!catalogLoading && filteredBooks.map((book, index) => <BookCard key={book.id} book={book} index={index} onOpen={() => setSelected(book)} />)}
+            {!catalogLoading && filteredBooks.map((book, index) => <BookCard key={book.id} book={book} index={index} onOpen={() => book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)} />)}
             {!catalogLoading && !filteredBooks.length && <div className="empty-state"><span>⌁</span><h3>ဒီလိုစာအုပ် မတွေ့သေးပါ</h3><p>လက်ရှိ Website catalog ထဲမှာ ထုတ်ဝေထားသောစာအုပ် မရှိသေးပါ။</p><button className="primary-button" type="button" onClick={resetFilters}>အားလုံးပြန်ကြည့်မည်</button></div>}
           </div>
         </div>
