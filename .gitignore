@@ -8,3 +8,4 @@ out
 .vercel
 .env*.local
 infra/cloudflare/wrangler.toml
+/public/pdf.worker.min.js

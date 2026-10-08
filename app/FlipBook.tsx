@@ -5,7 +5,6 @@ import HTMLFlipBook from "react-pageflip";
 
 type PdfDoc = { numPages: number; getPage: (n: number) => Promise<any> };
 
-const PDFJS_VERSION = "3.11.174";
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.5;
@@ -20,12 +19,18 @@ const Page = forwardRef<HTMLDivElement, { src?: string; number: number; total: n
   </div>;
 });
 
-export default function FlipBook({ url, title }: { url: string; title: string }) {
+export default function FlipBook({ url, title, progressKey }: { url: string; title: string; progressKey: string }) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<Record<number, string>>({});
   const [hires, setHires] = useState<Record<string, string>>({});
-  const [current, setCurrent] = useState(0);
+  const [current, setCurrent] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem(progressKey));
+      return Number.isInteger(saved) && saved >= 0 ? saved : 0;
+    } catch { return 0; }
+  });
+  const [bookResetVersion, setBookResetVersion] = useState(0);
   const [size, setSize] = useState({ w: 420, h: 594, single: false });
   const [ratio, setRatio] = useState(1.414);
   const [zoom, setZoom] = useState(1);
@@ -33,6 +38,7 @@ export default function FlipBook({ url, title }: { url: string; title: string })
   const book = useRef<any>(null);
   const stage = useRef<HTMLDivElement>(null);
   const rendering = useRef(new Set<string>());
+  const jumpResetTimer = useRef<number | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ dist: number; zoom: number; x: number; y: number; px: number; py: number } | null>(null);
   const lastTap = useRef(0);
@@ -42,11 +48,12 @@ export default function FlipBook({ url, title }: { url: string; title: string })
     (async () => {
       try {
         const pdfjs: any = await import("pdfjs-dist");
-        pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${PDFJS_VERSION}/build/pdf.worker.min.js`;
+        pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
         const loaded = await pdfjs.getDocument({ url, withCredentials: false, disableAutoFetch: true, disableStream: false, rangeChunkSize: 262144 }).promise;
         const first = await loaded.getPage(1);
         const vp = first.getViewport({ scale: 1 });
         if (cancelled) return;
+        setCurrent((page) => Math.min(Math.max(0, page), loaded.numPages - 1));
         setRatio(vp.height / vp.width);
         setDoc(loaded);
       } catch {
@@ -79,12 +86,12 @@ export default function FlipBook({ url, title }: { url: string; title: string })
   const draw = useCallback(async (n: number, cssWidth: number) => {
     const page = await doc!.getPage(n);
     const base = page.getViewport({ scale: 1 }).width;
-    const px = Math.min(cssWidth * Math.min(window.devicePixelRatio || 1, 2), 3000);
+    const px = Math.min(cssWidth * Math.min(window.devicePixelRatio || 1, 1.6), 2400);
     const vp = page.getViewport({ scale: px / base });
     const canvas = document.createElement("canvas");
     canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
     await page.render({ canvasContext: canvas.getContext("2d")!, viewport: vp }).promise;
-    return canvas.toDataURL("image/jpeg", 0.88);
+    return canvas.toDataURL("image/jpeg", 0.84);
   }, [doc]);
 
   const renderPage = useCallback(async (n: number) => {
@@ -93,14 +100,25 @@ export default function FlipBook({ url, title }: { url: string; title: string })
     rendering.current.add(key);
     try {
       const data = await draw(n, size.w);
-      setImages((prev) => ({ ...prev, [n]: data }));
-    } catch { rendering.current.delete(key); }
-  }, [doc, size.w, draw]);
+      setImages((prev) => {
+        const next = { ...prev, [n]: data };
+        for (const page of Object.keys(next)) {
+          if (Math.abs(Number(page) - (current + 1)) > 6) delete next[Number(page)];
+        }
+        return next;
+      });
+    } catch { /* The page can be retried on the next navigation. */ }
+    finally { rendering.current.delete(key); }
+  }, [doc, size.w, draw, current]);
 
   useEffect(() => {
     if (!doc) return;
     for (let n = current - 1; n <= current + 3; n++) renderPage(n + 1);
   }, [doc, current, renderPage]);
+
+  const saveProgress = useCallback((page: number) => {
+    try { localStorage.setItem(progressKey, String(page)); } catch { /* Storage may be disabled. */ }
+  }, [progressKey]);
 
   // Pages visible on the current spread (1-based).
   const total = doc?.numPages ?? 0;
@@ -122,7 +140,8 @@ export default function FlipBook({ url, title }: { url: string; title: string })
       try {
         const data = await draw(n, size.w * zoomLevel);
         setHires((prev) => ({ ...prev, [key]: data }));
-      } catch { rendering.current.delete(key); }
+      } catch { /* The high-resolution image can be retried later. */ }
+      finally { rendering.current.delete(key); }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc, zoom > 1, zoomLevel, current, size.w, draw]);
@@ -152,7 +171,17 @@ export default function FlipBook({ url, title }: { url: string; title: string })
 
   const flipNext = () => book.current?.pageFlip()?.flipNext();
   const flipPrev = () => book.current?.pageFlip()?.flipPrev();
-  const goTo = (p: number) => { setCurrent(p); book.current?.pageFlip()?.turnToPage(p); setPan({ x: 0, y: 0 }); };
+  const goTo = (p: number, deferReset = false) => {
+    const next = clamp(p, 0, Math.max(0, total - 1));
+    setCurrent(next);
+    saveProgress(next);
+    if (jumpResetTimer.current !== null) window.clearTimeout(jumpResetTimer.current);
+    if (deferReset) {
+      jumpResetTimer.current = window.setTimeout(() => setBookResetVersion((version) => version + 1), 120);
+    } else setBookResetVersion((version) => version + 1);
+    setPan({ x: 0, y: 0 });
+  };
+  useEffect(() => () => { if (jumpResetTimer.current !== null) window.clearTimeout(jumpResetTimer.current); }, []);
   const zoomed = zoom > 1;
 
   useEffect(() => {
@@ -252,7 +281,7 @@ export default function FlipBook({ url, title }: { url: string; title: string })
       {!error && !doc && <div className="flip-status"><span className="flip-spinner"></span>စာအုပ်ကို ဖွင့်နေသည်…</div>}
       {doc && <div className="flipbook-holder" style={{ width: size.single ? size.w : size.w * 2, height: size.h }}>
         <HTMLFlipBook
-          key={`${size.w}-${size.single}`}
+          key={`${size.w}-${size.single}-${bookResetVersion}`}
           ref={book}
           width={size.w}
           height={size.h}
@@ -262,13 +291,13 @@ export default function FlipBook({ url, title }: { url: string; title: string })
           usePortrait={size.single}
           mobileScrollSupport={false}
           maxShadowOpacity={0.45}
-          flippingTime={420}
+          flippingTime={260}
           drawShadow
-          startPage={current}
+          startPage={Math.min(current, total - 1)}
           className="flipbook"
           style={{}}
           startZIndex={0} autoSize={false} clickEventForward useMouseEvents={!zoomed} swipeDistance={30} showPageCorners={!zoomed} disableFlipByClick
-          onFlip={(e: any) => setCurrent(e.data)}
+          onFlip={(e: any) => { setCurrent(e.data); saveProgress(e.data); }}
         >
           {Array.from({ length: total }, (_, i) => <Page key={i} number={i + 1} total={total} title={title} src={images[i + 1]} />)}
         </HTMLFlipBook>
@@ -286,8 +315,10 @@ export default function FlipBook({ url, title }: { url: string; title: string })
     {doc && <footer className="flip-nav">
       <button type="button" className="flip-nav-btn" onClick={() => zoomed ? goTo(Math.max(0, current - (size.single ? 1 : 2))) : flipPrev()} disabled={current === 0} aria-label="ရှေ့စာမျက်နှာ">‹<span> ရှေ့သို့</span></button>
       <div className="flip-progress">
-        <input type="range" min={1} max={total} value={current + 1} onChange={(e) => goTo(Number(e.target.value) - 1)} aria-label="စာမျက်နှာ ရွေးရန်" />
+        <button type="button" className="flip-skip-btn" onClick={() => goTo(0)} disabled={current === 0} aria-label="ပထမစာမျက်နှာသို့ သွားမည်" title="ပထမစာမျက်နှာ">«</button>
+        <input type="range" min={1} max={total} value={current + 1} onChange={(e) => goTo(Number(e.target.value) - 1, true)} aria-label="စာမျက်နှာ ရွေးရန်" />
         <span className="flip-count">{current + 1}<small> / {total}</small></span>
+        <button type="button" className="flip-skip-btn" onClick={() => goTo(total - 1)} disabled={current >= total - 1} aria-label="နောက်ဆုံးစာမျက်နှာသို့ သွားမည်" title="နောက်ဆုံးစာမျက်နှာ">»</button>
       </div>
       <div className="flip-zoom" role="group" aria-label="ချဲ့/ချုံ့">
         <button type="button" onClick={() => setZoomTo(zoom - ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label="ချုံ့မည်">−</button>
