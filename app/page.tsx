@@ -402,7 +402,7 @@ export default function HomePage() {
 }
 
 function BookCard({ book, index, onOpen }: { book: Book; index: number; onOpen: () => void }) {
-  return <article className="book-card" style={{ "--book-color": book.color, "--book-accent": book.accent } as CSSProperties}>
+  return <article className="book-card" style={{ "--book-color": book.color, "--book-accent": book.accent, "--index": index } as CSSProperties}>
     <button type="button" className="cover-wrap" onClick={onOpen} aria-label={`${book.title} အသေးစိတ်ကြည့်ရန်`}>
       <BookCover book={book} label={String(index + 1).padStart(2, "0")} />
       {book.rights === "summary" && <span className="summary-ribbon">အကျဉ်းချုပ်သာ</span>}

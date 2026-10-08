@@ -228,3 +228,32 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .reader-shell .pdf-reader-workspace { display: flex; place-items: initial; padding: 0; }
 .reader-shell .pdf-reader-workspace > .flipbook-wrap { width: 100%; height: 100%; }
 .reader-shell .pdf-reader-workspace + .reader-nav { min-height: 0; padding: 8px 16px; font-size: 10px; line-height: 1.5; text-align: center; opacity: .7; }
+
+/* Modern catalog cards: tactile cover motion, restrained depth, and staggered reveal. */
+.book-card { position: relative; animation: card-reveal .56s cubic-bezier(.22,.8,.25,1) both; animation-delay: calc(var(--index, 0) * 55ms); transition: transform .28s cubic-bezier(.22,.8,.25,1); }
+.book-card:hover { transform: translateY(-4px); }
+.cover-wrap { cursor: pointer; border-radius: 6px 12px 12px 6px; isolation: isolate; outline: none; }
+.cover-wrap::after { content: ""; position: absolute; z-index: 3; inset: 0; border-radius: inherit; pointer-events: none; background: linear-gradient(116deg, transparent 22%, rgba(255,255,255,.34) 48%, transparent 72%); transform: translateX(-125%); transition: transform .65s cubic-bezier(.2,.7,.2,1); }
+.cover-wrap:hover::after, .cover-wrap:focus-visible::after { transform: translateX(125%); }
+.cover-wrap:focus-visible { box-shadow: 0 0 0 3px rgba(226,168,75,.45); }
+.book-cover { border-radius: 6px 12px 12px 6px; box-shadow: 12px 15px 24px rgba(57,48,38,.13), 0 0 0 1px rgba(23,33,43,.04); transition: transform .38s cubic-bezier(.22,.8,.25,1), box-shadow .38s ease, filter .38s ease; will-change: transform; }
+.cover-wrap:hover .book-cover, .cover-wrap:focus-visible .book-cover { transform: translateY(-7px) rotate(-1.2deg) scale(1.012); box-shadow: 16px 24px 34px rgba(57,48,38,.18), 0 0 0 1px rgba(23,33,43,.07); filter: saturate(1.04); }
+.book-cover strong { transition: transform .28s ease, letter-spacing .28s ease; }
+.cover-wrap:hover .book-cover strong, .cover-wrap:focus-visible .book-cover strong { transform: translateX(2px); letter-spacing: -.01em; }
+.book-meta { transition: transform .28s ease; }
+.book-card:hover .book-meta { transform: translateX(2px); }
+.round-arrow { box-shadow: 0 2px 0 rgba(23,33,43,.04); transition: background .2s ease, color .2s ease, transform .28s cubic-bezier(.22,.8,.25,1), box-shadow .2s ease; }
+.round-arrow:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.book-card:hover .round-arrow, .round-arrow:focus-visible { transform: translate(2px, -2px) rotate(-8deg); box-shadow: 0 7px 13px rgba(57,48,38,.12); }
+.book-stats { transition: border-color .28s ease, color .28s ease; }
+.book-card:hover .book-stats { border-color: rgba(73,109,99,.32); }
+@keyframes card-reveal { from { opacity: 0; transform: translateY(16px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media (max-width: 640px) {
+  .book-card:hover { transform: translateY(-2px); }
+  .cover-wrap:hover .book-cover, .cover-wrap:focus-visible .book-cover { transform: translateY(-4px) rotate(-.6deg) scale(1.008); }
+  .cover-wrap::after { transition-duration: .5s; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .book-card, .book-card:hover, .book-cover, .cover-wrap:hover .book-cover, .cover-wrap:focus-visible .book-cover, .book-meta, .book-card:hover .book-meta, .round-arrow, .book-card:hover .round-arrow { animation: none; transform: none; transition: none; }
+  .cover-wrap::after { display: none; }
+}
