@@ -220,6 +220,11 @@ function chapterLabel(book: Book): string {
   return chapter ? `အခန်း ${chapter}` : book.title;
 }
 
+function chapterNumber(book: Book): number | null {
+  const value = book.title.match(/\bchapter\s*[-_:]?\s*(\d+)\b/i)?.[1] ?? book.title.match(/(?:^|[\s._-])(\d+)\s*$/)?.[1];
+  return value ? Number(value) : null;
+}
+
 function groupTitle(group: BookGroup): string {
   if (group.chapters.length < 2) return group.book.title;
   return group.book.title
@@ -236,7 +241,17 @@ function groupBooks(booksToGroup: Book[]): BookGroup[] {
     if (existing) existing.chapters.push(book);
     else groups.set(key, { book, chapters: [book] });
   }
-  return Array.from(groups.values());
+  return Array.from(groups.values()).map((group) => ({
+    ...group,
+    chapters: [...group.chapters].sort((left, right) => {
+      const leftNumber = chapterNumber(left);
+      const rightNumber = chapterNumber(right);
+      if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
+      if (leftNumber !== null) return -1;
+      if (rightNumber !== null) return 1;
+      return left.title.localeCompare(right.title);
+    }),
+  }));
 }
 
 export default function HomePage() {
