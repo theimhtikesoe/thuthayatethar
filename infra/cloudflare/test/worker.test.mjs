@@ -229,12 +229,14 @@ test("streams files larger than 20 MiB into private R2 and records their size", 
   assert.equal(uploads.length, 1);
   assert.equal(uploads[0].size, fileSize);
   assert.equal(uploads[0].options.customMetadata.sha256, undefined);
-  const stored = DB.state.statements.find((statement) => statement.sql.includes("UPDATE intake_items SET status = 'published'"));
+  const stored = DB.state.statements.find((statement) => statement.sql.includes("UPDATE intake_items SET status = 'draft'"));
   assert.ok(stored);
   assert.equal(stored.values[1], null);
   assert.equal(stored.values[2], fileSize);
-  assert.ok(DB.state.statements.some((statement) => statement.sql.includes("publication_status, created_at, updated_at") && statement.sql.includes("'published'")));
-  assert.ok(DB.state.statements.some((statement) => statement.sql.includes("rights_status = 'approved'")));
+  assert.ok(DB.state.statements.some((statement) => statement.sql.includes("publication_status, created_at, updated_at") && statement.sql.includes("'draft'")));
+  const rights = DB.state.statements.find((statement) => statement.sql.includes("INSERT OR IGNORE INTO rights_records"));
+  assert.ok(rights);
+  assert.equal(rights.values.length, 4);
 });
 
 test("fails a stream that exceeds MAX_FILE_BYTES even without a content-length header", async () => {
@@ -303,9 +305,9 @@ test("serves a published PDF inline from private object storage", async () => {
       return { body: new Response("%PDF-1.7 test").body, size: 13, httpEtag: "abc123" };
     } },
   };
-  const response = await worker.fetch(new Request("https://worker.test/books/book-123/pdf"), env);
+  const response = await worker.fetch(new Request("https://worker.test/book/book-123/pdf"), env);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "application/pdf");
-  assert.match(response.headers.get("content-disposition"), /^inline;/);
+  assert.equal(response.headers.get("content-disposition"), "inline");
   assert.equal(await response.text(), "%PDF-1.7 test");
 });

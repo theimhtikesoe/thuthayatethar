@@ -102,7 +102,11 @@ function mediaFor(message: JsonRecord): { type: MediaType; fileId: string; cover
   const document = message.document;
   if (isRecord(document) && typeof document.file_id === "string") {
     const thumbnail = isRecord(document.thumbnail) ? document.thumbnail : isRecord(document.thumb) ? document.thumb : null;
-    return { type: "document", fileId: document.file_id, coverFileId: thumbnail && typeof thumbnail.file_id === "string" ? thumbnail.file_id : null, fileName: typeof document.file_name === "string" ? document.file_name : null, mimeType: typeof document.mime_type === "string" ? document.mime_type : null, byteSize: typeof document.file_size === "number" ? document.file_size : null };
+    const fileName = typeof document.file_name === "string" ? document.file_name : null;
+    const mimeType = typeof document.mime_type === "string" ? document.mime_type.toLowerCase() : null;
+    const isPdf = mimeType ? mimeType === "application/pdf" : Boolean(fileName?.toLowerCase().endsWith(".pdf"));
+    if (!isPdf) return null;
+    return { type: "document", fileId: document.file_id, coverFileId: thumbnail && typeof thumbnail.file_id === "string" ? thumbnail.file_id : null, fileName, mimeType, byteSize: typeof document.file_size === "number" ? document.file_size : null };
   }
   const photos = message.photo;
   if (Array.isArray(photos)) {

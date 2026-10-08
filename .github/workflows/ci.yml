@@ -40,6 +40,9 @@ jobs:
       - name: Run reader navigation tests
         run: pnpm run test:reader-navigation
 
+      - name: Run ingestion tests
+        run: pnpm run test:ingestion
+
       - name: Typecheck
         run: pnpm run typecheck
 
