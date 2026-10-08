@@ -236,10 +236,21 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
     setPan({ x: 0, y: 0 });
   };
   const goPrevious = () => {
+    const controller = book.current?.pageFlip();
+    if (!zoomed && controller && current > 0) {
+      controller.flipPrev();
+      return;
+    }
     goTo(adjacentPage(current, total, size.single, -1));
   };
   const goNext = () => {
-    if (!atEnd) goTo(adjacentPage(current, total, size.single, 1));
+    if (atEnd) return;
+    const controller = book.current?.pageFlip();
+    if (!zoomed && controller) {
+      controller.flipNext();
+      return;
+    }
+    goTo(adjacentPage(current, total, size.single, 1));
   };
   const zoomed = zoom > 1;
 
