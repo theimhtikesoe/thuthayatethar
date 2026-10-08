@@ -300,7 +300,10 @@ export default function HomePage() {
           mark: book.mark ?? "စာ",
           rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
           tag: book.tag ?? "ထုတ်ဝေထားသည်",
-          pdfUrl: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl,
+          // Keep the ingestion PDF URL when available so PDF.js can use the
+          // origin's byte ranges for reliable page-1 cover rendering. The
+          // local proxy remains the fallback for older catalog records.
+          pdfUrl: book.pdfUrl ?? (book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : undefined),
           // The catalog may omit coverImage even when ingestion stored a cover
           // in R2. Probe the stable cover endpoint first, then let BookCover
           // fall back to PDF page 1 when that endpoint returns 404.
