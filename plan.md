@@ -49,12 +49,8 @@
 - `app/api/telegram/webhook/route.ts` — Telegram upload group မှ document/photo candidate update လက်ခံသည့် route; webhook secret နှင့် group allowlist ကိုစစ်ဆေးမည်။
 - `.env.example` — secret တန်ဖိုးမပါသော runtime key အမည်များ။
 - `docs/telegram-ingestion.md` — webhook လုပ်ဆောင်ပုံ၊ configuration နှင့် နောက်အဆင့် pipeline မှတ်စုများ။
+- `docs/zawgyi-unicode-accuracy-and-test-cases.md` — conversion မပါသည့် reader ဆုံးဖြတ်ချက်၊ future note နှင့် navigation/UI test cases များ။
 - `TODO.md` — approved deliverables and acceptance clauses.
-
-## PDF Myanmar text correction
-
-- PDF.js text fragments များကို တစ်ကြောင်းချင်း မဆုံးဖြတ်ဘဲ စာမျက်နှာတစ်မျက်နှာလုံး၏ Myanmar text ကို Zawgyi detector ဖြင့် စစ်မည်။ Strong Zawgyi confidence ရသော page များတွင်သာ converted text overlay ပြမည်၊ ထို့ကြောင့် မှန်ကန်သော Unicode စာသားများကို မဖုံးအုပ်စေရ။
-- PDF reader header တွင် Unicode overlay ကို ဖွင့်/ပိတ်နိုင်သည့် button ထည့်မည်။ ပိတ်ထားချိန်တွင် မူရင်း PDF image ကိုသာ ပြပြီး၊ ဖွင့်ထားချိန်တွင် Zawgyi page များအတွက် Unicode overlay ကို ပြမည်။
 
 ## Telegram webhook phase
 

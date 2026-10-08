@@ -2,33 +2,28 @@
 
 import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import HTMLFlipBook from "react-pageflip";
-import { convertZawgyiText, detectMyanmarText } from "./zawgyi";
 
 type PdfDoc = { numPages: number; getPage: (n: number) => Promise<any> };
-type OverlayItem = { text: string; left: number; top: number; width: number; fontSize: number; isZawgyi: boolean };
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.5;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-const Page = forwardRef<HTMLDivElement, { src?: string; number: number; total: number; title: string; overlay?: OverlayItem[] }>(function Page({ src, number, total, title, overlay = [] }, ref) {
+const Page = forwardRef<HTMLDivElement, { src?: string; number: number; total: number; title: string }>(function Page({ src, number, total, title }, ref) {
   const isCover = number === 1;
   return <div className={`flip-page${isCover ? " is-cover" : ""}`} ref={ref}>
     <div className="flip-page-inner">
       {src ? <img src={src} alt={`${title} ${isCover ? "စာအုပ်အဖုံး" : `စာမျက်နှာ ${number}`}`} draggable={false} /> : <div className="flip-page-loading"><span></span>{isCover ? "စာအုပ်အဖုံးကို ပြင်ဆင်နေသည်…" : `စာမျက်နှာ ${number} ကို ပြင်ဆင်နေသည်…`}</div>}
-      {overlay.length > 0 && <div className="zawgyi-overlay" aria-label="Zawgyi စာကို Unicode ဖြင့် ပြထားသည်">{overlay.map((item, index) => <span key={`${number}-${index}`} style={{ left: `${item.left}%`, top: `${item.top}%`, width: `${item.width}%`, fontSize: `${item.fontSize}px` }}>{item.text}</span>)}</div>}
       <div className="flip-page-number">{isCover ? "အဖုံး" : `${number} / ${total}`}</div>
     </div>
   </div>;
 });
 
-export default function FlipBook({ url, title, progressKey, overlayEnabled = true }: { url: string; title: string; progressKey: string; overlayEnabled?: boolean }) {
+export default function FlipBook({ url, title, progressKey }: { url: string; title: string; progressKey: string }) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<Record<number, string>>({});
-  const [overlays, setOverlays] = useState<Record<number, OverlayItem[]>>({});
-  const [overlayState, setOverlayState] = useState<"checking" | "ready" | "image-only">("checking");
   const [hires, setHires] = useState<Record<string, string>>({});
   const [current, setCurrent] = useState(() => {
     try {
@@ -62,59 +57,12 @@ export default function FlipBook({ url, title, progressKey, overlayEnabled = tru
         setCurrent((page) => Math.min(Math.max(0, page), loaded.numPages - 1));
         setRatio(vp.height / vp.width);
         setDoc(loaded);
-        setOverlayState("checking");
       } catch {
         if (!cancelled) setError("PDF ကို ဖွင့်၍ မရပါ။");
       }
     })();
     return () => { cancelled = true; };
   }, [url]);
-
-  // PDF.js can expose an embedded text layer even when the visible page is a
-  // raster image. Convert only detected Zawgyi locally and draw it over the
-  // page; no OCR/network request is involved.
-  useEffect(() => {
-    if (!doc) return;
-    let cancelled = false;
-    (async () => {
-      let foundText = false;
-      let foundZawgyi = false;
-      const next: Record<number, OverlayItem[]> = {};
-      const firstPageToCheck = Math.max(1, current);
-      const lastPageToCheck = Math.min(doc.numPages, current + 4);
-      for (let n = firstPageToCheck; n <= lastPageToCheck; n += 1) {
-        try {
-          const page = await doc.getPage(n);
-          const content = await page.getTextContent();
-          const base = page.getViewport({ scale: 1 });
-          const rawItems = content.items as Array<{ str?: string; transform?: number[]; width?: number }>;
-          const pageText = rawItems.map((raw) => raw.str ?? "").join(" ");
-          const pageDetection = await detectMyanmarText(pageText);
-          const items: OverlayItem[] = [];
-          for (const raw of rawItems) {
-            if (!raw.str?.trim() || !raw.transform) continue;
-            foundText = true;
-            // Detect against the whole page, not each tiny PDF text fragment.
-            // Short fragments make the detector misclassify valid Unicode and
-            // the resulting overlay then hides the correct source text.
-            if (!pageDetection.isZawgyi) continue;
-            foundZawgyi = true;
-            const scale = size.w / base.width;
-            const fontSize = Math.max(7, Math.abs(raw.transform[3] || raw.transform[0] || 10) * scale);
-            const x = (raw.transform[4] || 0) / base.width * 100;
-            const y = (1 - (raw.transform[5] || 0) / base.height) * 100 - fontSize / base.height * 100;
-            items.push({ text: await convertZawgyiText(raw.str), left: x, top: Math.max(0, y), width: Math.max(4, (raw.width || 20) / base.width * 100), fontSize, isZawgyi: true });
-          }
-          if (items.length) next[n] = items;
-        } catch { /* A page without extractable text is handled as image-only. */ }
-      }
-      if (!cancelled) {
-        setOverlays(next);
-        setOverlayState(foundZawgyi ? "ready" : foundText ? "ready" : "image-only");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [doc, size.w, current]);
 
   useEffect(() => {
     const el = stage.current;
@@ -222,8 +170,6 @@ export default function FlipBook({ url, title, progressKey, overlayEnabled = tru
     });
   }, [clampPan]);
 
-  const flipNext = () => book.current?.pageFlip()?.flipNext();
-  const flipPrev = () => book.current?.pageFlip()?.flipPrev();
   const goTo = (p: number, deferReset = false) => {
     const next = clamp(p, 0, Math.max(0, total - 1));
     setCurrent(next);
@@ -234,13 +180,15 @@ export default function FlipBook({ url, title, progressKey, overlayEnabled = tru
     } else setBookResetVersion((version) => version + 1);
     setPan({ x: 0, y: 0 });
   };
+  const goPrevious = () => goTo(Math.max(0, current - (size.single ? 1 : 2)), true);
+  const goNext = () => goTo(Math.min(total - 1, current + (current === 0 || size.single ? 1 : 2)), true);
   useEffect(() => () => { if (jumpResetTimer.current !== null) window.clearTimeout(jumpResetTimer.current); }, []);
   const zoomed = zoom > 1;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowRight") { zoomed ? goTo(Math.min(total - 1, current + visible.length)) : flipNext(); }
-      if (e.key === "ArrowLeft") { zoomed ? goTo(Math.max(0, current - (size.single ? 1 : 2))) : flipPrev(); }
+      if (e.key === "ArrowRight") { zoomed ? goTo(Math.min(total - 1, current + visible.length)) : goNext(); }
+      if (e.key === "ArrowLeft") { zoomed ? goTo(Math.max(0, current - (size.single ? 1 : 2))) : goPrevious(); }
       if (e.key === "+" || e.key === "=") setZoomTo(zoom + ZOOM_STEP);
       if (e.key === "-") setZoomTo(zoom - ZOOM_STEP);
       if (e.key === "0" || e.key === "Escape") setZoomTo(1);
@@ -332,8 +280,6 @@ export default function FlipBook({ url, title, progressKey, overlayEnabled = tru
     >
       {error && <div className="flip-status">{error} <a href={url} target="_blank" rel="noreferrer">သီးခြားဖွင့်မည် ↗</a></div>}
       {!error && !doc && <div className="flip-status"><span className="flip-spinner"></span>စာအုပ်ကို ဖွင့်နေသည်…</div>}
-      {doc && overlayState === "image-only" && <div className="pdf-overlay-note">ပုံ-only PDF — OCR overlay မပါ</div>}
-      {doc && overlayState === "ready" && Object.keys(overlays).length > 0 && <div className="pdf-overlay-note is-ready">{overlayEnabled ? "Zawgyi စာကို Unicode ဖြင့် ပြထားသည်" : "မူရင်း PDF စာသားကို ပြထားသည်"}</div>}
       {doc && <div className="flipbook-holder" style={{ width: size.single ? size.w : size.w * 2, height: size.h }}>
         <HTMLFlipBook
           key={`${size.w}-${size.single}-${bookResetVersion}`}
@@ -354,7 +300,7 @@ export default function FlipBook({ url, title, progressKey, overlayEnabled = tru
           startZIndex={0} autoSize={false} clickEventForward useMouseEvents={!zoomed} swipeDistance={30} showPageCorners={!zoomed} disableFlipByClick
           onFlip={(e: any) => { setCurrent(e.data); saveProgress(e.data); }}
         >
-          {Array.from({ length: total }, (_, i) => <Page key={i} number={i + 1} total={total} title={title} src={images[i + 1]} overlay={overlayEnabled ? overlays[i + 1] : undefined} />)}
+          {Array.from({ length: total }, (_, i) => <Page key={i} number={i + 1} total={total} title={title} src={images[i + 1]} />)}
         </HTMLFlipBook>
       </div>}
       {doc && zoomed && <div className="flip-zoom-layer" aria-label="ချဲ့ကြည့်နေသည်">
@@ -368,7 +314,7 @@ export default function FlipBook({ url, title, progressKey, overlayEnabled = tru
       </div>}
     </div>
     {doc && <footer className="flip-nav">
-      <button type="button" className="flip-nav-btn" onClick={() => zoomed ? goTo(Math.max(0, current - (size.single ? 1 : 2))) : flipPrev()} disabled={current === 0} aria-label="ရှေ့စာမျက်နှာ">‹<span> ရှေ့သို့</span></button>
+      <button type="button" className="flip-nav-btn" onClick={goPrevious} disabled={current === 0} aria-label="ရှေ့စာမျက်နှာ">‹<span> ရှေ့သို့</span></button>
       <div className="flip-progress">
         <button type="button" className="flip-skip-btn" onClick={() => goTo(0)} disabled={current === 0} aria-label="ပထမစာမျက်နှာသို့ သွားမည်" title="ပထမစာမျက်နှာ">«</button>
         <input type="range" min={1} max={total} value={current + 1} onChange={(e) => goTo(Number(e.target.value) - 1, true)} aria-label="စာမျက်နှာ ရွေးရန်" />
@@ -380,7 +326,7 @@ export default function FlipBook({ url, title, progressKey, overlayEnabled = tru
         <button type="button" className="flip-zoom-value" onClick={() => setZoomTo(zoomed ? 1 : 2)} aria-label="ချဲ့မှုပြန်ညှိမည်">{Math.round(zoom * 100)}%</button>
         <button type="button" onClick={() => setZoomTo(zoom + ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label="ချဲ့မည်">+</button>
       </div>
-      <button type="button" className="flip-nav-btn" onClick={() => zoomed ? goTo(Math.min(total - 1, current + visible.length)) : flipNext()} disabled={current >= total - 1} aria-label="နောက်စာမျက်နှာ"><span>နောက်သို့ </span>›</button>
+      <button type="button" className="flip-nav-btn" onClick={goNext} disabled={current >= total - 1} aria-label="နောက်စာမျက်နှာ"><span>နောက်သို့ </span>›</button>
     </footer>}
   </div>;
 }

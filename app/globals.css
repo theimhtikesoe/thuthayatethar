@@ -119,13 +119,6 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .flip-page { background: #fffaf0; overflow: hidden; }
 .flip-page-inner { position: relative; width: 100%; height: 100%; }
 .flip-page img, .flip-zoom-page img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }
-.zawgyi-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.zawgyi-overlay span { position: absolute; display: block; min-height: 1.1em; overflow: hidden; padding: 1px 3px; border-radius: 2px; background: rgba(255, 211, 228, .94); color: #6c2847; font-family: 'Noto Sans Myanmar', 'Myanmar Text', 'Padauk', sans-serif; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 1px 2px rgba(139, 53, 91, .18); }
-.theme-sepia .zawgyi-overlay span { background: rgba(255, 207, 223, .95); color: #6c2847; }
-.theme-night .zawgyi-overlay span { background: rgba(105, 46, 73, .96); color: #ffe6f0; }
-.pdf-overlay-note { position: absolute; z-index: 4; left: 50%; top: 12px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 6px 10px; border: 1px solid rgba(143,116,76,.25); border-radius: 999px; background: rgba(255,253,249,.9); color: #8f744c; font-size: 9px; text-align: center; pointer-events: none; }
-.pdf-overlay-note.is-ready { color: var(--green); border-color: rgba(73,109,99,.25); }
-.theme-night .pdf-overlay-note { background: rgba(28,37,40,.92); }
 .flip-page.--left .flip-page-inner::after { content: ""; position: absolute; inset: 0 0 0 auto; width: 40px; background: linear-gradient(to left, rgba(0,0,0,.16), transparent); pointer-events: none; }
 .flip-page.--right .flip-page-inner::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 40px; background: linear-gradient(to right, rgba(0,0,0,.16), transparent); pointer-events: none; }
 .flip-page-number { position: absolute; bottom: 8px; left: 0; right: 0; text-align: center; font-family: Georgia, serif; font-size: 10px; color: #a89f92; }
@@ -178,14 +171,11 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .reader-ui-hidden > .reader-nav { transform: translateY(100%); opacity: 0; filter: blur(8px); pointer-events: none; }
 .reader-ui-hidden .reader-header, .reader-ui-hidden > .reader-nav { visibility: hidden; transition-delay: 0s, 0s, 0s, .22s; }
 .reader-ui-hidden .reader-workspace { padding-top: 18px; padding-bottom: 18px; }
-.reader-header-actions { display: flex; align-items: center; gap: 14px; }
+.reader-header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
 .reader-fullscreen { border: 1px solid rgba(81,73,60,.22); border-radius: 999px; background: transparent; color: inherit; padding: 7px 10px; font-size: 14px; line-height: 1; }
 .reader-offline { border: 1px solid rgba(81,73,60,.22); border-radius: 999px; background: transparent; color: inherit; padding: 7px 10px; font-size: 14px; line-height: 1; }
 .reader-offline:disabled { opacity: .55; }
 .reader-offline span { font-size: 9px; margin-left: 5px; vertical-align: 1px; }
-.reader-encoding { border: 1px solid rgba(81,73,60,.22); border-radius: 999px; background: transparent; color: inherit; padding: 7px 10px; font-size: 13px; line-height: 1; }
-.reader-encoding.active { border-color: rgba(73,109,99,.52); background: rgba(232,242,235,.7); color: var(--green); }
-.reader-encoding span { font-size: 9px; margin-left: 5px; vertical-align: 1px; }
 .reader-theme-buttons { display: flex; gap: 5px; align-items: center; }
 .reader-theme-buttons button { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; padding: 0; font-size: 0; box-shadow: 0 0 0 1px rgba(81,73,60,.24); }
 .reader-theme-buttons button.active { border-color: var(--gold); transform: scale(1.15); }
@@ -198,7 +188,7 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
   .reader-header { min-height: calc(50px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 10px 0; }
   .reader-title { max-width: 42vw; overflow: hidden; }
   .reader-title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
-  .reader-header-actions { gap: 6px; }
+  .reader-header-actions { gap: 5px; }
   .reader-theme-buttons { gap: 3px; }
   .reader-theme-buttons button { width: 16px; height: 16px; }
   .reader-offline { padding: 7px 8px; }
