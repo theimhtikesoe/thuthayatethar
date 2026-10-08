@@ -286,7 +286,10 @@ export default function HomePage() {
           rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
           tag: book.tag ?? "ထုတ်ဝေထားသည်",
           pdfUrl: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl,
-          coverImage: book.coverImage ? (book.slug ? `/api/books/${encodeURIComponent(book.slug)}/cover` : book.coverImage) : undefined,
+          // The catalog may omit coverImage even when ingestion stored a cover
+          // in R2. Probe the stable cover endpoint first, then let BookCover
+          // fall back to PDF page 1 when that endpoint returns 404.
+          coverImage: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/cover` : book.coverImage,
           externalUrl: book.externalUrl,
           sourceType: book.sourceType,
           slug: book.slug,
@@ -456,13 +459,16 @@ export default function HomePage() {
 
 function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; onOpen: (book: Book) => void }) {
   const { book, chapters } = group;
+  const [selectedChapterId, setSelectedChapterId] = useState<number>(chapters[0]?.id ?? 0);
+  const selectedChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0];
+  const manyChapters = chapters.length > 8;
   return <article className="book-card" style={{ "--book-color": book.color, "--book-accent": book.accent, "--index": index } as CSSProperties}>
     <button type="button" className="cover-wrap" onClick={() => onOpen(book)} aria-label={`${book.title} အသေးစိတ်ကြည့်ရန်`}>
       <BookCover book={book} label={String(index + 1).padStart(2, "0")} />
       {book.rights === "summary" && <span className="summary-ribbon">အကျဉ်းချုပ်သာ</span>}
     </button>
     <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{groupTitle(group)}</h3><p className="book-author">{book.author}</p>{book.externalUrl && <small className="external-source-label">Wattpad မူရင်းစာမျက်နှာမှ ဖတ်ရှုရန်</small>}</div><button className="round-arrow" type="button" onClick={() => onOpen(book)} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
-    {chapters.length > 1 && <div className="chapter-list" aria-label={`${groupTitle(group)} အခန်းများ`}><span className="chapter-list-label">ဒီစာအုပ်မှာ အခန်း {chapters.length} ခန်းရှိသည်</span><div className="chapter-pills">{chapters.map((chapter) => <button key={chapter.id} type="button" className="chapter-pill" onClick={() => onOpen(chapter)}><span>{chapterLabel(chapter)}</span><b>ဖတ်မည် →</b></button>)}</div></div>}
+    {chapters.length > 1 && <div className="chapter-list" aria-label={`${groupTitle(group)} အခန်းများ`}><span className="chapter-list-label">ဒီစာအုပ်မှာ အခန်း {chapters.length} ခန်းရှိသည်</span>{manyChapters ? <div className="chapter-picker"><label htmlFor={`chapter-picker-${book.id}`}>အခန်းရွေးရန်</label><select id={`chapter-picker-${book.id}`} value={selectedChapterId} onChange={(event) => setSelectedChapterId(Number(event.target.value))}>{chapters.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapterLabel(chapter)}</option>)}</select><button type="button" className="chapter-open-button" onClick={() => selectedChapter && onOpen(selectedChapter)}>ရွေးထားသောအခန်း ဖတ်မည် →</button></div> : <div className="chapter-pills">{chapters.map((chapter) => <button key={chapter.id} type="button" className="chapter-pill" onClick={() => onOpen(chapter)}><span>{chapterLabel(chapter)}</span><b>ဖတ်မည် →</b></button>)}</div>}</div>}
     <div className="book-stats"><span>{chapters.length > 1 ? `◷ ${chapters.length} ခန်း` : book.externalUrl ? "Wattpad မူရင်း link" : `◷ ${book.readingTime} မိနစ်`}</span><span className={book.externalUrl ? "rights-summary" : book.rights === "full" ? "rights-full" : "rights-summary"}>{book.externalUrl ? "မူရင်းမှာဖတ်မည်" : book.rights === "full" ? "ဖတ်ရှုနိုင်သည်" : "အကျဉ်းချုပ်"}</span></div>
   </article>;
 }
