@@ -27,6 +27,19 @@ self.addEventListener("fetch", (event) => {
     })());
     return;
   }
+  if (url.pathname.startsWith("/api/books/") && url.pathname.endsWith("/cover")) {
+    event.respondWith((async () => {
+      const cache = await caches.open(BOOK_CACHE);
+      const cached = await cache.match(request.url);
+      if (cached) return cached;
+      try {
+        const response = await fetch(request);
+        if (response.ok) await cache.put(request.url, response.clone());
+        return response;
+      } catch { return cached || new Response("Offline", { status: 503 }); }
+    })());
+    return;
+  }
   if (url.pathname === "/api/catalog") {
     event.respondWith((async () => {
       const cache = await caches.open(SHELL_CACHE);

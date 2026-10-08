@@ -242,7 +242,7 @@ export default function HomePage() {
           rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
           tag: book.tag ?? "ထုတ်ဝေထားသည်",
           pdfUrl: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl,
-          coverImage: book.coverImage,
+          coverImage: book.coverImage ? (book.slug ? `/api/books/${encodeURIComponent(book.slug)}/cover` : book.coverImage) : undefined,
           externalUrl: book.externalUrl,
           sourceType: book.sourceType,
           slug: book.slug,
@@ -279,6 +279,10 @@ export default function HomePage() {
           const response = await fetch(book.pdfUrl!, { cache: "no-store" });
           if (!response.ok) throw new Error("offline_pack_pdf_failed");
           await cache.put(book.pdfUrl!, response.clone());
+          if (book.coverImage) {
+            const coverResponse = await fetch(book.coverImage, { cache: "no-store" });
+            if (coverResponse.ok) await cache.put(book.coverImage, coverResponse.clone());
+          }
         } catch { failed = true; }
         setOfflinePackProgress(index + 1);
       }
@@ -411,7 +415,7 @@ function BookCard({ book, index, onOpen }: { book: Book; index: number; onOpen: 
 function BookDetail({ book, onClose, onRead }: { book: Book; onClose: () => void; onRead: () => void }) {
   return <div className="overlay" role="dialog" aria-modal="true" aria-label="စာအုပ်အသေးစိတ်"><div className="detail-panel">
     <button className="close-button" type="button" onClick={onClose} aria-label="ပိတ်မည်">×</button>
-    <div className="detail-cover" style={{ "--book-color": book.color, "--book-accent": book.accent } as CSSProperties}><div className="book-cover"><span className="cover-number">{book.year}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div></div>
+    <div className="detail-cover" style={{ "--book-color": book.color, "--book-accent": book.accent } as CSSProperties}><div className="book-cover" style={book.coverImage ? { backgroundImage: `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${book.coverImage})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}><span className="cover-number">{book.year}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div></div>
     <div className="detail-content"><p className="eyebrow">{book.externalUrl ? "WATTPAD မူရင်း" : book.tag}</p><h2>{book.title}</h2><p className="detail-author">{book.author}</p><div className="detail-facts"><span><b>အမျိုးအစား</b>{book.category}</span><span><b>ဖတ်ရှုချိန်</b>{book.readingTime} မိနစ်</span><span><b>ထုတ်ဝေသည့်နှစ်</b>{book.year}</span></div><div className="detail-summary"><p className="label">{book.externalUrl ? "မူရင်းစာမျက်နှာ" : "အကျဉ်းချုပ်"}</p><p>{book.externalUrl ? "ဤစာအုပ်ကို မူရင်း Wattpad စာမျက်နှာတွင်သာ ဖတ်ရှုပါ။" : book.summary}</p></div>
       {book.externalUrl ? <a className="primary-button wide-button" href={book.externalUrl} target="_blank" rel="noreferrer">Wattpad တွင်ဖတ်မည် <span>↗</span></a> : book.rights === "full" ? <button className="primary-button wide-button" type="button" onClick={onRead}>စာမျက်နှာဖွင့်မည် <span>→</span></button> : <div className="rights-alert"><span>i</span><p><strong>လက်ရှိတွင် အကျဉ်းချုပ်သာ ဖတ်ရှုနိုင်သည်</strong><br />မူပိုင်ခွင့်ခွင့်ပြုချက်ရရှိပြီးနောက် စာအုပ်အပြည့်အစုံကို ထည့်သွင်းပေးမည်။</p></div>}
     </div>
