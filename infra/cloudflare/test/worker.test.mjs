@@ -80,7 +80,7 @@ function makeEnv(DB) {
   };
 }
 
-function makeRequest(fileSize = 4096) {
+function makeRequest(fileSize = 4096, { fileName = "book.pdf", mimeType = "application/pdf" } = {}) {
   return new Request("https://worker.test/telegram/webhook", {
     method: "POST",
     headers: {
@@ -94,8 +94,8 @@ function makeRequest(fileSize = 4096) {
         chat: { id: -12345, type: "supergroup" },
         document: {
           file_id: "file-abc",
-          file_name: "book.pdf",
-          mime_type: "application/pdf",
+          file_name: fileName,
+          mime_type: mimeType,
           file_size: fileSize,
         },
       },
@@ -109,7 +109,9 @@ function streamOfSize(totalBytes, chunkSize = 1024 * 1024) {
     pull(controller) {
       if (sent >= totalBytes) return controller.close();
       const nextSize = Math.min(chunkSize, totalBytes - sent);
-      controller.enqueue(new Uint8Array(nextSize));
+      const chunk = new Uint8Array(nextSize);
+      if (sent === 0) chunk.set(new TextEncoder().encode("%PDF-"));
+      controller.enqueue(chunk);
       sent += nextSize;
     },
   });
@@ -142,6 +144,14 @@ test("accepts an intake and returns the same record on duplicate delivery", asyn
   assert.equal(DB.state.batchCalls, 2);
 });
 
+test("ignores documents that are not PDFs", async () => {
+  const DB = makeDb();
+  const response = await worker.fetch(makeRequest(4096, { fileName: "cover.png", mimeType: "image/png" }), makeEnv(DB));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).status, "ignored");
+  assert.equal(DB.state.insertCalls, 0);
+});
+
 test("repairs rights and received-event rows after an interrupted D1 batch", async () => {
   const DB = makeDb({ failFirstBatch: true });
   const env = makeEnv(DB);
@@ -168,8 +178,10 @@ test("streams files larger than 20 MiB into private R2 and records their size", 
   const env = {
     ...makeEnv(DB),
     TELEGRAM_BOT_TOKEN: "test-token",
-    TELEGRAM_API_BASE_URL: "https://local-api.test",
-    MAX_FILE_BYTES: String(140 * 1024 * 1024),
+    TELEGRAM_API_BASE_URL: "https://pdf-relay.rz99systems.com",
+    FILE_RELAY_ACCESS_ID: "relay-client-id",
+    FILE_RELAY_ACCESS_SECRET: "relay-client-secret",
+    MAX_FILE_BYTES: String(160 * 1024 * 1024),
     BUCKET: {
       async put(key, body, options) {
         let size = 0;
@@ -186,16 +198,20 @@ test("streams files larger than 20 MiB into private R2 and records their size", 
         uploads.push({ key, size, options });
         return { key, size, httpEtag: "test-etag" };
       },
+      async get() { return null; },
     },
   };
   const pending = [];
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input) => {
+  globalThis.fetch = async (input, init) => {
+    assert.equal(init?.headers?.["CF-Access-Client-Id"], "relay-client-id");
+    assert.equal(init?.headers?.["CF-Access-Client-Secret"], "relay-client-secret");
     if (String(input).includes("getFile?")) {
-      return new Response(JSON.stringify({ ok: true, result: { file_path: "documents/large.pdf" } }), {
+      return new Response(JSON.stringify({ ok: true, result: { file_path: "/var/lib/telegram-bot-api/bot-123/documents/large.pdf" } }), {
         headers: { "content-type": "application/json" },
       });
     }
+    assert.match(String(input), /\/relay\/file\?path=/);
     return new Response(streamOfSize(fileSize), {
       headers: { "content-length": String(fileSize), "content-type": "application/pdf" },
     });
@@ -213,10 +229,12 @@ test("streams files larger than 20 MiB into private R2 and records their size", 
   assert.equal(uploads.length, 1);
   assert.equal(uploads[0].size, fileSize);
   assert.equal(uploads[0].options.customMetadata.sha256, undefined);
-  const stored = DB.state.statements.find((statement) => statement.sql.includes("UPDATE intake_items SET status = 'draft'"));
+  const stored = DB.state.statements.find((statement) => statement.sql.includes("UPDATE intake_items SET status = 'published'"));
   assert.ok(stored);
   assert.equal(stored.values[1], null);
   assert.equal(stored.values[2], fileSize);
+  assert.ok(DB.state.statements.some((statement) => statement.sql.includes("publication_status, created_at, updated_at") && statement.sql.includes("'published'")));
+  assert.ok(DB.state.statements.some((statement) => statement.sql.includes("rights_status = 'approved'")));
 });
 
 test("fails a stream that exceeds MAX_FILE_BYTES even without a content-length header", async () => {
@@ -225,6 +243,9 @@ test("fails a stream that exceeds MAX_FILE_BYTES even without a content-length h
   const env = {
     ...makeEnv(DB),
     TELEGRAM_BOT_TOKEN: "test-token",
+    TELEGRAM_API_BASE_URL: "https://pdf-relay.rz99systems.com",
+    FILE_RELAY_ACCESS_ID: "relay-client-id",
+    FILE_RELAY_ACCESS_SECRET: "relay-client-secret",
     MAX_FILE_BYTES: "1024",
     BUCKET: {
       async put(key, body) {
@@ -238,13 +259,14 @@ test("fails a stream that exceeds MAX_FILE_BYTES even without a content-length h
         uploads.push({ key, size });
         return { key, size, httpEtag: "test-etag" };
       },
+      async get() { return null; },
     },
   };
   const pending = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     if (String(input).includes("getFile?")) {
-      return new Response(JSON.stringify({ ok: true, result: { file_path: "documents/too-large.pdf" } }), {
+      return new Response(JSON.stringify({ ok: true, result: { file_path: "/var/lib/telegram-bot-api/bot-123/documents/too-large.pdf" } }), {
         headers: { "content-type": "application/json" },
       });
     }
@@ -260,4 +282,30 @@ test("fails a stream that exceeds MAX_FILE_BYTES even without a content-length h
 
   assert.equal(uploads.length, 0);
   assert.equal(DB.state.failureValues[0], "file_too_large");
+});
+
+test("serves a published PDF inline from private object storage", async () => {
+  const DB = {
+    prepare(sql) {
+      return {
+        bind() { return this; },
+        async first() {
+          assert.match(sql, /publication_status = 'published'/);
+          return { storage_key: "originals/intake/book.pdf", original_filename: "book.pdf" };
+        },
+      };
+    },
+  };
+  const env = {
+    ...makeEnv(DB),
+    BUCKET: { async put() { return null; }, async get(key) {
+      assert.equal(key, "originals/intake/book.pdf");
+      return { body: new Response("%PDF-1.7 test").body, size: 13, httpEtag: "abc123" };
+    } },
+  };
+  const response = await worker.fetch(new Request("https://worker.test/books/book-123/pdf"), env);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "application/pdf");
+  assert.match(response.headers.get("content-disposition"), /^inline;/);
+  assert.equal(await response.text(), "%PDF-1.7 test");
 });

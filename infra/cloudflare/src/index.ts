@@ -11,8 +11,10 @@ type D1Database = {
 };
 
 type R2Object = { key: string; size: number; httpEtag: string };
+type R2ObjectBody = { body: ReadableStream; size: number; httpEtag: string };
 type R2Bucket = {
   put: (key: string, value: ArrayBuffer | ReadableStream, options?: Record<string, unknown>) => Promise<R2Object | null>;
+  get: (key: string) => Promise<R2ObjectBody | null>;
 };
 type SecretStoreBinding = { get: () => Promise<string> };
 type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
@@ -25,6 +27,8 @@ export interface Env {
   TELEGRAM_BOT_TOKEN?: string | SecretStoreBinding;
   TELEGRAM_API_BASE_URL?: string;
   MAX_FILE_BYTES?: string;
+  FILE_RELAY_ACCESS_ID?: string;
+  FILE_RELAY_ACCESS_SECRET?: string;
   CATALOG_ORIGIN?: string | SecretStoreBinding;
   ADMIN_TOKEN?: string | SecretStoreBinding;
   TELEGRAM_WEBHOOK_SECRET_STORE?: SecretStoreBinding;
@@ -109,7 +113,7 @@ function safeFileName(name: string | null, type: MediaType): string {
 }
 
 function titleFromFile(name: string): string {
-  return name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim().slice(0, 180) || "စာအုပ်အသစ်";
+  return name.normalize("NFKC").replace(/\.pdf$/i, "").replace(/[-_]+/g, " ").trim().slice(0, 180) || "စာအုပ်အသစ်";
 }
 
 async function sha256(value: ArrayBuffer): Promise<string> {
@@ -133,11 +137,17 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
   try {
     if (typeof item.byte_size === "number" && item.byte_size > maxBytes) throw new Error("file_too_large");
     const base = (env.TELEGRAM_API_BASE_URL ?? "https://api.telegram.org").replace(/\/$/, "");
-    const infoResponse = await fetch(`${base}/bot${env.TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(item.telegram_file_id)}`);
+    const isLocalRelay = new URL(base).hostname === "pdf-relay.rz99systems.com";
+    if (isLocalRelay && (!env.FILE_RELAY_ACCESS_ID || !env.FILE_RELAY_ACCESS_SECRET)) throw new Error("file_relay_auth_not_configured");
+    const apiHeaders = isLocalRelay ? { "CF-Access-Client-Id": env.FILE_RELAY_ACCESS_ID!, "CF-Access-Client-Secret": env.FILE_RELAY_ACCESS_SECRET! } : undefined;
+    const infoResponse = await fetch(`${base}/bot${env.TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(item.telegram_file_id)}`, { headers: apiHeaders });
     const info = await infoResponse.json() as JsonRecord;
     const result = isRecord(info.result) ? info.result : null;
     if (!infoResponse.ok || info.ok !== true || !result || typeof result.file_path !== "string") throw new Error("telegram_file_lookup_failed");
-    const fileResponse = await fetch(`${base}/file/bot${env.TELEGRAM_BOT_TOKEN}/${result.file_path}`);
+    const fileUrl = result.file_path.startsWith("/")
+      ? `${base}/relay/file?path=${encodeURIComponent(result.file_path)}`
+      : `${base}/file/bot${env.TELEGRAM_BOT_TOKEN}/${result.file_path}`;
+    const fileResponse = await fetch(fileUrl, { headers: apiHeaders });
     if (!fileResponse.ok) throw new Error("telegram_file_download_failed");
     const contentLength = Number(fileResponse.headers.get("content-length") ?? "0");
     const expectedBytes = contentLength > 0 ? contentLength : (typeof item.byte_size === "number" ? item.byte_size : 0);
@@ -145,14 +155,16 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
       await fileResponse.body?.cancel();
       throw new Error("file_too_large");
     }
-    const key = `originals/${intakeId}/${safeFileName(typeof item.original_filename === "string" ? item.original_filename : null, item.media_type === "photo" ? "photo" : "document")}`;
-    const httpMetadata = { contentType: typeof item.mime_type === "string" ? item.mime_type : "application/octet-stream" };
+    const originalFilename = typeof item.original_filename === "string" ? item.original_filename : "book.pdf";
+    const key = `originals/${intakeId}/${safeFileName(originalFilename, "document")}`;
+    const httpMetadata = { contentType: "application/pdf" };
     let byteSize = 0;
     let checksum: string | null = null;
     if (contentLength > 0 && contentLength <= DEFAULT_MAX_FILE_BYTES) {
       const bytes = await fileResponse.arrayBuffer();
       if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) throw new Error("file_too_large");
       if (expectedBytes > 0 && bytes.byteLength !== expectedBytes) throw new Error("telegram_file_size_mismatch");
+      if (new TextDecoder().decode(new Uint8Array(bytes, 0, Math.min(5, bytes.byteLength))) !== "%PDF-") throw new Error("invalid_pdf");
       checksum = await sha256(bytes);
       const stored = await env.BUCKET.put(key, bytes, { httpMetadata, customMetadata: { intakeId, sha256: checksum, visibility: "private" } });
       if (!stored || stored.size !== bytes.byteLength) throw new Error("r2_storage_failed");
@@ -160,14 +172,22 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
     } else {
       if (!fileResponse.body) throw new Error("telegram_file_body_missing");
       const progress = { bytes: 0 };
+      const pdfHeader = new Uint8Array(5);
+      let pdfHeaderBytes = 0;
       const countedBody = fileResponse.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, controller) {
+          for (let index = 0; index < chunk.byteLength && pdfHeaderBytes < pdfHeader.byteLength; index += 1) {
+            pdfHeader[pdfHeaderBytes] = chunk[index];
+            pdfHeaderBytes += 1;
+          }
+          if (pdfHeaderBytes === pdfHeader.byteLength && new TextDecoder().decode(pdfHeader) !== "%PDF-") throw new Error("invalid_pdf");
           progress.bytes += chunk.byteLength;
           if (progress.bytes > maxBytes) throw new Error("file_too_large");
           controller.enqueue(chunk);
         },
         flush() {
           if (progress.bytes === 0) throw new Error("empty_file");
+          if (pdfHeaderBytes < pdfHeader.byteLength || new TextDecoder().decode(pdfHeader) !== "%PDF-") throw new Error("invalid_pdf");
           if (expectedBytes > 0 && progress.bytes !== expectedBytes) throw new Error("telegram_file_size_mismatch");
         },
       }));
@@ -176,12 +196,14 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
       byteSize = stored.size;
     }
     const now = new Date().toISOString();
-    const title = titleFromFile(key.split("/").pop() ?? "book.pdf");
+    const title = titleFromFile(originalFilename);
     const slug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "book"}-${intakeId.slice(0, 8)}`;
     await env.DB.batch([
-      env.DB.prepare("UPDATE intake_items SET status = 'draft', storage_key = ?, sha256 = ?, byte_size = ?, updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(key, checksum, byteSize, now, intakeId),
-      env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, summary, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, "မူကြမ်းအဖြစ် စစ်ဆေးရန် စာအုပ်ဖိုင်ကို လက်ခံထားသည်။", JSON.stringify({ source: "telegram", assetKey: key, rightsStatus: "missing" }), now, now),
+      env.DB.prepare("UPDATE intake_items SET status = 'published', storage_key = ?, sha256 = ?, byte_size = ?, updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(key, checksum, byteSize, now, intakeId),
+      env.DB.prepare("UPDATE rights_records SET rights_status = 'approved', evidence_note = ?, reviewer = 'operator attestation', reviewed_at = ?, updated_at = ? WHERE intake_id = ?").bind("Operator confirmed that PDFs uploaded to the approved Telegram group are authorized for website publication.", now, now, intakeId),
+      env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, summary, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'published', ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, "Telegram группээс хүлээн авсан, вэб хуудаснаас шууд унших PDF ном.", JSON.stringify({ source: "telegram", assetKey: key, rightsStatus: "approved", format: "pdf" }), now, now),
       env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'stored_in_r2', ?, ?)").bind(intakeId, JSON.stringify({ storageKey: key, byteSize, checksumComputed: Boolean(checksum) }), now),
+      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'published', ?, ?)").bind(intakeId, JSON.stringify({ rightsBasis: "operator_attestation" }), now),
     ]);
   } catch (error) {
     const message = error instanceof Error ? error.message : "processing_failed";
@@ -209,7 +231,8 @@ async function receive(request: Request, env: RuntimeEnv, ctx?: ExecutionContext
   if (!message || !chat || !chatId || (chat.type !== "group" && chat.type !== "supergroup") || !allowedChatIds(env.TELEGRAM_ALLOWED_CHAT_IDS ?? "").has(chatId)) return json({ ok: true, status: "ignored" });
   const media = mediaFor(message);
   const messageId = message.message_id;
-  if (!media || !Number.isSafeInteger(messageId)) return json({ ok: true, status: "ignored" });
+  const isPdf = media?.type === "document" && ((media.mimeType ?? "").toLowerCase() === "application/pdf" || (media.fileName ?? "").toLowerCase().endsWith(".pdf"));
+  if (!isPdf || !media || !Number.isSafeInteger(messageId)) return json({ ok: true, status: "ignored" });
   const now = new Date().toISOString();
   const intakeId = crypto.randomUUID();
   const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_chat_id, source_message_id, status, original_filename, mime_type, byte_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?)`).bind(intakeId, parsed.update_id, media.fileId, media.type, chatId, messageId, media.fileName, media.mimeType, media.byteSize, now, now).run();
@@ -230,8 +253,28 @@ async function catalog(request: Request, env: RuntimeEnv): Promise<Response> {
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405, origin);
   const statement = env.DB.prepare("SELECT id, title, slug, author, category, year, summary, reading_time, metadata_json, updated_at FROM book_drafts WHERE publication_status = 'published' ORDER BY updated_at DESC");
   const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
-  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(isRecord(metadata.public) ? metadata.public : {}) }; });
+  const pdfOrigin = new URL(request.url).origin;
+  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(metadata.format === "pdf" ? { pdfUrl: `${pdfOrigin}/books/${encodeURIComponent(String(book.slug))}/pdf` } : {}), ...(isRecord(metadata.public) ? metadata.public : {}) }; });
   return json({ ok: true, books }, 200, origin);
+}
+
+async function servePublishedPdf(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
+  if (request.method !== "GET" && request.method !== "HEAD") return json({ ok: false, error: "method_not_allowed" }, 405);
+  if (!env.BUCKET) return json({ ok: false, error: "storage_unavailable" }, 503);
+  const book = await env.DB.prepare("SELECT i.storage_key, i.original_filename FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? AND b.publication_status = 'published' LIMIT 1").bind(slug).first<{ storage_key: string; original_filename: string | null }>();
+  if (!book || !book.storage_key) return json({ ok: false, error: "book_not_found" }, 404);
+  const object = await env.BUCKET.get(book.storage_key);
+  if (!object) return json({ ok: false, error: "pdf_not_found" }, 404);
+  const filename = safeFileName(book.original_filename, "document");
+  const headers = new Headers({
+    "Content-Type": "application/pdf",
+    "Content-Disposition": `inline; filename="${filename}"`,
+    "Content-Length": String(object.size),
+    "Cache-Control": "public, max-age=300",
+    "X-Content-Type-Options": "nosniff",
+  });
+  if (object.httpEtag) headers.set("ETag", `"${object.httpEtag}"`);
+  return new Response(request.method === "HEAD" ? null : object.body, { status: 200, headers });
 }
 
 async function publish(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
@@ -252,6 +295,8 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "telegram-ingestion", storage: Boolean(runtimeEnv.BUCKET), processor: Boolean(runtimeEnv.TELEGRAM_BOT_TOKEN) });
     if (url.pathname === "/catalog") return catalog(request, runtimeEnv);
+    const pdfMatch = url.pathname.match(/^\/books\/([^/]+)\/pdf$/);
+    if (pdfMatch) return servePublishedPdf(request, runtimeEnv, decodeURIComponent(pdfMatch[1]));
     if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv, ctx);
     if (request.method === "POST" && url.pathname.startsWith("/admin/publish/")) return publish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/publish/".length)));
     return json({ ok: false, error: "not_found" }, 404);

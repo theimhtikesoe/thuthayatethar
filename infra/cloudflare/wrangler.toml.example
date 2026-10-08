@@ -31,9 +31,12 @@ secret_name = "TELEGRAM_BOT_TOKEN"
 
 [vars]
 TELEGRAM_ALLOWED_CHAT_IDS = "-4314141664"
-TELEGRAM_API_BASE_URL = "https://api.telegram.org"
-MAX_FILE_BYTES = "20971520"
+TELEGRAM_API_BASE_URL = "https://pdf-relay.rz99systems.com"
+MAX_FILE_BYTES = "167772160"
 CATALOG_ORIGIN = "https://thuthayatethar.rz99systems.com"
+
+# These values are already stored as Worker secret bindings in Cloudflare.
+# Never place either credential in this file or commit secret values to Git.
 
 # Set secrets out-of-band:
 # wrangler secret put TELEGRAM_WEBHOOK_SECRET
