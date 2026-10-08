@@ -38,6 +38,17 @@ self.addEventListener("fetch", (event) => {
     })());
     return;
   }
+  if (url.origin === self.location.origin && url.pathname.startsWith("/_next/static/")) {
+    event.respondWith((async () => {
+      const cache = await caches.open(SHELL_CACHE);
+      try {
+        const response = await fetch(request);
+        if (response.ok) await cache.put(request, response.clone());
+        return response;
+      } catch { return (await cache.match(request)) || new Response("Offline", { status: 503 }); }
+    })());
+    return;
+  }
   if (url.origin === self.location.origin && (url.pathname === "/" || url.pathname === "/admin")) {
     event.respondWith(fetch(request).catch(() => caches.match("/")));
   }
