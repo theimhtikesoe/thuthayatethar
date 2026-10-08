@@ -124,14 +124,14 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .round-arrow:hover { background: var(--gold); color: white; }
 .chapter-list { margin-top: 14px; padding: 12px; border: 1px solid rgba(73,109,99,.22); border-radius: 10px; background: linear-gradient(135deg, #f7f8f4, #eef4ef); box-shadow: 0 5px 12px rgba(57,48,38,.06); }
 .chapter-list-label { display: block; color: var(--green); font-size: 10px; line-height: 1.6; font-weight: 700; margin-bottom: 8px; }
-.chapter-picker { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.chapter-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: stretch; }
 .chapter-select-wrap { position: relative; min-width: 0; }
 .chapter-select-wrap::after { content: '⌄'; position: absolute; top: 50%; right: 12px; transform: translateY(-58%); color: var(--green); font-size: 17px; line-height: 1; pointer-events: none; }
 .chapter-picker select { appearance: none; -webkit-appearance: none; width: 100%; min-width: 0; min-height: 40px; border: 1px solid rgba(73,109,99,.35); border-radius: 8px; background: var(--warm); color: var(--ink); color-scheme: light; padding: 8px 34px 8px 10px; font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
 .chapter-picker select option { background: var(--warm); color: var(--ink); }
 .chapter-picker select:hover { border-color: var(--green); }
 .chapter-picker select:focus-visible { border-color: var(--green); outline: 3px solid rgba(73,109,99,.18); outline-offset: 1px; }
-.chapter-open-button { min-height: 39px; border: 0; border-radius: 8px; background: var(--green); color: white; padding: 8px 10px; font-size: 11px; font-weight: 700; cursor: pointer; }
+.chapter-open-button { min-height: 40px; border: 0; border-radius: 8px; background: var(--green); color: white; padding: 8px 12px; font-size: 11px; font-weight: 700; white-space: nowrap; cursor: pointer; }
 .chapter-open-button:hover, .chapter-open-button:focus-visible { background: var(--ink); outline: 3px solid rgba(73,109,99,.18); outline-offset: 1px; }
 .book-stats { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 9px; color: #aaa49c; display: flex; justify-content: space-between; font-size: 9px; }
 .rights-full { color: var(--green); }.rights-summary { color: #ae7f3d; }
@@ -397,6 +397,8 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 }
 
 @media (max-width: 640px) {
-  .chapter-list-compact .chapter-picker { grid-template-columns: minmax(0, 1fr) auto; }
-  .chapter-list-compact .chapter-picker label { grid-column: 1 / -1; }
+  .chapter-list { padding: 10px; }
+  .chapter-list-label { font-size: 9px; margin-bottom: 7px; }
+  .chapter-picker { grid-template-columns: 1fr; gap: 7px; }
+  .chapter-picker select, .chapter-open-button { width: 100%; min-height: 41px; }
 }
