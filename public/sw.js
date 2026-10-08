@@ -1,5 +1,5 @@
-const SHELL_CACHE = "thuthayatethar-shell-v2";
-const BOOK_CACHE = "thuthayatethar-books-v2";
+const SHELL_CACHE = "thuthayatethar-shell-v3";
+const BOOK_CACHE = "thuthayatethar-books-v3";
 const SHELL = ["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js"];
 
 self.addEventListener("install", (event) => {
@@ -14,6 +14,7 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
   const url = new URL(request.url);
+  const isAppNavigation = request.mode === "navigate" && url.origin === self.location.origin;
   if (url.pathname.startsWith("/api/books/") && url.pathname.endsWith("/pdf")) {
     event.respondWith((async () => {
       const cache = await caches.open(BOOK_CACHE);
@@ -73,14 +74,16 @@ self.addEventListener("fetch", (event) => {
     })());
     return;
   }
-  if (url.origin === self.location.origin && (url.pathname === "/" || url.pathname === "/admin")) {
+  if (isAppNavigation && (url.pathname === "/" || url.pathname === "/admin")) {
     event.respondWith((async () => {
       const cache = await caches.open(SHELL_CACHE);
       try {
         const response = await fetch(request);
         if (response.ok) await cache.put(request, response.clone());
         return response;
-      } catch { return (await cache.match(request)) || (await cache.match("/")) || new Response("Offline", { status: 503 }); }
+      } catch {
+        return (await cache.match(request)) || (await cache.match("/")) || new Response("Offline", { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
     })());
   }
 });

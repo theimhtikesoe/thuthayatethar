@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import PwaRegister from "./PwaRegister";
@@ -17,6 +17,13 @@ export const metadata: Metadata = {
   },
   appleWebApp: { capable: true, title: "သုတရိပ်သာ", statusBarStyle: "default" },
   manifest: "/manifest.webmanifest"
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#f8f4ed",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
