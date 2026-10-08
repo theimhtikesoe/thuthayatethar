@@ -30,6 +30,11 @@ type Book = {
   slug?: string;
 };
 
+type BookGroup = {
+  book: Book;
+  chapters: Book[];
+};
+
 const books: Book[] = [
   {
     id: 1,
@@ -204,6 +209,28 @@ function matchesTime(minutes: number, time: string) {
   return true;
 }
 
+function chapterGroupKey(title: string): string {
+  const normalized = title.normalize("NFKC").toLowerCase().trim();
+  const withoutChapter = normalized.replace(/\bchapter\s*[-_:]?\s*\d+\b/gi, "").replace(/[\s._-]*\d+\s*$/, "");
+  return withoutChapter.replace(/[\s._-]+/g, " ").trim() || normalized;
+}
+
+function chapterLabel(book: Book): string {
+  const chapter = book.title.match(/\bchapter\s*[-_:]?\s*(\d+)\b/i)?.[1] ?? book.title.match(/(?:^|[\s._-])(\d+)\s*$/)?.[1];
+  return chapter ? `အခန်း ${chapter}` : book.title;
+}
+
+function groupBooks(booksToGroup: Book[]): BookGroup[] {
+  const groups = new Map<string, BookGroup>();
+  for (const book of booksToGroup) {
+    const key = chapterGroupKey(book.title);
+    const existing = groups.get(key);
+    if (existing) existing.chapters.push(book);
+    else groups.set(key, { book, chapters: [book] });
+  }
+  return Array.from(groups.values());
+}
+
 export default function HomePage() {
   const [catalogBooks, setCatalogBooks] = useState<Book[] | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
@@ -318,6 +345,7 @@ export default function HomePage() {
         (time === "အားလုံး" || matchesTime(book.readingTime, time));
     });
   }, [availableBooks, category, query, time]);
+  const filteredGroups = useMemo(() => groupBooks(filteredBooks), [filteredBooks]);
 
   useEffect(() => {
     const stopReaderActions = (event: KeyboardEvent) => {
@@ -393,7 +421,7 @@ export default function HomePage() {
       </section>
 
       <section className="catalog-section" id="catalog">
-        <div className="section-heading"><div><p className="eyebrow">စာကြည့်တိုက်</p><h2>ဒီနေ့ ဖတ်စရာများ</h2></div><div className="catalog-actions"><span className="result-count">{filteredBooks.length} အုပ် ရှာတွေ့သည်</span><button type="button" className="offline-pack-button" onClick={saveOfflinePack} disabled={offlinePackState === "saving" || !downloadableBooks.length}>{offlinePackState === "saving" ? `Offline သိမ်းနေသည် ${offlinePackProgress}/${downloadableBooks.length}` : offlinePackState === "done" ? "✓ Offline အသင့်" : "Offline အားလုံးသိမ်းမည်"}</button>{offlinePackState === "error" && <small className="offline-pack-error">အချို့စာအုပ်များ မသိမ်းနိုင်ပါ။ Internet ကို စစ်ပါ။</small>}</div></div>
+        <div className="section-heading"><div><p className="eyebrow">စာကြည့်တိုက်</p><h2>ဒီနေ့ ဖတ်စရာများ</h2></div><div className="catalog-actions"><span className="result-count">{filteredGroups.length} အုပ် ရှာတွေ့သည်</span><button type="button" className="offline-pack-button" onClick={saveOfflinePack} disabled={offlinePackState === "saving" || !downloadableBooks.length}>{offlinePackState === "saving" ? `Offline သိမ်းနေသည် ${offlinePackProgress}/${downloadableBooks.length}` : offlinePackState === "done" ? "✓ Offline အသင့်" : "Offline အားလုံးသိမ်းမည်"}</button>{offlinePackState === "error" && <small className="offline-pack-error">အချို့စာအုပ်များ မသိမ်းနိုင်ပါ။ Internet ကို စစ်ပါ။</small>}</div></div>
         <div className="catalog-layout">
           <aside className="filters" aria-label="စာအုပ်စစ်ထုတ်မှုများ">
             <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="စာအုပ်ရှာရန်..." aria-label="စာအုပ်ရှာရန်" /><kbd>⌘ K</kbd></label>
@@ -404,8 +432,8 @@ export default function HomePage() {
           </aside>
           <div className="book-grid" aria-live="polite">
             {catalogLoading && <div className="empty-state"><span>…</span><h3>စာအုပ်များကို ရယူနေသည်</h3><p>နောက်ဆုံး catalog ကို ခဏစောင့်ပေးပါ။</p></div>}
-            {!catalogLoading && filteredBooks.map((book, index) => <BookCard key={book.id} book={book} index={index} onOpen={() => book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)} />)}
-            {!catalogLoading && !filteredBooks.length && <div className="empty-state"><span>⌁</span><h3>ဒီလိုစာအုပ် မတွေ့သေးပါ</h3><p>လက်ရှိ Website catalog ထဲမှာ ထုတ်ဝေထားသောစာအုပ် မရှိသေးပါ။</p><button className="primary-button" type="button" onClick={resetFilters}>အားလုံးပြန်ကြည့်မည်</button></div>}
+            {!catalogLoading && filteredGroups.map((group, index) => <BookCard key={group.book.id} group={group} index={index} onOpen={(book) => book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)} />)}
+            {!catalogLoading && !filteredGroups.length && <div className="empty-state"><span>⌁</span><h3>ဒီလိုစာအုပ် မတွေ့သေးပါ</h3><p>လက်ရှိ Website catalog ထဲမှာ ထုတ်ဝေထားသောစာအုပ် မရှိသေးပါ။</p><button className="primary-button" type="button" onClick={resetFilters}>အားလုံးပြန်ကြည့်မည်</button></div>}
           </div>
         </div>
       </section>
@@ -418,13 +446,15 @@ export default function HomePage() {
   );
 }
 
-function BookCard({ book, index, onOpen }: { book: Book; index: number; onOpen: () => void }) {
+function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; onOpen: (book: Book) => void }) {
+  const { book, chapters } = group;
   return <article className="book-card" style={{ "--book-color": book.color, "--book-accent": book.accent, "--index": index } as CSSProperties}>
-    <button type="button" className="cover-wrap" onClick={onOpen} aria-label={`${book.title} အသေးစိတ်ကြည့်ရန်`}>
+    <button type="button" className="cover-wrap" onClick={() => onOpen(book)} aria-label={`${book.title} အသေးစိတ်ကြည့်ရန်`}>
       <BookCover book={book} label={String(index + 1).padStart(2, "0")} />
       {book.rights === "summary" && <span className="summary-ribbon">အကျဉ်းချုပ်သာ</span>}
     </button>
-    <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{book.title}</h3><p className="book-author">{book.author}</p>{book.externalUrl && <small className="external-source-label">Wattpad မူရင်းစာမျက်နှာမှ ဖတ်ရှုရန်</small>}</div><button className="round-arrow" type="button" onClick={onOpen} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
+    <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{book.title}</h3><p className="book-author">{book.author}</p>{book.externalUrl && <small className="external-source-label">Wattpad မူရင်းစာမျက်နှာမှ ဖတ်ရှုရန်</small>}</div><button className="round-arrow" type="button" onClick={() => onOpen(book)} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
+    {chapters.length > 1 && <div className="chapter-list" aria-label={`${book.title} အခန်းများ`}><span className="chapter-list-label">အခန်းများ</span>{chapters.map((chapter) => <button key={chapter.id} type="button" className="chapter-pill" onClick={() => onOpen(chapter)}>{chapterLabel(chapter)}</button>)}</div>}
     <div className="book-stats"><span>{book.externalUrl ? "Wattpad မူရင်း link" : `◷ ${book.readingTime} မိနစ်`}</span><span className={book.externalUrl ? "rights-summary" : book.rights === "full" ? "rights-full" : "rights-summary"}>{book.externalUrl ? "မူရင်းမှာဖတ်မည်" : book.rights === "full" ? "ဖတ်ရှုနိုင်သည်" : "အကျဉ်းချုပ်"}</span></div>
   </article>;
 }
