@@ -466,7 +466,7 @@ function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; o
   return <article className="book-card" style={{ "--book-color": book.color, "--book-accent": book.accent, "--index": index } as CSSProperties}>
     <button type="button" className="cover-wrap" onClick={() => onOpen(book)} aria-label={`${book.title} အသေးစိတ်ကြည့်ရန်`}>
       <BookCover book={book} label={String(index + 1).padStart(2, "0")} />
-      {book.rights === "summary" && <span className="summary-ribbon">အကျဉ်းချုပ်သာ</span>}
+      {book.rights === "summary" && !book.coverImage && !book.pdfUrl && <span className="summary-ribbon">အကျဉ်းချုပ်သာ</span>}
     </button>
     <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{groupTitle(group)}</h3><p className="book-author">{book.author}</p>{book.externalUrl && <small className="external-source-label">Wattpad မူရင်းစာမျက်နှာမှ ဖတ်ရှုရန်</small>}</div><button className="round-arrow" type="button" onClick={() => onOpen(book)} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
     {chapters.length > 1 && <div className={`chapter-list${manyChapters ? " chapter-list-compact" : ""}`} aria-label={`${groupTitle(group)} အခန်းများ`}><span className="chapter-list-label">အခန်း {chapters.length} ခန်း</span>{manyChapters ? <div className="chapter-picker"><label htmlFor={`chapter-picker-${book.id}`}>ရွေးရန်</label><select id={`chapter-picker-${book.id}`} value={selectedChapterId} onChange={(event) => setSelectedChapterId(Number(event.target.value))}>{chapters.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapterLabel(chapter)}</option>)}</select><button type="button" className="chapter-open-button" onClick={() => selectedChapter && onOpen(selectedChapter)}>ဖတ်မည် →</button></div> : <div className="chapter-pills">{chapters.map((chapter) => <button key={chapter.id} type="button" className="chapter-pill" onClick={() => onOpen(chapter)}><span>{chapterLabel(chapter)}</span><b>ဖတ်မည် →</b></button>)}</div>}</div>}
@@ -505,7 +505,29 @@ function BookCover({ book, label }: { book: Book; label: string }) {
     return () => { active = false; };
   }, [book.pdfUrl, usePdfCover]);
   const backgroundImage = usePdfCover ? pdfCover : book.coverImage;
-  return <div className="book-cover" style={backgroundImage ? { backgroundImage: `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${backgroundImage})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}>{book.coverImage && <img className="cover-image-probe" src={book.coverImage} onError={() => setCoverImageFailed(true)} alt="" aria-hidden="true" />}{usePdfCover && !pdfCover && book.pdfUrl && <span className="cover-loading">…</span>}<span className="cover-number">{label}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div>;
+  const hasArtwork = Boolean(backgroundImage) && (!usePdfCover || Boolean(pdfCover));
+  const coverStyle: CSSProperties | undefined = backgroundImage
+    ? {
+        backgroundImage: hasArtwork
+          ? `url(${backgroundImage})`
+          : `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${backgroundImage})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+      }
+    : undefined;
+  return (
+    <div className={hasArtwork ? "book-cover book-cover-artwork" : "book-cover"} style={coverStyle}>
+      {book.coverImage && <img className="cover-image-probe" src={book.coverImage} onError={() => setCoverImageFailed(true)} alt="" aria-hidden="true" />}
+      {usePdfCover && !pdfCover && book.pdfUrl && <span className="cover-loading" aria-hidden="true" />}
+      {!hasArtwork && <>
+        <span className="cover-number">{label}</span>
+        <span className="cover-mark">{book.mark}</span>
+        <strong>{book.title}</strong>
+        <small>{book.author}</small>
+        <i aria-hidden="true">✦</i>
+      </>}
+    </div>
+  );
 }
 
 function BookDetail({ book, onClose, onRead }: { book: Book; onClose: () => void; onRead: () => void }) {
