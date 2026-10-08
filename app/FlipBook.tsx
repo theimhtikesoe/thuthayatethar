@@ -13,11 +13,12 @@ const ZOOM_STEP = 0.5;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 const Page = forwardRef<HTMLDivElement, { src?: string; number: number; total: number; title: string; overlay?: OverlayItem[] }>(function Page({ src, number, total, title, overlay = [] }, ref) {
-  return <div className="flip-page" ref={ref}>
+  const isCover = number === 1;
+  return <div className={`flip-page${isCover ? " is-cover" : ""}`} ref={ref}>
     <div className="flip-page-inner">
-      {src ? <img src={src} alt={`${title} စာမျက်နှာ ${number}`} draggable={false} /> : <div className="flip-page-loading"><span></span>စာမျက်နှာ {number} ကို ပြင်ဆင်နေသည်…</div>}
+      {src ? <img src={src} alt={`${title} ${isCover ? "စာအုပ်အဖုံး" : `စာမျက်နှာ ${number}`}`} draggable={false} /> : <div className="flip-page-loading"><span></span>{isCover ? "စာအုပ်အဖုံးကို ပြင်ဆင်နေသည်…" : `စာမျက်နှာ ${number} ကို ပြင်ဆင်နေသည်…`}</div>}
       {overlay.length > 0 && <div className="zawgyi-overlay" aria-label="Zawgyi စာကို Unicode ဖြင့် ပြထားသည်">{overlay.map((item, index) => <span key={`${number}-${index}`} style={{ left: `${item.left}%`, top: `${item.top}%`, width: `${item.width}%`, fontSize: `${item.fontSize}px` }}>{item.text}</span>)}</div>}
-      <div className="flip-page-number">{number} / {total}</div>
+      <div className="flip-page-number">{isCover ? "အဖုံး" : `${number} / ${total}`}</div>
     </div>
   </div>;
 });
@@ -334,7 +335,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
           height={size.h}
           size="fixed"
           minWidth={200} maxWidth={2000} minHeight={200} maxHeight={3000}
-          showCover={!size.single}
+          showCover
           usePortrait={size.single}
           mobileScrollSupport={false}
           maxShadowOpacity={0.45}
