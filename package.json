@@ -12,6 +12,7 @@
     "prestart": "node scripts/copy-pdf-worker.mjs",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "test:reader-navigation": "node --test app/reader-navigation.test.mjs",
     "test:ingestion": "node --experimental-strip-types --test infra/cloudflare/test/worker.test.mjs"
   },
   "dependencies": {
