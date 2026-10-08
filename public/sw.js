@@ -1,5 +1,9 @@
-const SHELL_CACHE = "thuthayatethar-shell-v3";
-const BOOK_CACHE = "thuthayatethar-books-v3";
+// Keep user-downloaded books independent from deploy-specific app-shell caches.
+// A new Vercel build may replace the shell, but must not make users download
+// every saved PDF again.
+const SHELL_CACHE = "thuthayatethar-shell-v4";
+const BOOK_CACHE = "thuthayatethar-books";
+const CATALOG_CACHE = "thuthayatethar-catalog";
 const SHELL = ["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js"];
 
 self.addEventListener("install", (event) => {
@@ -7,7 +11,19 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== SHELL_CACHE && key !== BOOK_CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    const stableBooks = await caches.open(BOOK_CACHE);
+    for (const key of keys.filter((name) => name.startsWith("thuthayatethar-books-") && name !== BOOK_CACHE)) {
+      const oldBooks = await caches.open(key);
+      for (const request of await oldBooks.keys()) {
+        const response = await oldBooks.match(request);
+        if (response && !(await stableBooks.match(request))) await stableBooks.put(request, response);
+      }
+    }
+    await Promise.all(keys.filter((key) => key !== SHELL_CACHE && key !== BOOK_CACHE && key !== CATALOG_CACHE && !key.startsWith("thuthayatethar-books-") && !key.startsWith("thuthayatethar-catalog")).map((key) => caches.delete(key)));
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener("fetch", (event) => {
@@ -43,7 +59,7 @@ self.addEventListener("fetch", (event) => {
   }
   if (url.pathname === "/api/catalog") {
     event.respondWith((async () => {
-      const cache = await caches.open(SHELL_CACHE);
+      const cache = await caches.open(CATALOG_CACHE);
       try {
         const response = await fetch(request);
         if (response.ok) await cache.put(request.url, response.clone());

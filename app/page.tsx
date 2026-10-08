@@ -419,8 +419,8 @@ export default function HomePage() {
     let failed = false;
     try {
       if ("serviceWorker" in navigator) await navigator.serviceWorker.ready;
-      const cache = await caches.open("thuthayatethar-books-v3");
-      const shell = await caches.open("thuthayatethar-shell-v3");
+      const cache = await caches.open("thuthayatethar-books");
+      const shell = await caches.open("thuthayatethar-shell-v4");
       await shell.addAll(["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js"]);
       for (let index = 0; index < downloadableBooks.length; index += 1) {
         const book = downloadableBooks[index];
@@ -650,14 +650,14 @@ function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Them
   async function saveOffline() {
     if (!book.pdfUrl || !("caches" in window)) return;
     setSavingOffline(true);
-    try { const response = await fetch(book.pdfUrl, { cache: "no-store" }); if (!response.ok) throw new Error("offline_download_failed"); const cache = await caches.open("thuthayatethar-books-v3"); await cache.put(book.pdfUrl, response.clone()); if (book.slug) await cache.put(`/api/books/${encodeURIComponent(book.slug)}/pdf`, response.clone()); writeLocalValue(`thuthayatethar:offline:${book.slug ?? book.id}`, "1"); setOfflineSaved(true); } catch { setOfflineSaved(false); } finally { setSavingOffline(false); }
+    try { const response = await fetch(book.pdfUrl, { cache: "no-store" }); if (!response.ok) throw new Error("offline_download_failed"); const cache = await caches.open("thuthayatethar-books"); await cache.put(book.pdfUrl, response.clone()); if (book.slug) await cache.put(`/api/books/${encodeURIComponent(book.slug)}/pdf`, response.clone()); writeLocalValue(`thuthayatethar:offline:${book.slug ?? book.id}`, "1"); setOfflineSaved(true); } catch { setOfflineSaved(false); } finally { setSavingOffline(false); }
   }
   useEffect(() => { setOfflineSaved(readLocalValue(`thuthayatethar:offline:${book.slug ?? book.id}`) === "1"); }, [book.id, book.slug]);
   useEffect(() => {
     let active = true;
     (async () => {
       try {
-        const cache = await caches.open("thuthayatethar-books-v3");
+        const cache = await caches.open("thuthayatethar-books");
         const cached = await cache.match(book.pdfUrl!);
         const saved = Boolean(cached);
         if (active) setOfflineSaved(saved);
