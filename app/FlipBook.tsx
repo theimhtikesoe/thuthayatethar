@@ -196,7 +196,7 @@ export default function FlipBook({ url, title }: { url: string; title: string })
   const onPointerDown = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).closest("button,input")) return;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    const pts = [...pointers.current.values()];
+    const pts = Array.from(pointers.current.values());
     if (pts.length === 2) {
       const mid = localPoint({ clientX: (pts[0].x + pts[1].x) / 2, clientY: (pts[0].y + pts[1].y) / 2 });
       gesture.current = { dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), zoom, x: pan.x, y: pan.y, px: mid.x, py: mid.y };
@@ -218,7 +218,7 @@ export default function FlipBook({ url, title }: { url: string; title: string })
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const g = gesture.current;
     if (!g) return;
-    const pts = [...pointers.current.values()];
+    const pts = Array.from(pointers.current.values());
     if (pts.length === 2 && g.dist > 0) {
       e.stopPropagation();
       const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
