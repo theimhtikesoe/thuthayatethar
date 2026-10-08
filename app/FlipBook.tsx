@@ -50,7 +50,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
       try {
         const pdfjs: any = await import("pdfjs-dist");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
-        const loaded = await pdfjs.getDocument({ url, withCredentials: false, disableAutoFetch: true, disableStream: false, rangeChunkSize: 262144 }).promise;
+        const loaded = await pdfjs.getDocument({ url, withCredentials: false, disableAutoFetch: true, disableStream: false, rangeChunkSize: 1048576 }).promise;
         if (cancelled) return;
         setCurrent((page) => Math.min(Math.max(0, page), loaded.numPages - 1));
         setDoc(loaded);
@@ -119,8 +119,21 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
 
   useEffect(() => {
     if (!doc) return;
-    for (let n = current - 1; n <= current + 3; n++) renderPage(n + 1);
-  }, [doc, current, renderPage]);
+    const first = current + 1;
+    const spread = size.single || first === 1 ? [first] : [first % 2 === 0 ? first : first - 1, first % 2 === 0 ? first + 1 : first];
+    const nearby = [current, current + 1, current + 2, current - 1].map((page) => page + 1);
+    const queue = Array.from(new Set([...spread, ...nearby])).filter((page) => page >= 1 && page <= doc.numPages);
+    let cancelled = false;
+    (async () => {
+      // One-at-a-time avoids several large range requests competing on mobile;
+      // the visible spread is always rendered before neighboring pages.
+      for (const page of queue) {
+        if (cancelled) return;
+        await renderPage(page);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [doc, current, size.single, renderPage]);
 
   const saveProgress = useCallback((page: number) => {
     try { localStorage.setItem(progressKey, String(page)); } catch { /* Storage may be disabled. */ }
