@@ -1,6 +1,6 @@
 const SHELL_CACHE = "thuthayatethar-shell-v2";
 const BOOK_CACHE = "thuthayatethar-books-v2";
-const SHELL = ["/", "/manifest.webmanifest", "/logo.svg", "/pdf.worker.min.js"];
+const SHELL = ["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));

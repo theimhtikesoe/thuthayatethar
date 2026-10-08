@@ -289,7 +289,7 @@ export default function HomePage() {
       if ("serviceWorker" in navigator) await navigator.serviceWorker.ready;
       const cache = await caches.open("thuthayatethar-books-v2");
       const shell = await caches.open("thuthayatethar-shell-v2");
-      await shell.addAll(["/", "/manifest.webmanifest", "/logo.svg", "/pdf.worker.min.js"]);
+      await shell.addAll(["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js"]);
       for (let index = 0; index < downloadableBooks.length; index += 1) {
         const book = downloadableBooks[index];
         try {

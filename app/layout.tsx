@@ -4,9 +4,18 @@ import "./globals.css";
 import PwaRegister from "./PwaRegister";
 
 export const metadata: Metadata = {
-  title: "သုတရိပ်သာ — မြန်မာစာအုပ်များအတွက် ဒစ်ဂျစ်တယ်ရိပ်သာ",
+  title: "သုတရိပ်သာ",
+  applicationName: "သုတရိပ်သာ",
   description: "မြန်မာစာအုပ်များကို ရှာဖွေပြီး browser ထဲတွင်သာ ဖတ်ရှုနိုင်သော read-only online library.",
-  icons: { icon: "/logo.svg" },
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml", sizes: "any" },
+      { url: "/icon-192.png", type: "image/png", sizes: "192x192" },
+      { url: "/icon-512.png", type: "image/png", sizes: "512x512" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
+  appleWebApp: { capable: true, title: "သုတရိပ်သာ", statusBarStyle: "default" },
   manifest: "/manifest.webmanifest"
 };
 
