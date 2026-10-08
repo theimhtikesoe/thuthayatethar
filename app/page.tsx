@@ -196,9 +196,10 @@ export default function HomePage() {
   const [selected, setSelected] = useState<Book | null>(null);
   const [readerBook, setReaderBook] = useState<Book | null>(null);
   const [page, setPage] = useState(0);
-  const [theme, setTheme] = useState<Theme>("paper");
+  const [theme, setTheme] = useState<Theme>(() => { if (typeof window === "undefined") return "paper"; const saved = localStorage.getItem("thuthayatethar:reader-theme"); return saved === "sepia" || saved === "night" ? saved : "paper"; });
   const [fontScale, setFontScale] = useState(1);
   const [lineHeight, setLineHeight] = useState(1.8);
+  useEffect(() => { localStorage.setItem("thuthayatethar:reader-theme", theme); }, [theme]);
 
   useEffect(() => {
     const cached = localStorage.getItem("thuthayatethar:catalog");
@@ -369,7 +370,7 @@ function BookDetail({ book, onClose, onRead }: { book: Book; onClose: () => void
 
 type ReaderProps = { book: Book; page: number; setPage: (page: number) => void; theme: Theme; setTheme: (theme: Theme) => void; fontScale: number; setFontScale: (scale: number) => void; lineHeight: number; setLineHeight: (height: number) => void; onClose: () => void };
 
-function PdfReader({ book, theme, onClose }: { book: Book; theme: Theme; onClose: () => void }) {
+function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Theme; setTheme: (theme: Theme) => void; onClose: () => void }) {
   const shell = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [offlineSaved, setOfflineSaved] = useState(false);
@@ -391,10 +392,10 @@ function PdfReader({ book, theme, onClose }: { book: Book; theme: Theme; onClose
     try { const response = await fetch(book.pdfUrl, { cache: "no-store" }); if (!response.ok) throw new Error("offline_download_failed"); const cache = await caches.open("thuthayatethar-books-v1"); await cache.put(book.pdfUrl, response.clone()); localStorage.setItem(`thuthayatethar:offline:${book.slug ?? book.id}`, "1"); setOfflineSaved(true); } catch { setOfflineSaved(false); } finally { setSavingOffline(false); }
   }
   useEffect(() => { setOfflineSaved(localStorage.getItem(`thuthayatethar:offline:${book.slug ?? book.id}`) === "1"); }, [book.id, book.slug]);
-  return <div ref={shell} className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose}>← <span>စာကြည့်တိုက်သို့ ပြန်မည်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-header-actions"><button type="button" className="reader-offline" onClick={saveOffline} disabled={savingOffline} aria-label="Offline သိမ်းမည်">{savingOffline ? "…" : offlineSaved ? "✓" : "⇩"}<span>{offlineSaved ? "Offline သိမ်းပြီး" : "Offline သိမ်းမည်"}</span></button><button type="button" className="reader-fullscreen" onClick={toggleFullscreen} aria-label={fullscreen ? "အပြည့်မျက်နှာပြင်ပိတ်မည်" : "အပြည့်မျက်နှာပြင်ဖွင့်မည်"}>{fullscreen ? "⤢" : "⛶"}<span>{fullscreen ? "ပိတ်မည်" : "အပြည့်"}</span></button><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></div></header><div className="pdf-reader-workspace"><FlipBook url={book.pdfUrl ?? ""} title={book.title} /></div><footer className="reader-nav"><span>လက်နှစ်ချောင်းဖြင့် ချဲ့ကြည့်နိုင်ပါသည်။</span></footer></div>;
+  return <div ref={shell} className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose}>← <span>စာကြည့်တိုက်သို့ ပြန်မည်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-header-actions"><div className="reader-theme-buttons" role="group" aria-label="ဖတ်ရှုရန်အရောင်"><button type="button" className={theme === "paper" ? "active paper" : "paper"} onClick={() => setTheme("paper")} aria-label="စာရွက်အရောင်">●</button><button type="button" className={theme === "sepia" ? "active sepia" : "sepia"} onClick={() => setTheme("sepia")} aria-label="Sepia အရောင်">●</button><button type="button" className={theme === "night" ? "active night" : "night"} onClick={() => setTheme("night")} aria-label="ညအရောင်">●</button></div><button type="button" className="reader-offline" onClick={saveOffline} disabled={savingOffline} aria-label="Offline သိမ်းမည်">{savingOffline ? "…" : offlineSaved ? "✓" : "⇩"}<span>{offlineSaved ? "Offline သိမ်းပြီး" : "Offline သိမ်းမည်"}</span></button><button type="button" className="reader-fullscreen" onClick={toggleFullscreen} aria-label={fullscreen ? "အပြည့်မျက်နှာပြင်ပိတ်မည်" : "အပြည့်မျက်နှာပြင်ဖွင့်မည်"}>{fullscreen ? "⤢" : "⛶"}<span>{fullscreen ? "ပိတ်မည်" : "အပြည့်"}</span></button><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></div></header><div className="pdf-reader-workspace"><FlipBook url={book.pdfUrl ?? ""} title={book.title} /></div><footer className="reader-nav"><span>လက်နှစ်ချောင်းဖြင့် ချဲ့ကြည့်နိုင်ပါသည်။</span></footer></div>;
 }
 function Reader({ book, page, setPage, theme, setTheme, fontScale, setFontScale, lineHeight, setLineHeight, onClose }: ReaderProps) {
-  if (book.pages.length === 0 && book.pdfUrl) return <PdfReader book={book} theme={theme} onClose={onClose} />;
+  if (book.pages.length === 0 && book.pdfUrl) return <PdfReader book={book} theme={theme} setTheme={setTheme} onClose={onClose} />;
   const pageCount = book.pages.length;
   return <div className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}>
     <header className="reader-header"><button type="button" className="reader-back" onClick={onClose}>← <span>စာကြည့်တိုက်သို့ ပြန်မည်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></header>

@@ -160,6 +160,10 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .reader-offline { border: 1px solid rgba(81,73,60,.22); border-radius: 999px; background: transparent; color: inherit; padding: 7px 10px; font-size: 14px; line-height: 1; }
 .reader-offline:disabled { opacity: .55; }
 .reader-offline span { font-size: 9px; margin-left: 5px; vertical-align: 1px; }
+.reader-theme-buttons { display: flex; gap: 5px; align-items: center; }
+.reader-theme-buttons button { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; padding: 0; font-size: 0; box-shadow: 0 0 0 1px rgba(81,73,60,.24); }
+.reader-theme-buttons button.active { border-color: var(--gold); transform: scale(1.15); }
+.reader-theme-buttons .paper { background: #fffdf9; color: #fffdf9; }.reader-theme-buttons .sepia { background: #cbb692; color: #cbb692; }.reader-theme-buttons .night { background: #192326; color: #192326; }
 .reader-fullscreen span { font-size: 9px; margin-left: 5px; vertical-align: 1px; }
 .reader-header { padding-top: env(safe-area-inset-top); min-height: calc(69px + env(safe-area-inset-top)); }
 .reader-nav { padding-bottom: env(safe-area-inset-bottom); min-height: calc(75px + env(safe-area-inset-bottom)); }
@@ -169,6 +173,8 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
   .reader-title { max-width: 42vw; overflow: hidden; }
   .reader-title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
   .reader-header-actions { gap: 6px; }
+  .reader-theme-buttons { gap: 3px; }
+  .reader-theme-buttons button { width: 16px; height: 16px; }
   .reader-offline { padding: 7px 8px; }
   .reader-offline span { display: none; }
   .reader-fullscreen { padding: 7px 8px; }
