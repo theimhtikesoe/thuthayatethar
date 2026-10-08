@@ -115,6 +115,11 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .chapter-picker select:focus-visible { outline: 3px solid rgba(49,92,83,.2); outline-offset: 1px; }
 .chapter-open-button { min-height: 40px; border: 0; border-radius: 6px; background: #315c53; color: white; padding: 8px 10px; font-size: 11px; font-weight: 700; cursor: pointer; }
 .chapter-open-button:hover, .chapter-open-button:focus-visible { background: #244d45; outline: 3px solid rgba(49,92,83,.2); outline-offset: 1px; }
+.chapter-list-compact { padding: 8px 10px; margin-top: 10px; }
+.chapter-list-compact .chapter-list-label { display: inline-block; margin: 0 0 5px; font-size: 10px; }
+.chapter-list-compact .chapter-picker { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+.chapter-list-compact .chapter-picker label { font-size: 9px; }
+.chapter-list-compact .chapter-picker select, .chapter-list-compact .chapter-open-button { min-height: 32px; padding: 5px 7px; font-size: 10px; }
 .book-stats { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 9px; color: #aaa49c; display: flex; justify-content: space-between; font-size: 9px; }
 .rights-full { color: var(--green); }.rights-summary { color: #ae7f3d; }
 .empty-state { grid-column: 1 / -1; text-align: center; padding: 68px 20px; border: 1px dashed var(--line); color: var(--muted); }.empty-state > span { color: var(--gold); font-size: 29px; }.empty-state h3 { color: var(--ink); font-size: 17px; margin: 10px 0; }.empty-state p { font-size: 11px; margin-bottom: 22px; }
@@ -376,4 +381,9 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
   .reader-shell .reader-fullscreen { padding: 7px; }
   .reader-shell .reader-nav { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
   .pdf-password-prompt { padding: 22px; }
+}
+
+@media (max-width: 640px) {
+  .chapter-list-compact .chapter-picker { grid-template-columns: minmax(0, 1fr) auto; }
+  .chapter-list-compact .chapter-picker label { grid-column: 1 / -1; }
 }
