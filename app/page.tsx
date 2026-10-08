@@ -220,6 +220,14 @@ function chapterLabel(book: Book): string {
   return chapter ? `အခန်း ${chapter}` : book.title;
 }
 
+function groupTitle(group: BookGroup): string {
+  if (group.chapters.length < 2) return group.book.title;
+  return group.book.title
+    .replace(/\bchapter\s*[-_:]?\s*\d+\b/i, "")
+    .replace(/[\s._-]*\d+\s*$/, "")
+    .trim() || group.book.title;
+}
+
 function groupBooks(booksToGroup: Book[]): BookGroup[] {
   const groups = new Map<string, BookGroup>();
   for (const book of booksToGroup) {
@@ -453,9 +461,9 @@ function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; o
       <BookCover book={book} label={String(index + 1).padStart(2, "0")} />
       {book.rights === "summary" && <span className="summary-ribbon">အကျဉ်းချုပ်သာ</span>}
     </button>
-    <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{book.title}</h3><p className="book-author">{book.author}</p>{book.externalUrl && <small className="external-source-label">Wattpad မူရင်းစာမျက်နှာမှ ဖတ်ရှုရန်</small>}</div><button className="round-arrow" type="button" onClick={() => onOpen(book)} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
-    {chapters.length > 1 && <div className="chapter-list" aria-label={`${book.title} အခန်းများ`}><span className="chapter-list-label">အခန်းများ</span>{chapters.map((chapter) => <button key={chapter.id} type="button" className="chapter-pill" onClick={() => onOpen(chapter)}>{chapterLabel(chapter)}</button>)}</div>}
-    <div className="book-stats"><span>{book.externalUrl ? "Wattpad မူရင်း link" : `◷ ${book.readingTime} မိနစ်`}</span><span className={book.externalUrl ? "rights-summary" : book.rights === "full" ? "rights-full" : "rights-summary"}>{book.externalUrl ? "မူရင်းမှာဖတ်မည်" : book.rights === "full" ? "ဖတ်ရှုနိုင်သည်" : "အကျဉ်းချုပ်"}</span></div>
+    <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{groupTitle(group)}</h3><p className="book-author">{book.author}</p>{book.externalUrl && <small className="external-source-label">Wattpad မူရင်းစာမျက်နှာမှ ဖတ်ရှုရန်</small>}</div><button className="round-arrow" type="button" onClick={() => onOpen(book)} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
+    {chapters.length > 1 && <div className="chapter-list" aria-label={`${groupTitle(group)} အခန်းများ`}><span className="chapter-list-label">ဒီစာအုပ်မှာ အခန်း {chapters.length} ခန်းရှိသည်</span><div className="chapter-pills">{chapters.map((chapter) => <button key={chapter.id} type="button" className="chapter-pill" onClick={() => onOpen(chapter)}><span>{chapterLabel(chapter)}</span><b>ဖတ်မည် →</b></button>)}</div></div>}
+    <div className="book-stats"><span>{chapters.length > 1 ? `◷ ${chapters.length} ခန်း` : book.externalUrl ? "Wattpad မူရင်း link" : `◷ ${book.readingTime} မိနစ်`}</span><span className={book.externalUrl ? "rights-summary" : book.rights === "full" ? "rights-full" : "rights-summary"}>{book.externalUrl ? "မူရင်းမှာဖတ်မည်" : book.rights === "full" ? "ဖတ်ရှုနိုင်သည်" : "အကျဉ်းချုပ်"}</span></div>
   </article>;
 }
 
