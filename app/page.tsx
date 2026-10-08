@@ -179,6 +179,11 @@ const books: Book[] = [
 
 const categories = ["အားလုံး", "ဝတ္ထု", "ကဗျာ", "သမိုင်းဝတ္ထု", "အက်ဆေး", "လူငယ်", "သုတ"];
 const times = ["အားလုံး", "၁၅ မိနစ်အောက်", "၁၅–၂၅ မိနစ်", "၂၅ မိနစ်အထက်"];
+const coverPalette = [
+  ["#cad7d3", "#264e4b"], ["#e5c6b2", "#8a4f3d"], ["#d6c6a9", "#655139"],
+  ["#c7d4e5", "#38567b"], ["#b9c8d1", "#334d62"], ["#e0c4cf", "#7b405d"],
+  ["#d5d0c2", "#5d5844"], ["#d7c7ba", "#795c4c"],
+];
 
 function readingProgressKey(book: Book) {
   return `thuthayatethar:progress:${book.slug ?? book.id}`;
@@ -219,7 +224,7 @@ export default function HomePage() {
     fetch("/api/catalog", { cache: "no-store" })
       .then((response) => response.json())
       .then((payload: { ok?: boolean; configured?: boolean; books?: Array<Partial<Book> & { id?: string | number; pages?: string[]; pdfUrl?: string }> }) => {
-        if (payload.ok !== true || payload.configured === false || !Array.isArray(payload.books)) { setCatalogBooks([]); return; }
+        if (payload.ok !== true || payload.configured === false || !Array.isArray(payload.books)) { if (!cached) setCatalogBooks([]); return; }
         const nextBooks: Book[] = payload.books.map((book, index) => ({
           id: typeof book.id === "number" ? book.id : index + 1,
           title: book.title ?? "စာအုပ်အသစ်",
@@ -229,8 +234,8 @@ export default function HomePage() {
           readingTime: book.readingTime ?? 10,
           pages: book.pages ?? [],
           summary: book.summary ?? "",
-          color: book.color ?? "#d6c6a9",
-          accent: book.accent ?? "#655139",
+          color: book.color ?? coverPalette[index % coverPalette.length][0],
+          accent: book.accent ?? coverPalette[index % coverPalette.length][1],
           mark: book.mark ?? "စာ",
           rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
           tag: book.tag ?? "ထုတ်ဝေထားသည်",
@@ -408,7 +413,7 @@ function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Them
   async function saveOffline() {
     if (!book.pdfUrl || !("caches" in window)) return;
     setSavingOffline(true);
-    try { const response = await fetch(book.pdfUrl, { cache: "no-store" }); if (!response.ok) throw new Error("offline_download_failed"); const cache = await caches.open("thuthayatethar-books-v1"); await cache.put(book.pdfUrl, response.clone()); localStorage.setItem(`thuthayatethar:offline:${book.slug ?? book.id}`, "1"); setOfflineSaved(true); } catch { setOfflineSaved(false); } finally { setSavingOffline(false); }
+    try { const response = await fetch(book.pdfUrl, { cache: "no-store" }); if (!response.ok) throw new Error("offline_download_failed"); const cache = await caches.open("thuthayatethar-books-v2"); await cache.put(book.pdfUrl, response.clone()); localStorage.setItem(`thuthayatethar:offline:${book.slug ?? book.id}`, "1"); setOfflineSaved(true); } catch { setOfflineSaved(false); } finally { setSavingOffline(false); }
   }
   useEffect(() => { setOfflineSaved(localStorage.getItem(`thuthayatethar:offline:${book.slug ?? book.id}`) === "1"); }, [book.id, book.slug]);
   const showReaderUI = () => {
@@ -424,7 +429,7 @@ function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Them
     let active = true;
     (async () => {
       try {
-        const cache = await caches.open("thuthayatethar-books-v1");
+        const cache = await caches.open("thuthayatethar-books-v2");
         const cached = await cache.match(book.pdfUrl!);
         const saved = Boolean(cached);
         if (active) setOfflineSaved(saved);

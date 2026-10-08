@@ -1,5 +1,5 @@
-const SHELL_CACHE = "thuthayatethar-shell-v1";
-const BOOK_CACHE = "thuthayatethar-books-v1";
+const SHELL_CACHE = "thuthayatethar-shell-v2";
+const BOOK_CACHE = "thuthayatethar-books-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/logo.svg", "/pdf.worker.min.js"];
 
 self.addEventListener("install", (event) => {
@@ -7,7 +7,7 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== SHELL_CACHE && key !== BOOK_CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
 });
 
 self.addEventListener("fetch", (event) => {
@@ -61,6 +61,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   if (url.origin === self.location.origin && (url.pathname === "/" || url.pathname === "/admin")) {
-    event.respondWith(fetch(request).catch(() => caches.match("/")));
+    event.respondWith((async () => {
+      const cache = await caches.open(SHELL_CACHE);
+      try {
+        const response = await fetch(request);
+        if (response.ok) await cache.put(request, response.clone());
+        return response;
+      } catch { return (await cache.match(request)) || (await cache.match("/")) || new Response("Offline", { status: 503 }); }
+    })());
   }
 });

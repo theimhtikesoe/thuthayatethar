@@ -112,6 +112,13 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .flip-page { background: #fffaf0; overflow: hidden; }
 .flip-page-inner { position: relative; width: 100%; height: 100%; }
 .flip-page img, .flip-zoom-page img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+.zawgyi-overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.zawgyi-overlay span { position: absolute; display: block; min-height: 1.1em; overflow: hidden; padding: 1px 3px; border-radius: 2px; background: rgba(255,253,249,.92); color: #17212b; font-family: 'Noto Sans Myanmar', 'Myanmar Text', 'Padauk', sans-serif; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 1px 2px rgba(23,33,43,.12); }
+.theme-sepia .zawgyi-overlay span { background: rgba(241,229,204,.94); color: #4b4035; }
+.theme-night .zawgyi-overlay span { background: rgba(28,37,40,.95); color: #ddd5ca; }
+.pdf-overlay-note { position: absolute; z-index: 4; left: 50%; top: 12px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 6px 10px; border: 1px solid rgba(143,116,76,.25); border-radius: 999px; background: rgba(255,253,249,.9); color: #8f744c; font-size: 9px; text-align: center; pointer-events: none; }
+.pdf-overlay-note.is-ready { color: var(--green); border-color: rgba(73,109,99,.25); }
+.theme-night .pdf-overlay-note { background: rgba(28,37,40,.92); }
 .flip-page.--left .flip-page-inner::after { content: ""; position: absolute; inset: 0 0 0 auto; width: 40px; background: linear-gradient(to left, rgba(0,0,0,.16), transparent); pointer-events: none; }
 .flip-page.--right .flip-page-inner::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 40px; background: linear-gradient(to right, rgba(0,0,0,.16), transparent); pointer-events: none; }
 .flip-page-number { position: absolute; bottom: 8px; left: 0; right: 0; text-align: center; font-family: Georgia, serif; font-size: 10px; color: #a89f92; }

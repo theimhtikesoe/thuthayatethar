@@ -2,18 +2,21 @@
 
 import { forwardRef, useCallback, useEffect, useRef, useState } from "react";
 import HTMLFlipBook from "react-pageflip";
+import { normalizeMyanmarText } from "./zawgyi";
 
 type PdfDoc = { numPages: number; getPage: (n: number) => Promise<any> };
+type OverlayItem = { text: string; left: number; top: number; width: number; fontSize: number; isZawgyi: boolean };
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.5;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-const Page = forwardRef<HTMLDivElement, { src?: string; number: number; total: number; title: string }>(function Page({ src, number, total, title }, ref) {
+const Page = forwardRef<HTMLDivElement, { src?: string; number: number; total: number; title: string; overlay?: OverlayItem[] }>(function Page({ src, number, total, title, overlay = [] }, ref) {
   return <div className="flip-page" ref={ref}>
     <div className="flip-page-inner">
       {src ? <img src={src} alt={`${title} စာမျက်နှာ ${number}`} draggable={false} /> : <div className="flip-page-loading"><span></span>စာမျက်နှာ {number} ကို ပြင်ဆင်နေသည်…</div>}
+      {overlay.length > 0 && <div className="zawgyi-overlay" aria-label="Zawgyi စာကို Unicode ဖြင့် ပြထားသည်">{overlay.map((item, index) => <span key={`${number}-${index}`} style={{ left: `${item.left}%`, top: `${item.top}%`, width: `${item.width}%`, fontSize: `${item.fontSize}px` }}>{item.text}</span>)}</div>}
       <div className="flip-page-number">{number} / {total}</div>
     </div>
   </div>;
@@ -23,6 +26,8 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<Record<number, string>>({});
+  const [overlays, setOverlays] = useState<Record<number, OverlayItem[]>>({});
+  const [overlayState, setOverlayState] = useState<"checking" | "ready" | "image-only">("checking");
   const [hires, setHires] = useState<Record<string, string>>({});
   const [current, setCurrent] = useState(() => {
     try {
@@ -56,12 +61,52 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
         setCurrent((page) => Math.min(Math.max(0, page), loaded.numPages - 1));
         setRatio(vp.height / vp.width);
         setDoc(loaded);
+        setOverlayState("checking");
       } catch {
         if (!cancelled) setError("PDF ကို ဖွင့်၍ မရပါ။");
       }
     })();
     return () => { cancelled = true; };
   }, [url]);
+
+  // PDF.js can expose an embedded text layer even when the visible page is a
+  // raster image. Convert only detected Zawgyi locally and draw it over the
+  // page; no OCR/network request is involved.
+  useEffect(() => {
+    if (!doc) return;
+    let cancelled = false;
+    (async () => {
+      let foundText = false;
+      let foundZawgyi = false;
+      const next: Record<number, OverlayItem[]> = {};
+      for (let n = 1; n <= doc.numPages; n += 1) {
+        try {
+          const page = await doc.getPage(n);
+          const content = await page.getTextContent();
+          const base = page.getViewport({ scale: 1 });
+          const items: OverlayItem[] = [];
+          for (const raw of content.items as Array<{ str?: string; transform?: number[]; width?: number }>) {
+            if (!raw.str?.trim() || !raw.transform) continue;
+            foundText = true;
+            const converted = await normalizeMyanmarText(raw.str);
+            if (!converted.isZawgyi) continue;
+            foundZawgyi = true;
+            const scale = size.w / base.width;
+            const fontSize = Math.max(7, Math.abs(raw.transform[3] || raw.transform[0] || 10) * scale);
+            const x = (raw.transform[4] || 0) / base.width * 100;
+            const y = (1 - (raw.transform[5] || 0) / base.height) * 100 - fontSize / base.height * 100;
+            items.push({ text: converted.text, left: x, top: Math.max(0, y), width: Math.max(4, (raw.width || 20) / base.width * 100), fontSize, isZawgyi: true });
+          }
+          if (items.length) next[n] = items;
+        } catch { /* A page without extractable text is handled as image-only. */ }
+      }
+      if (!cancelled) {
+        setOverlays(next);
+        setOverlayState(foundZawgyi ? "ready" : foundText ? "ready" : "image-only");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [doc, size.w]);
 
   useEffect(() => {
     const el = stage.current;
@@ -279,6 +324,8 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
     >
       {error && <div className="flip-status">{error} <a href={url} target="_blank" rel="noreferrer">သီးခြားဖွင့်မည် ↗</a></div>}
       {!error && !doc && <div className="flip-status"><span className="flip-spinner"></span>စာအုပ်ကို ဖွင့်နေသည်…</div>}
+      {doc && overlayState === "image-only" && <div className="pdf-overlay-note">ပုံ-only PDF — OCR overlay မပါ</div>}
+      {doc && overlayState === "ready" && Object.keys(overlays).length > 0 && <div className="pdf-overlay-note is-ready">Zawgyi စာကို Unicode overlay ဖြင့် ဖတ်နိုင်သည်</div>}
       {doc && <div className="flipbook-holder" style={{ width: size.single ? size.w : size.w * 2, height: size.h }}>
         <HTMLFlipBook
           key={`${size.w}-${size.single}-${bookResetVersion}`}
@@ -299,7 +346,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
           startZIndex={0} autoSize={false} clickEventForward useMouseEvents={!zoomed} swipeDistance={30} showPageCorners={!zoomed} disableFlipByClick
           onFlip={(e: any) => { setCurrent(e.data); saveProgress(e.data); }}
         >
-          {Array.from({ length: total }, (_, i) => <Page key={i} number={i + 1} total={total} title={title} src={images[i + 1]} />)}
+          {Array.from({ length: total }, (_, i) => <Page key={i} number={i + 1} total={total} title={title} src={images[i + 1]} overlay={overlays[i + 1]} />)}
         </HTMLFlipBook>
       </div>}
       {doc && zoomed && <div className="flip-zoom-layer" aria-label="ချဲ့ကြည့်နေသည်">
