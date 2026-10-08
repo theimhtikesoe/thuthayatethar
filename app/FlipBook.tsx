@@ -23,6 +23,9 @@ const Page = forwardRef<HTMLDivElement, { src?: string; number: number; total: n
 export default function FlipBook({ url, title, progressKey }: { url: string; title: string; progressKey: string }) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [passwordPrompt, setPasswordPrompt] = useState(false);
+  const [passwordValue, setPasswordValue] = useState("tgcf");
+  const [passwordIncorrect, setPasswordIncorrect] = useState(false);
   const [images, setImages] = useState<Record<number, string>>({});
   const [hires, setHires] = useState<Record<string, string>>({});
   const [current, setCurrent] = useState(() => {
@@ -39,6 +42,7 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
   const book = useRef<any>(null);
   const stage = useRef<HTMLDivElement>(null);
   const rendering = useRef(new Set<string>());
+  const passwordUpdater = useRef<((password: string) => void) | null>(null);
   const jumpResetTimer = useRef<number | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ dist: number; zoom: number; x: number; y: number; px: number; py: number } | null>(null);
@@ -46,12 +50,27 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
 
   useEffect(() => {
     let cancelled = false;
+    let fallbackTried = false;
+    let loadingTask: any;
     (async () => {
       try {
         const pdfjs: any = await import("pdfjs-dist");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
-        const loaded = await pdfjs.getDocument({ url, withCredentials: false, disableAutoFetch: true, disableStream: false, rangeChunkSize: 1048576 }).promise;
+        loadingTask = pdfjs.getDocument({ url, withCredentials: false, disableAutoFetch: true, disableStream: false, rangeChunkSize: 1048576 });
+        loadingTask.onPassword = (updatePassword: (password: string) => void, reason: number) => {
+          if (!fallbackTried) {
+            fallbackTried = true;
+            setPasswordValue("tgcf");
+            updatePassword("tgcf");
+            return;
+          }
+          passwordUpdater.current = updatePassword;
+          setPasswordIncorrect(reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD);
+          setPasswordPrompt(true);
+        };
+        const loaded = await loadingTask.promise;
         if (cancelled) return;
+        setPasswordPrompt(false);
         setCurrent((page) => Math.min(Math.max(0, page), loaded.numPages - 1));
         setDoc(loaded);
         // The document already exposes numPages at this point. Start rendering
@@ -63,10 +82,10 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
           setRatio(vp.height / vp.width);
         }).catch(() => { /* Keep the default book ratio if metadata is slow. */ });
       } catch {
-        if (!cancelled) setError("PDF ကို ဖွင့်၍ မရပါ။");
+        if (!cancelled) setError("PDF ကို ဖွင့်၍ မရပါ။ စာအုပ်ဖိုင်ကို စစ်ဆေးပြီး ထပ်ကြိုးစားပါ။");
       }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; loadingTask?.destroy?.(); };
   }, [url]);
 
   useEffect(() => {
@@ -198,8 +217,14 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
     } else setBookResetVersion((version) => version + 1);
     setPan({ x: 0, y: 0 });
   };
-  const goPrevious = () => goTo(Math.max(0, current - (size.single ? 1 : 2)), true);
-  const goNext = () => goTo(Math.min(total - 1, current + (current === 0 || size.single ? 1 : 2)), true);
+  const goPrevious = () => {
+    if (zoomed) goTo(Math.max(0, current - (size.single ? 1 : 2)));
+    else book.current?.pageFlip()?.flipPrev();
+  };
+  const goNext = () => {
+    if (zoomed) goTo(Math.min(total - 1, current + visible.length));
+    else book.current?.pageFlip()?.flipNext();
+  };
   useEffect(() => () => { if (jumpResetTimer.current !== null) window.clearTimeout(jumpResetTimer.current); }, []);
   const zoomed = zoom > 1;
 
@@ -297,6 +322,14 @@ export default function FlipBook({ url, title, progressKey }: { url: string; tit
       onPointerCancelCapture={onPointerUp}
     >
       {error && <div className="flip-status">{error} <a href={url} target="_blank" rel="noreferrer">သီးခြားဖွင့်မည် ↗</a></div>}
+      {passwordPrompt && <form className="pdf-password-prompt" onSubmit={(event) => { event.preventDefault(); passwordUpdater.current?.(passwordValue); setPasswordPrompt(false); }}>
+        <span className="password-lock" aria-hidden="true">▣</span>
+        <strong>စကားဝှက်ဖြင့် ဖတ်ရှုရန်</strong>
+        <p>{passwordIncorrect ? "tgcf ဖြင့် မဖွင့်နိုင်ပါ။ မှန်ကန်သော စကားဝှက်ကို စမ်းကြည့်ပါ။" : "ပုံမှန်စကားဝှက် tgcf ဖြင့် ဖွင့်မရပါ။ အခြားစကားဝှက်ကို ထည့်ပါ။"}</p>
+        <label htmlFor="pdf-password">PDF စကားဝှက်</label>
+        <input id="pdf-password" type="password" value={passwordValue} onChange={(event) => setPasswordValue(event.target.value)} autoComplete="current-password" autoFocus />
+        <button type="submit">ဖွင့်မည် →</button>
+      </form>}
       {!error && !doc && <div className="flip-status"><span className="flip-spinner"></span>စာအုပ်ကို ဖွင့်နေသည်…</div>}
       {doc && <div className="flipbook-holder" style={{ width: size.single ? size.w : size.w * 2, height: size.h }}>
         <HTMLFlipBook

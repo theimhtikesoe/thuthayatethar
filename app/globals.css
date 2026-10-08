@@ -257,3 +257,100 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
   .book-card, .book-card:hover, .book-cover, .cover-wrap:hover .book-cover, .cover-wrap:focus-visible .book-cover, .book-meta, .book-card:hover .book-meta, .round-arrow, .book-card:hover .round-arrow { animation: none; transform: none; transition: none; }
   .cover-wrap::after { display: none; }
 }
+
+
+/* Keep essential reader controls visible and in-flow on every screen size. */
+.reader-shell .reader-header,
+.reader-shell > .reader-nav {
+  position: relative;
+  inset: auto;
+  z-index: 4;
+  flex: 0 0 auto;
+  transform: none;
+  opacity: 1;
+  filter: none;
+  visibility: visible;
+  pointer-events: auto;
+  transition: none;
+}
+.reader-shell .reader-header {
+  display: flex;
+  gap: 18px;
+}
+.reader-shell .reader-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: 1px solid rgba(81, 73, 60, .2);
+  border-radius: 999px;
+  background: rgba(255, 253, 249, .55);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.reader-shell .reader-back span {
+  margin: 0;
+  font-size: 10px;
+  vertical-align: initial;
+}
+.reader-shell .reader-title {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.reader-shell .reader-header-actions {
+  flex: 0 0 auto;
+}
+.reader-shell .reader-fullscreen,
+.reader-shell .reader-offline {
+  cursor: pointer;
+  transition: background .18s ease, border-color .18s ease, transform .18s ease;
+}
+.reader-shell .reader-fullscreen:hover,
+.reader-shell .reader-offline:hover,
+.reader-shell .reader-back:hover {
+  background: rgba(255, 253, 249, .9);
+  border-color: rgba(143, 116, 76, .55);
+}
+.pdf-password-prompt {
+  position: absolute;
+  z-index: 6;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(380px, calc(100% - 36px));
+  padding: 28px;
+  border: 1px solid rgba(81, 73, 60, .14);
+  border-radius: 14px;
+  background: rgba(255, 253, 249, .97);
+  box-shadow: 0 22px 70px rgba(39, 33, 25, .2);
+  color: #323d40;
+  text-align: center;
+}
+.password-lock { color: #9b8157; font-size: 28px; }
+.pdf-password-prompt strong { font-family: Georgia, serif; font-size: 18px; }
+.pdf-password-prompt p { margin: 0; color: #81786d; font-size: 11px; line-height: 1.8; }
+.pdf-password-prompt label { justify-self: start; width: 100%; color: #81786d; font-size: 10px; text-align: left; }
+.pdf-password-prompt input { width: 100%; padding: 11px 12px; border: 1px solid rgba(81, 73, 60, .25); border-radius: 7px; outline: none; background: white; color: #323d40; font-size: 14px; }
+.pdf-password-prompt input:focus { border-color: #9b8157; box-shadow: 0 0 0 3px rgba(155, 129, 87, .16); }
+.pdf-password-prompt button { width: 100%; margin-top: 3px; padding: 11px; border: 0; border-radius: 7px; background: #304c47; color: white; cursor: pointer; font-size: 12px; }
+.pdf-password-prompt button:hover { background: #243d39; }
+@media (max-width: 640px) {
+  .reader-shell .reader-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 6px;
+    padding: env(safe-area-inset-top) 8px 0;
+  }
+  .reader-shell .reader-back { gap: 3px; padding: 7px 7px; font-size: 16px; }
+  .reader-shell .reader-back span { display: inline; font-size: 8px; }
+  .reader-shell .reader-title { max-width: none; text-align: center; }
+  .reader-shell .reader-title strong { font-size: 9px; }
+  .reader-shell .reader-header-actions { gap: 4px; }
+  .reader-shell .reader-offline,
+  .reader-shell .reader-fullscreen { padding: 7px; }
+  .reader-shell .reader-nav { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .pdf-password-prompt { padding: 22px; }
+}

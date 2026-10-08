@@ -266,7 +266,15 @@ export default function HomePage() {
     const slug = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("read");
     if (!slug || !catalogBooks) return;
     const book = catalogBooks.find((item) => item.slug === slug);
-    if (book) { setReaderBook(book); setPage(getReadingProgress(book)); document.body.classList.add("reader-open"); }
+    if (!book) return;
+    if (book.rights !== "full" || !book.pdfUrl || book.externalUrl) {
+      setSelected(book);
+      window.history.replaceState(null, "", "#catalog");
+      return;
+    }
+    setReaderBook(book);
+    setPage(getReadingProgress(book));
+    document.body.classList.add("reader-open");
   }, [catalogBooks]);
 
   const availableBooks = catalogBooks ?? [];
@@ -476,11 +484,9 @@ type ReaderProps = { book: Book; page: number; setPage: (page: number) => void; 
 
 function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Theme; setTheme: (theme: Theme) => void; onClose: () => void }) {
   const shell = useRef<HTMLDivElement>(null);
-  const hideTimer = useRef<number | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [offlineSaved, setOfflineSaved] = useState(false);
   const [savingOffline, setSavingOffline] = useState(false);
-  const [uiVisible, setUiVisible] = useState(true);
   useEffect(() => {
     const onChange = () => setFullscreen(document.fullscreenElement === shell.current);
     document.addEventListener("fullscreenchange", onChange);
@@ -498,15 +504,6 @@ function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Them
     try { const response = await fetch(book.pdfUrl, { cache: "no-store" }); if (!response.ok) throw new Error("offline_download_failed"); const cache = await caches.open("thuthayatethar-books-v2"); await cache.put(book.pdfUrl, response.clone()); localStorage.setItem(`thuthayatethar:offline:${book.slug ?? book.id}`, "1"); setOfflineSaved(true); } catch { setOfflineSaved(false); } finally { setSavingOffline(false); }
   }
   useEffect(() => { setOfflineSaved(localStorage.getItem(`thuthayatethar:offline:${book.slug ?? book.id}`) === "1"); }, [book.id, book.slug]);
-  const showReaderUI = () => {
-    setUiVisible(true);
-    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
-    hideTimer.current = window.setTimeout(() => setUiVisible(false), 2400);
-  };
-  useEffect(() => {
-    hideTimer.current = window.setTimeout(() => setUiVisible(false), 2400);
-    return () => { if (hideTimer.current !== null) window.clearTimeout(hideTimer.current); };
-  }, []);
   useEffect(() => {
     let active = true;
     (async () => {
@@ -520,7 +517,7 @@ function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Them
     })();
     return () => { active = false; };
   }, [book.pdfUrl, book.id, book.slug]);
-  return <div ref={shell} className={`reader-shell theme-${theme}${uiVisible ? "" : " reader-ui-hidden"}`} onPointerMoveCapture={showReaderUI} onPointerDownCapture={showReaderUI} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose}>← <span>စာကြည့်တိုက်သို့ ပြန်မည်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-header-actions"><div className="reader-theme-buttons" role="group" aria-label="ဖတ်ရှုရန်အရောင်"><button type="button" className={theme === "paper" ? "active paper" : "paper"} onClick={() => setTheme("paper")} aria-label="စာရွက်အရောင်">●</button><button type="button" className={theme === "sepia" ? "active sepia" : "sepia"} onClick={() => setTheme("sepia")} aria-label="Sepia အရောင်">●</button><button type="button" className={theme === "night" ? "active night" : "night"} onClick={() => setTheme("night")} aria-label="ညအရောင်">●</button></div><button type="button" className="reader-offline" onClick={saveOffline} disabled={savingOffline} aria-label="Offline သိမ်းမည်">{savingOffline ? "…" : offlineSaved ? "✓" : "⇩"}<span>{offlineSaved ? "Offline သိမ်းပြီး" : "Offline သိမ်းမည်"}</span></button><button type="button" className="reader-fullscreen" onClick={toggleFullscreen} aria-label={fullscreen ? "အပြည့်မျက်နှာပြင်ပိတ်မည်" : "အပြည့်မျက်နှာပြင်ဖွင့်မည်"}>{fullscreen ? "⤢" : "⛶"}<span>{fullscreen ? "ပိတ်မည်" : "အပြည့်"}</span></button><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></div></header><div className="pdf-reader-workspace"><FlipBook key={book.slug ?? book.id} url={book.pdfUrl ?? ""} title={book.title} progressKey={readingProgressKey(book)} /></div><footer className="reader-nav"><span>လက်နှစ်ချောင်းဖြင့် ချဲ့ကြည့်နိုင်ပါသည်။</span></footer></div>;
+  return <div ref={shell} className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose} aria-label="စာကြည့်တိုက်သို့ ပြန်မည်">← <span>စာကြည့်တိုက်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-header-actions"><div className="reader-theme-buttons" role="group" aria-label="ဖတ်ရှုရန်အရောင်"><button type="button" className={theme === "paper" ? "active paper" : "paper"} onClick={() => setTheme("paper")} aria-label="စာရွက်အရောင်">●</button><button type="button" className={theme === "sepia" ? "active sepia" : "sepia"} onClick={() => setTheme("sepia")} aria-label="Sepia အရောင်">●</button><button type="button" className={theme === "night" ? "active night" : "night"} onClick={() => setTheme("night")} aria-label="ညအရောင်">●</button></div><button type="button" className="reader-offline" onClick={saveOffline} disabled={savingOffline} aria-label="Offline သိမ်းမည်">{savingOffline ? "…" : offlineSaved ? "✓" : "⇩"}<span>{offlineSaved ? "Offline သိမ်းပြီး" : "Offline သိမ်းမည်"}</span></button><button type="button" className="reader-fullscreen" onClick={toggleFullscreen} aria-label={fullscreen ? "အပြည့်မျက်နှာပြင်ပိတ်မည်" : "အပြည့်မျက်နှာပြင်ဖွင့်မည်"}>{fullscreen ? "⤢" : "⛶"}<span>{fullscreen ? "ပိတ်မည်" : "အပြည့်"}</span></button><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></div></header><div className="pdf-reader-workspace"><FlipBook key={book.slug ?? book.id} url={book.pdfUrl ?? ""} title={book.title} progressKey={readingProgressKey(book)} /></div><footer className="reader-nav"><span>လက်နှစ်ချောင်းဖြင့် ချဲ့ကြည့်နိုင်ပါသည်။</span></footer></div>;
 }
 function Reader(props: ReaderProps) {
   if (props.book.pages.length === 0 && props.book.pdfUrl) return <PdfReader book={props.book} theme={props.theme} setTheme={props.setTheme} onClose={props.onClose} />;
@@ -529,19 +526,8 @@ function Reader(props: ReaderProps) {
 
 function TextReader({ book, page, setPage, theme, setTheme, fontScale, setFontScale, lineHeight, setLineHeight, onClose }: ReaderProps) {
   const pageCount = book.pages.length;
-  const hideTimer = useRef<number | null>(null);
-  const [uiVisible, setUiVisible] = useState(true);
-  const showReaderUI = () => {
-    setUiVisible(true);
-    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current);
-    hideTimer.current = window.setTimeout(() => setUiVisible(false), 2400);
-  };
-  useEffect(() => {
-    hideTimer.current = window.setTimeout(() => setUiVisible(false), 2400);
-    return () => { if (hideTimer.current !== null) window.clearTimeout(hideTimer.current); };
-  }, []);
-  return <div className={`reader-shell theme-${theme}${uiVisible ? "" : " reader-ui-hidden"}`} onPointerMoveCapture={showReaderUI} onPointerDownCapture={showReaderUI} onContextMenu={(event) => event.preventDefault()}>
-    <header className="reader-header"><button type="button" className="reader-back" onClick={onClose}>← <span>စာကြည့်တိုက်သို့ ပြန်မည်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></header>
+  return <div className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}>
+    <header className="reader-header"><button type="button" className="reader-back" onClick={onClose} aria-label="စာကြည့်တိုက်သို့ ပြန်မည်">← <span>စာကြည့်တိုက်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></header>
     <div className="reader-workspace"><aside className="reader-tools"><p className="tools-label">ဖတ်ရှုမှု ပြင်ဆင်ရန်</p><div className="tool-group"><span>စာလုံးအရွယ်</span><div className="tool-buttons"><button type="button" onClick={() => setFontScale(Math.max(.86, fontScale - .08))}>A−</button><b>{Math.round(fontScale * 100)}%</b><button type="button" onClick={() => setFontScale(Math.min(1.2, fontScale + .08))}>A＋</button></div></div><div className="tool-group"><span>စာကြောင်းအကွာ</span><div className="tool-buttons"><button type="button" onClick={() => setLineHeight(Math.max(1.5, lineHeight - .15))}>−</button><b>{lineHeight.toFixed(1)}</b><button type="button" onClick={() => setLineHeight(Math.min(2.2, lineHeight + .15))}>＋</button></div></div><div className="tool-group"><span>နောက်ခံ</span><div className="theme-buttons"><button type="button" aria-label="စာရွက်နောက်ခံ" className={theme === "paper" ? "active" : ""} onClick={() => setTheme("paper")}></button><button type="button" aria-label="အညိုနောက်ခံ" className={theme === "sepia" ? "active sepia" : "sepia"} onClick={() => setTheme("sepia")}></button><button type="button" aria-label="ညနောက်ခံ" className={theme === "night" ? "active night" : "night"} onClick={() => setTheme("night")}></button></div></div><div className="reader-tip"><span>✦</span> ဖတ်နေစဉ် အလင်းရောင်ကို လျှော့ပြီး စိတ်အေးအေးထားပါ။</div></aside>
       <article className="reader-page" style={{ fontSize: `${fontScale}rem`, lineHeight }}><div className="page-topline"><span>{book.category}</span><span>{book.year}</span></div><div className="page-content"><p className="page-kicker">{book.title}</p><h1>{page === 0 ? book.title : `အခန်း ${page + 1}`}</h1><p className="page-author">{book.author}</p><div className="page-rule"></div>{book.pages[page].split("\n").map((line, index) => <p key={`${page}-${index}`}>{line || " "}</p>)}</div><div className="page-footer"><span>သုတရိပ်သာ · {book.id.toString().padStart(2, "0")}</span><b>{String(page + 1).padStart(2, "0")} / {String(pageCount).padStart(2, "0")}</b></div></article>
     </div><footer className="reader-nav"><button type="button" disabled={page === 0} onClick={() => setPage(Math.max(0, page - 1))}>← အရင်စာမျက်နှာ</button><div className="page-dots">{book.pages.map((_, index) => <button key={index} type="button" className={page === index ? "active" : ""} onClick={() => setPage(index)} aria-label={`စာမျက်နှာ ${index + 1}`}></button>)}</div><button type="button" disabled={page === pageCount - 1} onClick={() => setPage(Math.min(pageCount - 1, page + 1))}>နောက်စာမျက်နှာ →</button></footer>
