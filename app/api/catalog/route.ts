@@ -3,8 +3,7 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const endpoint = process.env.CATALOG_API_URL;
-  if (!endpoint) return NextResponse.json({ ok: true, books: [], configured: false });
+  const endpoint = process.env.CATALOG_API_URL?.trim() || "https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev/catalog";
   try {
     const response = await fetch(endpoint, { cache: "no-store" });
     const payload = await response.json();
