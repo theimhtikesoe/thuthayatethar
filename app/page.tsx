@@ -216,6 +216,8 @@ export default function HomePage() {
   const [theme, setTheme] = useState<Theme>(() => { if (typeof window === "undefined") return "paper"; const saved = localStorage.getItem("thuthayatethar:reader-theme"); return saved === "sepia" || saved === "night" ? saved : "paper"; });
   const [fontScale, setFontScale] = useState(1);
   const [lineHeight, setLineHeight] = useState(1.8);
+  const [offlinePackState, setOfflinePackState] = useState<"idle" | "saving" | "done" | "error">("idle");
+  const [offlinePackProgress, setOfflinePackProgress] = useState(0);
   useEffect(() => { localStorage.setItem("thuthayatethar:reader-theme", theme); }, [theme]);
 
   useEffect(() => {
@@ -259,6 +261,32 @@ export default function HomePage() {
   }, [catalogBooks]);
 
   const availableBooks = catalogBooks ?? [];
+  const downloadableBooks = availableBooks.filter((book) => book.rights === "full" && Boolean(book.pdfUrl));
+
+  async function saveOfflinePack() {
+    if (!("caches" in window) || !downloadableBooks.length) return;
+    setOfflinePackState("saving");
+    setOfflinePackProgress(0);
+    let failed = false;
+    try {
+      if ("serviceWorker" in navigator) await navigator.serviceWorker.ready;
+      const cache = await caches.open("thuthayatethar-books-v2");
+      const shell = await caches.open("thuthayatethar-shell-v2");
+      await shell.addAll(["/", "/manifest.webmanifest", "/logo.svg", "/pdf.worker.min.js", "/zawgyi-detector.min.js", "/zawgyi-converter.min.js"]);
+      for (let index = 0; index < downloadableBooks.length; index += 1) {
+        const book = downloadableBooks[index];
+        try {
+          const response = await fetch(book.pdfUrl!, { cache: "no-store" });
+          if (!response.ok) throw new Error("offline_pack_pdf_failed");
+          await cache.put(book.pdfUrl!, response.clone());
+        } catch { failed = true; }
+        setOfflinePackProgress(index + 1);
+      }
+      setOfflinePackState(failed ? "error" : "done");
+    } catch {
+      setOfflinePackState("error");
+    }
+  }
 
   const filteredBooks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -344,7 +372,7 @@ export default function HomePage() {
       </section>
 
       <section className="catalog-section" id="catalog">
-        <div className="section-heading"><div><p className="eyebrow">စာကြည့်တိုက်</p><h2>ဒီနေ့ ဖတ်စရာများ</h2></div><span className="result-count">{filteredBooks.length} အုပ် ရှာတွေ့သည်</span></div>
+        <div className="section-heading"><div><p className="eyebrow">စာကြည့်တိုက်</p><h2>ဒီနေ့ ဖတ်စရာများ</h2></div><div className="catalog-actions"><span className="result-count">{filteredBooks.length} အုပ် ရှာတွေ့သည်</span><button type="button" className="offline-pack-button" onClick={saveOfflinePack} disabled={offlinePackState === "saving" || !downloadableBooks.length}>{offlinePackState === "saving" ? `Offline သိမ်းနေသည် ${offlinePackProgress}/${downloadableBooks.length}` : offlinePackState === "done" ? "✓ Offline အသင့်" : "Offline အားလုံးသိမ်းမည်"}</button>{offlinePackState === "error" && <small className="offline-pack-error">အချို့စာအုပ်များ မသိမ်းနိုင်ပါ။ Internet ကို စစ်ပါ။</small>}</div></div>
         <div className="catalog-layout">
           <aside className="filters" aria-label="စာအုပ်စစ်ထုတ်မှုများ">
             <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="စာအုပ်ရှာရန်..." aria-label="စာအုပ်ရှာရန်" /><kbd>⌘ K</kbd></label>
