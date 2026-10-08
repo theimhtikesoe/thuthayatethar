@@ -262,7 +262,7 @@ export default function FlipBook({ url, title }: { url: string; title: string })
           usePortrait={size.single}
           mobileScrollSupport={false}
           maxShadowOpacity={0.45}
-          flippingTime={800}
+          flippingTime={420}
           drawShadow
           startPage={current}
           className="flipbook"

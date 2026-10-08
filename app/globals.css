@@ -155,6 +155,10 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 /* Mobile reading mode: use the real dynamic viewport and keep controls above the home indicator. */
 .reader-shell { height: 100dvh; min-height: 100svh; max-height: 100dvh; overflow: hidden; }
 .reader-shell:fullscreen { width: 100vw; height: 100dvh; background: #e9e3d9; }
+.reader-shell .reader-header, .reader-shell > .reader-nav { position: relative; z-index: 4; transition: transform .28s ease, opacity .22s ease, filter .22s ease; }
+.reader-ui-hidden .reader-header { transform: translateY(calc(-100% - env(safe-area-inset-top))); opacity: 0; filter: blur(8px); pointer-events: none; }
+.reader-ui-hidden > .reader-nav { transform: translateY(100%); opacity: 0; filter: blur(8px); pointer-events: none; }
+.reader-ui-hidden .pdf-reader-workspace { margin-top: calc(-1 * var(--reader-header-space, 69px)); margin-bottom: calc(-1 * var(--reader-footer-space, 75px)); }
 .reader-header-actions { display: flex; align-items: center; gap: 14px; }
 .reader-fullscreen { border: 1px solid rgba(81,73,60,.22); border-radius: 999px; background: transparent; color: inherit; padding: 7px 10px; font-size: 14px; line-height: 1; }
 .reader-offline { border: 1px solid rgba(81,73,60,.22); border-radius: 999px; background: transparent; color: inherit; padding: 7px 10px; font-size: 14px; line-height: 1; }
