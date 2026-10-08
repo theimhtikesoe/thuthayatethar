@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS intake_items (
   telegram_update_id INTEGER NOT NULL UNIQUE,
   telegram_file_id TEXT NOT NULL,
   media_type TEXT NOT NULL CHECK (media_type IN ('document', 'photo')),
+  source_type TEXT NOT NULL DEFAULT 'telegram_media',
+  source_url TEXT,
   source_chat_id TEXT NOT NULL,
   source_message_id INTEGER NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('received', 'queued', 'downloading', 'validating', 'quarantined', 'ocr_pending', 'draft', 'rights_review', 'approved', 'published', 'failed')),
@@ -28,6 +30,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS intake_items_file_idx
   ON intake_items (telegram_file_id);
 CREATE INDEX IF NOT EXISTS intake_items_status_idx
   ON intake_items (status, next_retry_at, created_at);
+
+CREATE INDEX IF NOT EXISTS intake_items_source_type_idx
+  ON intake_items (source_type, created_at);
 
 CREATE TABLE IF NOT EXISTS rights_records (
   id TEXT PRIMARY KEY,

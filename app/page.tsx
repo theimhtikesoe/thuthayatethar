@@ -20,6 +20,10 @@ type Book = {
   mark: string;
   rights: Rights;
   tag: string;
+  pdfUrl?: string;
+  coverImage?: string;
+  externalUrl?: string;
+  sourceType?: string;
 };
 
 const books: Book[] = [
@@ -181,6 +185,7 @@ function matchesTime(minutes: number, time: string) {
 
 export default function HomePage() {
   const [catalogBooks, setCatalogBooks] = useState<Book[] | null>(null);
+  const [catalogLoading, setCatalogLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("အားလုံး");
   const [time, setTime] = useState("အားလုံး");
@@ -194,8 +199,8 @@ export default function HomePage() {
   useEffect(() => {
     fetch("/api/catalog", { cache: "no-store" })
       .then((response) => response.json())
-      .then((payload: { configured?: boolean; books?: Array<Partial<Book> & { id?: string | number; pages?: string[] }> }) => {
-        if (!payload.configured || !Array.isArray(payload.books)) return;
+      .then((payload: { ok?: boolean; configured?: boolean; books?: Array<Partial<Book> & { id?: string | number; pages?: string[]; pdfUrl?: string }> }) => {
+        if (payload.ok !== true || payload.configured === false || !Array.isArray(payload.books)) { setCatalogBooks([]); return; }
         setCatalogBooks(payload.books.map((book, index) => ({
           id: typeof book.id === "number" ? book.id : index + 1,
           title: book.title ?? "စာအုပ်အသစ်",
@@ -210,12 +215,17 @@ export default function HomePage() {
           mark: book.mark ?? "စာ",
           rights: book.rights === "summary" ? "summary" : "full",
           tag: book.tag ?? "ထုတ်ဝေထားသည်",
+          pdfUrl: book.pdfUrl,
+          coverImage: book.coverImage,
+          externalUrl: book.externalUrl,
+          sourceType: book.sourceType,
         })));
       })
-      .catch(() => undefined);
+      .catch(() => setCatalogBooks([]))
+      .finally(() => setCatalogLoading(false));
   }, []);
 
-  const availableBooks = catalogBooks ?? books;
+  const availableBooks = catalogBooks ?? [];
 
   const filteredBooks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -304,8 +314,9 @@ export default function HomePage() {
             <div className="rights-note"><span>✓</span><div><strong>ဖတ်ရှုရန်သီးသန့်</strong><small>စာအုပ်အကြောင်းအရာများကို download မလုပ်နိုင်ပါ။</small></div></div>
           </aside>
           <div className="book-grid" aria-live="polite">
-            {filteredBooks.map((book, index) => <BookCard key={book.id} book={book} index={index} onOpen={() => setSelected(book)} />)}
-            {!filteredBooks.length && <div className="empty-state"><span>⌁</span><h3>ဒီလိုစာအုပ် မတွေ့သေးပါ</h3><p>ရှာဖွေမှုကို ပြောင်းကြည့်ပါ၊ ဒါမှမဟုတ် စစ်ထုတ်မှုကို ရှင်းလိုက်ပါ။</p><button className="primary-button" type="button" onClick={resetFilters}>အားလုံးပြန်ကြည့်မည်</button></div>}
+            {catalogLoading && <div className="empty-state"><span>…</span><h3>စာအုပ်များကို ရယူနေသည်</h3><p>နောက်ဆုံး catalog ကို ခဏစောင့်ပေးပါ။</p></div>}
+            {!catalogLoading && filteredBooks.map((book, index) => <BookCard key={book.id} book={book} index={index} onOpen={() => setSelected(book)} />)}
+            {!catalogLoading && !filteredBooks.length && <div className="empty-state"><span>⌁</span><h3>ဒီလိုစာအုပ် မတွေ့သေးပါ</h3><p>လက်ရှိ Website catalog ထဲမှာ ထုတ်ဝေထားသောစာအုပ် မရှိသေးပါ။</p><button className="primary-button" type="button" onClick={resetFilters}>အားလုံးပြန်ကြည့်မည်</button></div>}
           </div>
         </div>
       </section>
@@ -321,11 +332,11 @@ export default function HomePage() {
 function BookCard({ book, index, onOpen }: { book: Book; index: number; onOpen: () => void }) {
   return <article className="book-card" style={{ "--book-color": book.color, "--book-accent": book.accent } as CSSProperties}>
     <button type="button" className="cover-wrap" onClick={onOpen} aria-label={`${book.title} အသေးစိတ်ကြည့်ရန်`}>
-      <div className="book-cover"><span className="cover-number">{String(index + 1).padStart(2, "0")}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div>
+      <div className="book-cover" style={book.coverImage ? { backgroundImage: `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${book.coverImage})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}><span className="cover-number">{String(index + 1).padStart(2, "0")}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div>
       {book.rights === "summary" && <span className="summary-ribbon">အကျဉ်းချုပ်သာ</span>}
     </button>
     <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{book.title}</h3><p className="book-author">{book.author}</p></div><button className="round-arrow" type="button" onClick={onOpen} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
-    <div className="book-stats"><span>◷ {book.readingTime} မိနစ်</span><span className={book.rights === "full" ? "rights-full" : "rights-summary"}>{book.rights === "full" ? "ဖတ်ရှုနိုင်သည်" : "အကျဉ်းချုပ်"}</span></div>
+    <div className="book-stats"><span>{book.externalUrl ? "Wattpad မူရင်း link" : `◷ ${book.readingTime} မိနစ်`}</span><span className={book.externalUrl ? "rights-summary" : book.rights === "full" ? "rights-full" : "rights-summary"}>{book.externalUrl ? "မူရင်းမှာဖတ်မည်" : book.rights === "full" ? "ဖတ်ရှုနိုင်သည်" : "အကျဉ်းချုပ်"}</span></div>
   </article>;
 }
 
@@ -334,14 +345,19 @@ function BookDetail({ book, onClose, onRead }: { book: Book; onClose: () => void
     <button className="close-button" type="button" onClick={onClose} aria-label="ပိတ်မည်">×</button>
     <div className="detail-cover" style={{ "--book-color": book.color, "--book-accent": book.accent } as CSSProperties}><div className="book-cover"><span className="cover-number">{book.year}</span><span className="cover-mark">{book.mark}</span><strong>{book.title}</strong><small>{book.author}</small><i>✦</i></div></div>
     <div className="detail-content"><p className="eyebrow">{book.tag}</p><h2>{book.title}</h2><p className="detail-author">{book.author}</p><div className="detail-facts"><span><b>အမျိုးအစား</b>{book.category}</span><span><b>ဖတ်ရှုချိန်</b>{book.readingTime} မိနစ်</span><span><b>ထုတ်ဝေသည့်နှစ်</b>{book.year}</span></div><div className="detail-summary"><p className="label">အကျဉ်းချုပ်</p><p>{book.summary}</p></div>
-      {book.rights === "full" ? <button className="primary-button wide-button" type="button" onClick={onRead}>စာမျက်နှာဖွင့်မည် <span>→</span></button> : <div className="rights-alert"><span>i</span><p><strong>လက်ရှိတွင် အကျဉ်းချုပ်သာ ဖတ်ရှုနိုင်သည်</strong><br />မူပိုင်ခွင့်ခွင့်ပြုချက်ရရှိပြီးနောက် စာအုပ်အပြည့်အစုံကို ထည့်သွင်းပေးမည်။</p></div>}
+      {book.externalUrl ? <a className="primary-button wide-button" href={book.externalUrl} target="_blank" rel="noreferrer">Wattpad တွင်ဖတ်မည် <span>↗</span></a> : book.rights === "full" ? <button className="primary-button wide-button" type="button" onClick={onRead}>စာမျက်နှာဖွင့်မည် <span>→</span></button> : <div className="rights-alert"><span>i</span><p><strong>လက်ရှိတွင် အကျဉ်းချုပ်သာ ဖတ်ရှုနိုင်သည်</strong><br />မူပိုင်ခွင့်ခွင့်ပြုချက်ရရှိပြီးနောက် စာအုပ်အပြည့်အစုံကို ထည့်သွင်းပေးမည်။</p></div>}
     </div>
   </div></div>;
 }
 
 type ReaderProps = { book: Book; page: number; setPage: (page: number) => void; theme: Theme; setTheme: (theme: Theme) => void; fontScale: number; setFontScale: (scale: number) => void; lineHeight: number; setLineHeight: (height: number) => void; onClose: () => void };
 
+function PdfReader({ book, theme, onClose }: { book: Book; theme: Theme; onClose: () => void }) {
+  return <div className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose}>← <span>စာကြည့်တိုက်သို့ ပြန်မည်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></header><div className="pdf-reader-workspace"><iframe className="pdf-reader-frame" src={book.pdfUrl} title={`${book.title} PDF`} /></div><footer className="reader-nav"><span>စာအုပ်အပြည့်အစုံကို browser ထဲတွင်သာ ဖတ်ရှုနိုင်ပါသည်။</span></footer></div>;
+}
+
 function Reader({ book, page, setPage, theme, setTheme, fontScale, setFontScale, lineHeight, setLineHeight, onClose }: ReaderProps) {
+  if (book.pages.length === 0 && book.pdfUrl) return <PdfReader book={book} theme={theme} onClose={onClose} />;
   const pageCount = book.pages.length;
   return <div className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}>
     <header className="reader-header"><button type="button" className="reader-back" onClick={onClose}>← <span>စာကြည့်တိုက်သို့ ပြန်မည်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></header>
