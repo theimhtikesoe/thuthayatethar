@@ -9,6 +9,23 @@ const FlipBook = dynamic(() => import("./FlipBook"), { ssr: false });
 type Rights = "full" | "summary";
 type Theme = "paper" | "sepia" | "night";
 
+const COVER_PALETTES = [
+  { color: "#cfe3dc", accent: "#315d50", mark: "✦" },
+  { color: "#f3d1c1", accent: "#7a4638", mark: "◈" },
+  { color: "#d1def0", accent: "#38557a", mark: "✧" },
+  { color: "#efe0b0", accent: "#6e5a2f", mark: "❋" },
+  { color: "#ddd1ef", accent: "#5d477d", mark: "◇" },
+  { color: "#f1cbd8", accent: "#7d4058", mark: "❖" },
+  { color: "#dce3bd", accent: "#4e5c34", mark: "✺" },
+  { color: "#e8cbb0", accent: "#79512f", mark: "⌘" },
+];
+
+function coverPalette(seed: string) {
+  let hash = 0;
+  for (const character of seed) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return COVER_PALETTES[hash % COVER_PALETTES.length];
+}
+
 type Book = {
   id: number;
   title: string;
@@ -220,7 +237,9 @@ export default function HomePage() {
       .then((response) => response.json())
       .then((payload: { ok?: boolean; configured?: boolean; books?: Array<Partial<Book> & { id?: string | number; pages?: string[]; pdfUrl?: string }> }) => {
         if (payload.ok !== true || payload.configured === false || !Array.isArray(payload.books)) { setCatalogBooks([]); return; }
-        const nextBooks: Book[] = payload.books.map((book, index) => ({
+        const nextBooks: Book[] = payload.books.map((book, index) => {
+          const fallbackCover = coverPalette(book.slug ?? book.title ?? `book-${index}`);
+          return ({
           id: typeof book.id === "number" ? book.id : index + 1,
           title: book.title ?? "စာအုပ်အသစ်",
           author: book.author ?? "မသိရသေးသော စာရေးသူ",
@@ -229,9 +248,9 @@ export default function HomePage() {
           readingTime: book.readingTime ?? 10,
           pages: book.pages ?? [],
           summary: book.summary ?? "",
-          color: book.color ?? "#d6c6a9",
-          accent: book.accent ?? "#655139",
-          mark: book.mark ?? "စာ",
+          color: book.color || fallbackCover.color,
+          accent: book.accent || fallbackCover.accent,
+          mark: book.mark || fallbackCover.mark,
           rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
           tag: book.tag ?? "ထုတ်ဝေထားသည်",
           pdfUrl: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl,
@@ -239,7 +258,8 @@ export default function HomePage() {
           externalUrl: book.externalUrl,
           sourceType: book.sourceType,
           slug: book.slug,
-        }));
+        });
+        });
         setCatalogBooks(nextBooks);
         localStorage.setItem("thuthayatethar:catalog", JSON.stringify(nextBooks));
       })
