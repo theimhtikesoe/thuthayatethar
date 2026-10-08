@@ -450,7 +450,9 @@ function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; o
   const { book, chapters } = group;
   const [selectedChapterId, setSelectedChapterId] = useState<number>(chapters[0]?.id ?? 0);
   const selectedChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0];
-  const manyChapters = chapters.length > 8;
+  // Keep catalog cards short: a long pill list pushes the next row below
+  // the fold, so switch to the compact picker after three visible chapters.
+  const manyChapters = chapters.length > 3;
   return <article className="book-card" style={{ "--book-color": book.color, "--book-accent": book.accent, "--index": index } as CSSProperties}>
     <button type="button" className="cover-wrap" onClick={() => onOpen(book)} aria-label={`${book.title} အသေးစိတ်ကြည့်ရန်`}>
       <BookCover book={book} label={String(index + 1).padStart(2, "0")} />
