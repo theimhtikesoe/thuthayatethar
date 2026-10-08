@@ -98,15 +98,16 @@ function findMessage(update: JsonRecord): JsonRecord | null {
   return [update.message, update.edited_message].find(isRecord) ?? null;
 }
 
-function mediaFor(message: JsonRecord): { type: MediaType; fileId: string; fileName: string | null; mimeType: string | null; byteSize: number | null } | null {
+function mediaFor(message: JsonRecord): { type: MediaType; fileId: string; coverFileId: string | null; fileName: string | null; mimeType: string | null; byteSize: number | null } | null {
   const document = message.document;
   if (isRecord(document) && typeof document.file_id === "string") {
-    return { type: "document", fileId: document.file_id, fileName: typeof document.file_name === "string" ? document.file_name : null, mimeType: typeof document.mime_type === "string" ? document.mime_type : null, byteSize: typeof document.file_size === "number" ? document.file_size : null };
+    const thumbnail = isRecord(document.thumbnail) ? document.thumbnail : isRecord(document.thumb) ? document.thumb : null;
+    return { type: "document", fileId: document.file_id, coverFileId: thumbnail && typeof thumbnail.file_id === "string" ? thumbnail.file_id : null, fileName: typeof document.file_name === "string" ? document.file_name : null, mimeType: typeof document.mime_type === "string" ? document.mime_type : null, byteSize: typeof document.file_size === "number" ? document.file_size : null };
   }
   const photos = message.photo;
   if (Array.isArray(photos)) {
     const photo = photos.filter(isRecord).find((item) => typeof item.file_id === "string");
-    if (photo && typeof photo.file_id === "string") return { type: "photo", fileId: photo.file_id, fileName: null, mimeType: "image/jpeg", byteSize: typeof photo.file_size === "number" ? photo.file_size : null };
+    if (photo && typeof photo.file_id === "string") return { type: "photo", fileId: photo.file_id, coverFileId: null, fileName: null, mimeType: "image/jpeg", byteSize: typeof photo.file_size === "number" ? photo.file_size : null };
   }
   return null;
 }
@@ -211,12 +212,28 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
       if (!stored || stored.size === 0 || stored.size > maxBytes) throw new Error("r2_storage_failed");
       byteSize = stored.size;
     }
+    let coverKey: string | null = null;
+    if (typeof item.cover_telegram_file_id === "string" && item.cover_telegram_file_id) {
+      const coverInfoResponse = await fetch(`${base}/bot${env.TELEGRAM_BOT_TOKEN}/getFile?file_id=${encodeURIComponent(item.cover_telegram_file_id)}`, { headers: relayHeaders });
+      const coverInfo = await coverInfoResponse.json() as JsonRecord;
+      const coverResult = isRecord(coverInfo.result) ? coverInfo.result : null;
+      if (coverInfoResponse.ok && coverInfo.ok === true && coverResult && typeof coverResult.file_path === "string") {
+        const coverResponse = await fetch(`${base}/relay/file?path=${encodeURIComponent(coverResult.file_path)}`, { headers: relayHeaders });
+        if (coverResponse.ok) {
+          const coverBytes = await coverResponse.arrayBuffer();
+          if (coverBytes.byteLength > 0 && coverBytes.byteLength <= 5 * 1024 * 1024) {
+            coverKey = `covers/${intakeId}/cover.jpg`;
+            await env.BUCKET.put(coverKey, coverBytes, { httpMetadata: { contentType: "image/jpeg" }, customMetadata: { intakeId, visibility: "private" } });
+          }
+        }
+      }
+    }
     const now = new Date().toISOString();
     const title = titleFromFile(typeof item.original_filename === "string" ? item.original_filename : "book.pdf");
     const slug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "book"}-${intakeId.slice(0, 8)}`;
     await env.DB.batch([
       env.DB.prepare("UPDATE intake_items SET status = 'draft', storage_key = ?, sha256 = ?, byte_size = ?, updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(key, checksum, byteSize, now, intakeId),
-      env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, summary, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, "မူကြမ်းအဖြစ် စစ်ဆေးရန် စာအုပ်ဖိုင်ကို လက်ခံထားသည်။", JSON.stringify({ source: "telegram", assetKey: key, rightsStatus: "missing" }), now, now),
+      env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, summary, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, "မူကြမ်းအဖြစ် စစ်ဆေးရန် စာအုပ်ဖိုင်ကို လက်ခံထားသည်။", JSON.stringify({ source: "telegram", assetKey: key, rightsStatus: "missing", ...(coverKey ? { public: { coverImage: `/book/${slug}/cover` } } : {}) }), now, now),
       env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'stored_in_r2', ?, ?)").bind(intakeId, JSON.stringify({ storageKey: key, byteSize, checksumComputed: Boolean(checksum) }), now),
     ]);
   } catch (error) {
@@ -266,7 +283,7 @@ async function receive(request: Request, env: RuntimeEnv, ctx?: ExecutionContext
   if (!media || !Number.isSafeInteger(messageId)) return json({ ok: true, status: "ignored" });
   const now = new Date().toISOString();
   const intakeId = crypto.randomUUID();
-  const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_chat_id, source_message_id, status, original_filename, mime_type, byte_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?)`).bind(intakeId, parsed.update_id, media.fileId, media.type, chatId, messageId, media.fileName, media.mimeType, media.byteSize, now, now).run();
+  const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, cover_telegram_file_id, media_type, source_chat_id, source_message_id, status, original_filename, mime_type, byte_size, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?)`).bind(intakeId, parsed.update_id, media.fileId, media.coverFileId, media.type, chatId, messageId, media.fileName, media.mimeType, media.byteSize, now, now).run();
   const isNew = insert.meta.changes > 0;
   const persistedIntake = isNew ? { id: intakeId } : await env.DB.prepare("SELECT id FROM intake_items WHERE telegram_update_id = ? OR telegram_file_id = ? ORDER BY CASE WHEN telegram_update_id = ? THEN 0 ELSE 1 END LIMIT 1").bind(parsed.update_id, media.fileId, parsed.update_id).first<{ id: string }>();
   if (!persistedIntake?.id) throw new Error("persisted_intake_not_found");
@@ -284,7 +301,7 @@ async function catalog(request: Request, env: RuntimeEnv): Promise<Response> {
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405, origin);
   const statement = env.DB.prepare("SELECT id, title, slug, author, category, year, summary, reading_time, metadata_json, updated_at FROM book_drafts WHERE publication_status = 'published' ORDER BY updated_at DESC");
   const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
-  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString(), ...(isRecord(metadata.public) ? metadata.public : {}) }; });
+  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} const publicMeta = isRecord(metadata.public) ? { ...metadata.public } : {}; if (typeof publicMeta.coverImage === "string" && publicMeta.coverImage.startsWith("/")) publicMeta.coverImage = new URL(publicMeta.coverImage, request.url).toString(); return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString(), ...publicMeta }; });
   return json({ ok: true, books }, 200, origin);
 }
 
@@ -376,6 +393,15 @@ async function bookPdf(request: Request, env: RuntimeEnv, slug: string): Promise
   return new Response(request.method === "HEAD" ? null : object.body, { status: contentRange ? 206 : 200, headers });
 }
 
+async function bookCover(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
+  if (!env.BUCKET) return json({ ok: false, error: "storage_unavailable" }, 503);
+  const book = await env.DB.prepare("SELECT i.id FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? AND b.publication_status = 'published' AND i.status = 'published' LIMIT 1").bind(slug).first<{ id: string }>();
+  if (!book) return json({ ok: false, error: "book_not_published" }, 404);
+  const object = await env.BUCKET.get(`covers/${book.id}/cover.jpg`);
+  if (!object) return json({ ok: false, error: "cover_not_found" }, 404);
+  return new Response(request.method === "HEAD" ? null : object.body, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=3600", "Content-Length": String(object.size), ...(env.CATALOG_ORIGIN ? { "Access-Control-Allow-Origin": env.CATALOG_ORIGIN } : {}) } });
+}
+
 async function publish(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
   if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
   const book = await env.DB.prepare("SELECT id, intake_id FROM book_drafts WHERE slug = ? LIMIT 1").bind(slug).first<{ id: string; intake_id: string }>();
@@ -403,6 +429,7 @@ export default {
     if (request.method === "PUT" && url.pathname.startsWith("/admin/update/")) return updateBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/update/".length)));
     if (request.method === "DELETE" && url.pathname.startsWith("/admin/delete/")) return deleteBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/delete/".length)));
     if (request.method === "POST" && url.pathname.startsWith("/admin/publish/")) return publish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/publish/".length)));
+    if (request.method === "GET" && url.pathname.startsWith("/book/") && url.pathname.endsWith("/cover")) return bookCover(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -6)));
     if (request.method === "GET" && url.pathname.startsWith("/book/") && url.pathname.endsWith("/pdf")) return bookPdf(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -4)));
     return json({ ok: false, error: "not_found" }, 404);
   },

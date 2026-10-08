@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS intake_items (
   id TEXT PRIMARY KEY,
   telegram_update_id INTEGER NOT NULL UNIQUE,
   telegram_file_id TEXT NOT NULL,
+  cover_telegram_file_id TEXT,
   media_type TEXT NOT NULL CHECK (media_type IN ('document', 'photo')),
   source_type TEXT NOT NULL DEFAULT 'telegram_media',
   source_url TEXT,
