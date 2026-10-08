@@ -239,26 +239,26 @@ export default function HomePage() {
         if (payload.ok !== true || payload.configured === false || !Array.isArray(payload.books)) { setCatalogBooks([]); return; }
         const nextBooks: Book[] = payload.books.map((book, index) => {
           const fallbackCover = coverPalette(book.slug ?? book.title ?? `book-${index}`);
-          return ({
-          id: typeof book.id === "number" ? book.id : index + 1,
-          title: book.title ?? "စာအုပ်အသစ်",
-          author: book.author ?? "မသိရသေးသော စာရေးသူ",
-          category: book.category ?? "အခြား",
-          year: book.year ?? "—",
-          readingTime: book.readingTime ?? 10,
-          pages: book.pages ?? [],
-          summary: book.summary ?? "",
-          color: book.color || fallbackCover.color,
-          accent: book.accent || fallbackCover.accent,
-          mark: book.mark || fallbackCover.mark,
-          rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
-          tag: book.tag ?? "ထုတ်ဝေထားသည်",
-          pdfUrl: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl,
-          coverImage: book.coverImage,
-          externalUrl: book.externalUrl,
-          sourceType: book.sourceType,
-          slug: book.slug,
-        });
+          return {
+            id: typeof book.id === "number" ? book.id : index + 1,
+            title: book.title ?? "စာအုပ်အသစ်",
+            author: book.author ?? "မသိရသေးသော စာရေးသူ",
+            category: book.category ?? "အခြား",
+            year: book.year ?? "—",
+            readingTime: book.readingTime ?? 10,
+            pages: book.pages ?? [],
+            summary: book.summary ?? "",
+            color: book.color || fallbackCover.color,
+            accent: book.accent || fallbackCover.accent,
+            mark: book.mark || fallbackCover.mark,
+            rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
+            tag: book.tag ?? "ထုတ်ဝေထားသည်",
+            pdfUrl: book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl,
+            coverImage: book.coverImage,
+            externalUrl: book.externalUrl,
+            sourceType: book.sourceType,
+            slug: book.slug,
+          };
         });
         setCatalogBooks(nextBooks);
         localStorage.setItem("thuthayatethar:catalog", JSON.stringify(nextBooks));
