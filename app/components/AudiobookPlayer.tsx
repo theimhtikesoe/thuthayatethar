@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { groupAudiobooks, type AudiobookCoverGroup } from "../audiobook-grouping";
 import {
   audioProgressStorageKey,
   clearAudioProgress,
@@ -98,17 +99,65 @@ function AudiobookCover({ book }: { book: Audiobook }) {
 }
 
 export function AudiobookShelf({ books, onPlay }: { books: Audiobook[]; onPlay: (book: Audiobook) => void }) {
+  const [resolvedCoverKeys, setResolvedCoverKeys] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let active = true;
+    const soundCloudCoverBooks = books.filter((book) => book.soundcloud_url && book.coverImage?.includes("/api/soundcloud/cover?"));
+    if (!soundCloudCoverBooks.length) {
+      setResolvedCoverKeys({});
+      return () => { active = false; };
+    }
+    void Promise.all(soundCloudCoverBooks.map(async (book) => {
+      try {
+        const url = `/api/soundcloud/cover?url=${encodeURIComponent(book.soundcloud_url!)}&metadata=1`;
+        const response = await fetch(url, { cache: "force-cache" });
+        if (!response.ok) return null;
+        const payload = await response.json() as { coverKey?: string };
+        return payload.coverKey ? [String(book.slug ?? book.id), payload.coverKey] as const : null;
+      } catch { return null; }
+    })).then((entries) => {
+      if (!active) return;
+      setResolvedCoverKeys(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => entry !== null)));
+    });
+    return () => { active = false; };
+  }, [books]);
+
+  const groups = useMemo(() => groupAudiobooks(books, resolvedCoverKeys), [books, resolvedCoverKeys]);
   if (!books.length) return null;
   return <section className="audiobook-section" aria-label="အသံစာအုပ်များ">
-    <div className="audiobook-section-heading"><div><p className="eyebrow">နားထောင်ရန်</p><h2>အသံစာအုပ်များ</h2></div><span>{books.length} အုပ်</span></div>
+    <div className="audiobook-section-heading"><div><p className="eyebrow">နားထောင်ရန်</p><h2>အသံစာအုပ်များ</h2></div><span>{groups.length} အုပ် · {books.length} ခေါင်းစဉ်</span></div>
     <div className="audiobook-grid">
-      {books.map((book) => <article className="audiobook-card" key={book.slug ?? book.id}>
-        <AudiobookCover book={book} />
-        <div className="audiobook-card-copy"><small>{book.category || "အသံစာအုပ်"}</small><strong>{book.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
-        <button type="button" className="audiobook-listen" onClick={() => onPlay(book)} aria-label={`${book.title} ကို နားထောင်မည်`}><span aria-hidden="true">▶</span> နားထောင်မည်</button>
-      </article>)}
+      {groups.map((group) => <AudiobookGroupCard key={group.key} group={group} onPlay={onPlay} />)}
     </div>
   </section>;
+}
+
+function audiobookRecordKey(book: Audiobook): string {
+  return String(book.slug ?? book.id);
+}
+
+function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audiobook>; onPlay: (book: Audiobook) => void }) {
+  const [selectedKey, setSelectedKey] = useState(() => audiobookRecordKey(group.books[0]));
+  const selectedBook = group.books.find((book) => audiobookRecordKey(book) === selectedKey) ?? group.books[0];
+  const book = group.books[0];
+
+  useEffect(() => {
+    if (!group.books.some((item) => audiobookRecordKey(item) === selectedKey)) {
+      setSelectedKey(audiobookRecordKey(group.books[0]));
+    }
+  }, [group.books, selectedKey]);
+
+  return <article className="audiobook-card" key={group.key}>
+    <AudiobookCover book={book} />
+    <div className="audiobook-card-copy"><small>{book.category || "အသံစာအုပ်"}</small><strong>{group.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
+    <div className="audiobook-track-picker">
+      {group.books.length > 1
+        ? <label className="audiobook-track-select"><span>အခန်း / ခေါင်းစဉ်ရွေးပါ</span><select value={audiobookRecordKey(selectedBook)} onChange={(event) => setSelectedKey(event.target.value)} aria-label={`${group.title} အခန်း သို့မဟုတ် ခေါင်းစဉ်ရွေးရန်`}>{group.books.map((item) => <option key={audiobookRecordKey(item)} value={audiobookRecordKey(item)}>{item.title}</option>)}</select></label>
+        : <span className="audiobook-single-track">{selectedBook.title}</span>}
+      <button type="button" className="audiobook-listen" onClick={() => onPlay(selectedBook)} aria-label={`${selectedBook.title} ကို နားထောင်မည်`}><span aria-hidden="true">▶</span> နားထောင်မည်</button>
+    </div>
+  </article>;
 }
 
 export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | null; onClose: () => void }) {

@@ -13,7 +13,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:reader-navigation": "node --test app/reader-navigation.test.mjs",
-    "test:catalog": "node --experimental-strip-types --test app/catalog-grouping.test.mjs app/audio-progress.test.mjs app/burmese-text.test.mjs app/offline-storage.test.mjs",
+    "test:catalog": "node --experimental-strip-types --test app/catalog-grouping.test.mjs app/audiobook-grouping.test.mjs app/audio-progress.test.mjs app/burmese-text.test.mjs app/offline-storage.test.mjs",
     "test:ingestion": "node --experimental-strip-types --test infra/cloudflare/test/worker.test.mjs"
   },
   "dependencies": {

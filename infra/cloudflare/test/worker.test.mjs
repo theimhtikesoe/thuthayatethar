@@ -929,6 +929,14 @@ test("approve keeps the existing private-draft behaviour: rights approved, still
   assert.equal((await response.json()).status, "approved");
 });
 
+test("Wattpad external-link drafts can receive rights approval without an R2 file", async () => {
+  const DB = makeApproveDb({ id: "b1", intake_id: "i1", publication_status: "draft", intake_status: "draft", storage_key: null, source_type: "wattpad_link", soundcloud_url: null, rights_status: "missing" });
+  const response = await worker.fetch(approveRequest(), makeEnv(DB));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).status, "approved");
+  assert.ok(DB.state.batches.flat().some((statement) => statement.sql.includes("UPDATE rights_records SET rights_status = 'approved'")));
+});
+
 test("admin delete removes the book, intake and stored cover and returns success", async () => {
   const statements = [];
   const deletedKeys = [];
@@ -1062,6 +1070,27 @@ test("a Wattpad link without a PDF still becomes a link card with no SoundCloud 
   const [book] = DB.state.books.values();
   assert.equal(book.soundcloudUrl, null);
   assert.equal(book.metadata.public.externalUrl, "https://www.wattpad.com/story/123456789-sample-story");
+});
+
+test("a Wattpad chapter URL is accepted and receives a useful part title", async () => {
+  const DB = makeLinkDb();
+  const chapterLink = "https://www.wattpad.com/1327143584-part-1";
+  const payload = await postMessage(makeEnv(DB), 309, { text: `${chapterLink}.` });
+  assert.equal(payload.sourceType, "wattpad_link");
+  const [book] = DB.state.books.values();
+  assert.equal(book.metadata.public.externalUrl, chapterLink);
+  assert.equal(book.title, "Wattpad အပိုင်း 1");
+});
+
+test("a Wattpad story URL with an encoded Burmese slug is accepted and named", async () => {
+  const DB = makeLinkDb();
+  const storyLink = "https://www.wattpad.com/story/337587564-%E1%80%90%E1%80%AD%E1%80%99%E1%80%BA%E1%80%90%E1%80%AD%E1%80%AF%E1%80%80%E1%80%BA%E1%80%9C%E1%80%84%E1%80%BA%E1%80%B8%E1%80%8A%E1%80%AD%E1%80%AF-%E1%80%A1%E1%80%AD%E1%80%99%E1%80%BA%E1%80%B7%E1%80%82%E1%80%BB%E1%80%B0%E1%80%B8-%E1%80%99%E1%80%AD%E1%80%AF%E1%80%B8%E1%80%9E%E1%80%8A%E1%80%BA%E1%80%B8%E1%80%9E%E1%80%8A%E1%80%BA%E1%80%B8";
+  const payload = await postMessage(makeEnv(DB), 310, { text: storyLink });
+  assert.equal(payload.sourceType, "wattpad_link");
+  const [book] = DB.state.books.values();
+  assert.equal(book.metadata.public.externalUrl, storyLink);
+  assert.match(book.title, /တိမ်တိုက်လင်းညို/);
+  assert.notEqual(book.title, "Wattpad စာအုပ်");
 });
 
 test("every SoundCloud link in one message becomes its own audiobook and a replay creates nothing new (F8)", async () => {
