@@ -14,7 +14,7 @@ Bot ကို group ထဲထည့်ပြီး test message သို့မ�
 
 ## Upload → scan → draft → publish လမ်းကြောင်း
 
-1. Webhook သည် group allowlist, secret-token header နှင့် Telegram JSON update ကိုစစ်ပြီး document/photo ကို candidate အဖြစ် acknowledge လုပ်မည်။ Webhook ကိုယ်တိုင် file ကို download, scan, OCR သို့မဟုတ် publish မလုပ်ပါ။
+1. Webhook သည် group allowlist, secret-token header နှင့် Telegram JSON update ကိုစစ်ပြီး document/photo သို့မဟုတ် HTTPS SoundCloud link (`soundcloud.com` subdomain အပါအဝင်) ကို candidate အဖြစ် D1 intake ထဲသိမ်းပြီးမှ acknowledge လုပ်မည်။ SoundCloud link ၏ tracking parameters များကို ဖယ်ရှားကာ canonical URL ကို သီးခြား intake item အဖြစ်ထားမည်။ SoundCloud audio ကို အလိုအလျောက် download သို့မဟုတ် publish မလုပ်ပါ။
 2. နောက်ဆင့် worker သည် Telegram `getFile` ဖြင့် file ကိုရယူပြီး extension/MIME, actual file type, byte size, checksum နှင့် malware ကိုစစ်ဆေးမည်။ မသိသော format၊ size limit ကျော်သော file သို့မဟုတ် validation မအောင်မြင်သော file ကို quarantine ထဲထားမည်။
 3. Validation ပြီးပြီး rights evidence ရရှိမှသာ text extraction/OCR လုပ်ကာ title, author, category, summary နှင့် page data ကို draft အဖြစ်ဖန်တီးမည်။ မြန်မာစာ OCR ရလဒ်ကို လူကပြန်စစ်နိုင်သည့်အဆင့် ပါရမည်။
 4. File တစ်ခုချင်းစီအတွက် rights status/evidence ကို `RightsRecord` ထဲသိမ်းပြီး admin review ပြီးမှ catalog တွင် publish လုပ်မည်။ Group ထဲ file တင်ထားခြင်း၊ bot ကို admin လုပ်ထားခြင်း သို့မဟုတ် credit ပေးထားခြင်းတစ်ခုတည်းကို publication approval အဖြစ် အလိုအလျောက် မသတ်မှတ်ရ။
@@ -22,7 +22,7 @@ Bot ကို group ထဲထည့်ပြီး test message သို့မ�
 
 ## လက်ရှိ webhook code ၏ scope
 
-`POST /api/telegram/webhook` သည် Telegram `X-Telegram-Bot-Api-Secret-Token` header ကို `TELEGRAM_WEBHOOK_SECRET` နှင့် constant-time comparison လုပ်သည်။ Configured group/supergroup မှ `message`/`edited_message` ထဲရှိ Telegram document/photo candidate များကိုသာ လက်ခံသည်။ Request JSON ကို 256 KiB အထိကန့်သတ်သည်။ Secret မမှန်လျှင် `401`, JSON မမှန်လျှင် `400`, body ကြီးလွန်းလျှင် `413`, config မပြည့်စုံလျှင် `503` ပြန်ပေးသည်။ Allowlist မကိုက်သည့် chat သို့မဟုတ် မသက်ဆိုင်သည့် update ကို `200 ignored` ပြန်ပေးသည်။ Log ထဲတွင် update ID နှင့် candidate အမျိုးအစားကိုသာထားပြီး caption, user details, chat/file ID နှင့် raw update ကို မသိမ်းပါ။ `accepted` ဆိုသည်မှာ update သည် filter ကိုကျော်သွားခြင်းသာဖြစ်ပြီး file ကိုရယူခြင်း၊ scan/OCR လုပ်ခြင်း၊ storage ထဲသိမ်းခြင်း သို့မဟုတ် website ပေါ်တင်ခြင်း ပြီးစီးသည်ဟု မဆိုလိုပါ။
+Durable intake worker သည် Telegram `X-Telegram-Bot-Api-Secret-Token` header နှင့် group allowlist ကိုစစ်သည်။ Configured group/supergroup မှ document/photo သို့မဟုတ် HTTPS SoundCloud link candidate များကို D1 တွင် persist လုပ်ပြီးမှ `accepted` ပြန်ပေးသည်။ SoundCloud URL များကို tracking query/fragment မပါသည့် canonical URL အဖြစ် သိမ်းသည်; SoundCloud အသံကို အလိုအလျောက်ရယူခြင်း သို့မဟုတ် publish လုပ်ခြင်း မရှိပါ။ Request JSON ကို 256 KiB အထိကန့်သတ်ပြီး log ထဲ raw update သို့မဟုတ် link ကို မရေးပါ။ `accepted` သည် durable intake ထဲရောက်သည်ကိုသာဆိုလိုပြီး media download, scan/OCR သို့မဟုတ် website ပေါ် publish ပြီးစီးသည်ဟု မဆိုလိုပါ။
 
 ## ဒေတာဖွဲ့စည်းပုံနှင့် အခွင့်အရေးမှတ်တမ်း
 

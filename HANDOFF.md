@@ -22,7 +22,7 @@
 
 ## Critical safety blocker — do not activate Telegram webhook yet
 
-`app/api/telegram/webhook/route.ts` validates the webhook secret and chat allowlist, recognizes group `document`/`photo` updates, writes only a privacy-safe log line, then returns HTTP 200 with `status: "accepted"`. It does **not** persist the Telegram update, enqueue work, download the file, or publish catalog content. Registering this endpoint with Telegram now would acknowledge and discard incoming media updates. **Do not call `setWebhook` until a durable queue/storage path is implemented, tested, and ready.** Preserve any existing Telegram webhook until the new route is fully ready.
+`infra/cloudflare/src/index.ts` validates the webhook secret and chat allowlist, recognizes group `document`/`photo` updates and HTTPS SoundCloud links, and persists candidates in D1 before returning HTTP 200. SoundCloud links are stored as canonical URLs without tracking parameters; the worker does not download audio or publish catalog content. Apply and test migration `infra/cloudflare/migrations/0005_soundcloud_link_intake.sql` on staging before deployment. **Do not call `setWebhook` or change production Telegram configuration as part of this code push.** Preserve existing webhook settings until staging and end-to-end rollback are verified.
 
 ## Staging implementation started
 

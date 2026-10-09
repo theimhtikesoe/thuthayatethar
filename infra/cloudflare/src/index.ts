@@ -16,7 +16,15 @@ export interface Env {
 }
 
 type JsonRecord = Record<string, unknown>;
-type MediaType = "document" | "photo";
+type MediaType = "document" | "photo" | "soundcloud_link";
+type IntakeCandidate = {
+  type: MediaType;
+  fileId: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  byteSize: number | null;
+  soundcloudUrl: string | null;
+};
 const MAX_UPDATE_BYTES = 256 * 1024;
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -48,7 +56,7 @@ function findMessage(update: JsonRecord): JsonRecord | null {
   return candidate ?? null;
 }
 
-function mediaFor(message: JsonRecord): { type: MediaType; fileId: string; fileName: string | null; mimeType: string | null; byteSize: number | null } | null {
+function mediaFor(message: JsonRecord): IntakeCandidate | null {
   const document = message.document;
   if (isRecord(document) && typeof document.file_id === "string") {
     return {
@@ -57,6 +65,7 @@ function mediaFor(message: JsonRecord): { type: MediaType; fileId: string; fileN
       fileName: typeof document.file_name === "string" ? document.file_name : null,
       mimeType: typeof document.mime_type === "string" ? document.mime_type : null,
       byteSize: typeof document.file_size === "number" ? document.file_size : null,
+      soundcloudUrl: null,
     };
   }
   const photos = message.photo;
@@ -69,9 +78,48 @@ function mediaFor(message: JsonRecord): { type: MediaType; fileId: string; fileN
         fileName: null,
         mimeType: "image/jpeg",
         byteSize: typeof photo.file_size === "number" ? photo.file_size : null,
+        soundcloudUrl: null,
       };
     }
   }
+
+  for (const [textValue, entitiesValue] of [
+    [message.text, message.entities],
+    [message.caption, message.caption_entities],
+  ] as const) {
+    const text = typeof textValue === "string" ? textValue : "";
+    const urls: string[] = text.match(/https?:\/\/[^\s<>"'`]+/gi) ?? [];
+    if (Array.isArray(entitiesValue)) {
+      for (const entity of entitiesValue) {
+        if (isRecord(entity) && entity.type === "text_link" && typeof entity.url === "string") urls.push(entity.url);
+      }
+    }
+    for (const rawUrl of urls) {
+      try {
+        const url = new URL(rawUrl.replace(/[),.!?;:]+$/, ""));
+        const hostname = url.hostname.toLowerCase();
+        if (
+          url.protocol === "https:" &&
+          (hostname === "soundcloud.com" || hostname.endsWith(".soundcloud.com")) &&
+          url.pathname.length > 1
+        ) {
+          // Tracking query parameters and fragments are not part of the track identity.
+          const soundcloudUrl = `${url.origin}${url.pathname}`;
+          return {
+            type: "soundcloud_link",
+            fileId: null,
+            fileName: null,
+            mimeType: null,
+            byteSize: null,
+            soundcloudUrl,
+          };
+        }
+      } catch {
+        // Ignore malformed URLs and keep looking for another candidate.
+      }
+    }
+  }
+
   return null;
 }
 
@@ -113,8 +161,8 @@ async function receive(request: Request, env: Env): Promise<Response> {
   const insert = await env.DB.prepare(`
     INSERT OR IGNORE INTO intake_items
       (id, telegram_update_id, telegram_file_id, media_type, source_chat_id, source_message_id,
-       status, original_filename, mime_type, byte_size, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?)
+       soundcloud_url, status, original_filename, mime_type, byte_size, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?)
   `).bind(
     intakeId,
     parsed.update_id,
@@ -122,6 +170,7 @@ async function receive(request: Request, env: Env): Promise<Response> {
     media.type,
     chatId,
     messageId,
+    media.soundcloudUrl,
     media.fileName,
     media.mimeType,
     media.byteSize,
@@ -134,10 +183,12 @@ async function receive(request: Request, env: Env): Promise<Response> {
     ? { id: intakeId }
     : await env.DB.prepare(`
         SELECT id FROM intake_items
-        WHERE telegram_update_id = ? OR telegram_file_id = ?
+        WHERE telegram_update_id = ?
+          OR (telegram_file_id = ? AND ? IS NOT NULL)
+          OR (soundcloud_url = ? AND ? IS NOT NULL)
         ORDER BY CASE WHEN telegram_update_id = ? THEN 0 ELSE 1 END
         LIMIT 1
-      `).bind(parsed.update_id, media.fileId, parsed.update_id).first<{ id: string }>();
+      `).bind(parsed.update_id, media.fileId, media.fileId, media.soundcloudUrl, media.soundcloudUrl, parsed.update_id).first<{ id: string }>();
 
   // A previous request may have inserted the intake row but failed before its
   // rights/event writes. Reconcile these idempotently before acknowledging any retry.
