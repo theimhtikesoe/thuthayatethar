@@ -202,6 +202,15 @@ function readingProgressKey(book: Book) {
   return `thuthayatethar:progress:${book.slug ?? book.id}`;
 }
 
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
+}
+
 function bookPdfProxyUrl(book: Pick<Book, "slug" | "pdfUrl">) {
   return book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl;
 }
@@ -323,6 +332,9 @@ export default function HomePage() {
   const [offlinePackProgress, setOfflinePackProgress] = useState(0);
   const [offlinePickerOpen, setOfflinePickerOpen] = useState(false);
   const [selectedOfflineBooks, setSelectedOfflineBooks] = useState<string[]>([]);
+  const [storageOpen, setStorageOpen] = useState(false);
+  const [offlineStatuses, setOfflineStatuses] = useState<Record<string, "saved" | "saving" | "error">>({});
+  const [storageInfo, setStorageInfo] = useState({ usage: 0, quota: 0, bookCacheBytes: 0 });
   const [progressRevision, setProgressRevision] = useState(0);
   useEffect(() => { writeLocalValue("thuthayatethar:reader-theme", theme); }, [theme]);
   useEffect(() => {
@@ -422,12 +434,76 @@ export default function HomePage() {
     const cache = await caches.open("thuthayatethar-books");
     await cache.put(book.pdfUrl, response.clone());
     const proxyUrl = bookPdfProxyUrl(book);
-    if (proxyUrl) await cache.put(proxyUrl, response.clone());
+    if (proxyUrl && proxyUrl !== book.pdfUrl) await cache.put(proxyUrl, response.clone());
     if (book.coverImage && !(await cache.match(book.coverImage))) {
-      const coverResponse = await fetch(book.coverImage, { cache: "no-store" });
-      if (coverResponse.ok) await cache.put(book.coverImage, coverResponse.clone());
+      try {
+        const coverResponse = await fetch(book.coverImage, { cache: "no-store" });
+        if (coverResponse.ok) await cache.put(book.coverImage, coverResponse.clone());
+      } catch { /* Cover artwork is optional; the PDF is the offline requirement. */ }
     }
     writeLocalValue(`thuthayatethar:offline:${offlineBookKey(book)}`, "1");
+  }
+  async function refreshOfflineStorage() {
+    if (!("caches" in window)) return;
+    try {
+      const cache = await caches.open("thuthayatethar-books");
+      const next: Record<string, "saved" | "saving" | "error"> = {};
+      for (const book of availableBooks) if (book.pdfUrl && await cache.match(book.pdfUrl)) next[offlineBookKey(book)] = "saved";
+      let bookCacheBytes = 0;
+      for (const request of await cache.keys()) {
+        const response = await cache.match(request);
+        if (!response) continue;
+        const declaredSize = Number(response.headers.get("content-length"));
+        bookCacheBytes += Number.isFinite(declaredSize) && declaredSize > 0 ? declaredSize : (await response.clone().blob()).size;
+      }
+      const estimate = await navigator.storage?.estimate?.();
+      setOfflineStatuses((previous) => {
+        for (const book of availableBooks) {
+          const key = offlineBookKey(book);
+          if (previous[key] === "saving") next[key] = "saving";
+          else if (previous[key] === "error" && !next[key]) next[key] = "error";
+        }
+        return next;
+      });
+      setStorageInfo({ usage: estimate?.usage ?? 0, quota: estimate?.quota ?? 0, bookCacheBytes });
+    } catch { /* Cache APIs may be unavailable in private mode. */ }
+  }
+  useEffect(() => {
+    if (availableBooks.length) void refreshOfflineStorage();
+  }, [catalogBooks, offlinePackState]);
+  useEffect(() => {
+    const refresh = () => { void refreshOfflineStorage(); };
+    window.addEventListener("thuthayatethar:offline-cache", refresh);
+    return () => window.removeEventListener("thuthayatethar:offline-cache", refresh);
+  }, [catalogBooks]);
+  async function downloadGroupFromCard(group: BookGroup) {
+    for (const book of group.chapters.filter((chapter) => chapter.pdfUrl)) {
+      const key = offlineBookKey(book);
+      if (offlineStatuses[key] === "saved") continue;
+      setOfflineStatuses((current) => ({ ...current, [key]: "saving" }));
+      try {
+        await cacheBookOffline(book);
+        setOfflineStatuses((current) => ({ ...current, [key]: "saved" }));
+      } catch {
+        setOfflineStatuses((current) => ({ ...current, [key]: "error" }));
+      }
+    }
+    await refreshOfflineStorage();
+  }
+  async function deleteOfflineBook(book: Book) {
+    if (!("caches" in window)) return;
+    try {
+      const cache = await caches.open("thuthayatethar-books");
+      const urls = [book.pdfUrl, bookPdfProxyUrl(book), book.coverImage].filter(Boolean).map((url) => new URL(url!, window.location.origin).href);
+      for (const request of await cache.keys()) {
+        if (urls.includes(request.url)) await cache.delete(request);
+      }
+      try { localStorage.removeItem(`thuthayatethar:offline:${offlineBookKey(book)}`); } catch { /* Storage may be unavailable. */ }
+      setOfflineStatuses((current) => { const next = { ...current }; delete next[offlineBookKey(book)]; return next; });
+      await refreshOfflineStorage();
+    } catch {
+      setOfflineStatuses((current) => ({ ...current, [offlineBookKey(book)]: "error" }));
+    }
   }
 
   async function saveOfflinePack() {
@@ -474,6 +550,8 @@ export default function HomePage() {
     });
   }, [availableBooks, category, query, time]);
   const filteredGroups = useMemo(() => groupBooks(filteredBooks), [filteredBooks]);
+  const savedOfflineBooks = downloadableBooks.filter((book) => offlineStatuses[offlineBookKey(book)] === "saved");
+  const storageRatio = storageInfo.quota > 0 ? storageInfo.usage / storageInfo.quota : 0;
 
   useEffect(() => {
     const stopReaderActions = (event: KeyboardEvent) => {
@@ -548,6 +626,18 @@ export default function HomePage() {
             </article>;
           })}</div>
         </section>}
+        <section className="offline-storage" aria-label="Offline storage manager">
+          <button type="button" className="offline-storage-toggle" onClick={() => { setStorageOpen((open) => !open); if (!storageOpen) void refreshOfflineStorage(); }} aria-expanded={storageOpen}>
+            <span><strong>Offline သိမ်းထားသောစာအုပ်များ</strong><small>{savedOfflineBooks.length} အုပ် · စာအုပ် cache {formatBytes(storageInfo.bookCacheBytes)}</small></span>
+            <span>{storageOpen ? "ပိတ်မည် −" : "Storage စီမံရန် +"}</span>
+          </button>
+          {storageOpen && <div className="offline-storage-panel">
+            <div className="offline-storage-usage"><span>ဤ website ၏ storage သုံးစွဲမှု</span><strong>{storageInfo.quota ? `${formatBytes(storageInfo.usage)} / ${formatBytes(storageInfo.quota)}` : formatBytes(storageInfo.bookCacheBytes)}</strong></div>
+            {storageRatio >= 0.9 && <p className="storage-warning" role="status">သိုလှောင်မှု ပြည့်ခါနီးပါပြီ။ မလိုသော offline စာအုပ်များကို ဖျက်ပြီး နေရာလွတ်လုပ်ပါ။</p>}
+            <div className="offline-storage-list">{savedOfflineBooks.length ? savedOfflineBooks.map((book) => <article className="offline-storage-item" key={offlineBookKey(book)}><span><strong>{book.title}</strong><small>{book.author}</small></span><button type="button" className="offline-delete-button" onClick={() => void deleteOfflineBook(book)}>ဖျက်မည်</button></article>) : <p className="offline-storage-empty">Offline သိမ်းထားသောစာအုပ် မရှိသေးပါ။</p>}</div>
+          </div>}
+        </section>
+        {storageRatio >= 0.9 && !storageOpen && <p className="storage-warning storage-warning-inline" role="status">သိုလှောင်မှု ပြည့်ခါနီးပါပြီ။ Offline storage ကိုစီမံပြီး မလိုသောစာအုပ်များကို ဖျက်ပါ။</p>}
         <div className="catalog-layout">
           <aside className="filters" aria-label="စာအုပ်စစ်ထုတ်မှုများ">
             <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="စာအုပ်ရှာရန်..." aria-label="စာအုပ်ရှာရန်" /><kbd>⌘ K</kbd></label>
@@ -557,7 +647,11 @@ export default function HomePage() {
           </aside>
           <div className="book-grid" aria-live="polite">
             {catalogLoading && <div className="empty-state"><span>…</span><h3>စာအုပ်များကို ရယူနေသည်</h3><p>နောက်ဆုံး catalog ကို ခဏစောင့်ပေးပါ။</p></div>}
-            {!catalogLoading && filteredGroups.map((group, index) => <BookCard key={group.book.id} group={group} index={index} onOpen={(book) => book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)} />)}
+            {!catalogLoading && filteredGroups.map((group, index) => {
+              const states = group.chapters.filter((book) => book.pdfUrl).map((book) => offlineStatuses[offlineBookKey(book)]);
+              const offlineStatus = states.every((status) => status === "saved") ? "saved" : states.some((status) => status === "saving") ? "saving" : states.some((status) => status === "error") ? "error" : states.some((status) => status === "saved") ? "partial" : "unsaved";
+              return <BookCard key={group.book.id} group={group} index={index} offlineStatus={offlineStatus} onDownload={() => void downloadGroupFromCard(group)} onOpen={(book) => book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)} />;
+            })}
             {!catalogLoading && !filteredGroups.length && <div className="empty-state"><span>⌁</span><h3>ဒီလိုစာအုပ် မတွေ့သေးပါ</h3><p>လက်ရှိ Website catalog ထဲမှာ ထုတ်ဝေထားသောစာအုပ် မရှိသေးပါ။</p><button className="primary-button" type="button" onClick={resetFilters}>အားလုံးပြန်ကြည့်မည်</button></div>}
           </div>
         </div>
@@ -571,7 +665,7 @@ export default function HomePage() {
   );
 }
 
-function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; onOpen: (book: Book) => void }) {
+function BookCard({ group, index, offlineStatus, onDownload, onOpen }: { group: BookGroup; index: number; offlineStatus: "saved" | "saving" | "error" | "partial" | "unsaved"; onDownload: () => void; onOpen: (book: Book) => void }) {
   const { book, chapters } = group;
   const [selectedChapterId, setSelectedChapterId] = useState<number>(chapters[0]?.id ?? 0);
   const selectedChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0];
@@ -583,8 +677,9 @@ function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; o
     <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{groupTitle(group)}</h3><p className="book-author">{book.author}</p>{book.externalUrl && <small className="external-source-label">Wattpad မူရင်းစာမျက်နှာမှ ဖတ်ရှုရန်</small>}</div><button className="round-arrow" type="button" onClick={() => onOpen(book)} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
     {chapters.length > 1 && <div className="chapter-list" aria-label={`${groupTitle(group)} အခန်းများ`}><span className="chapter-list-label">အခန်း {chapters.length} ခန်း · ဖတ်လိုသည့်အခန်း</span><div className="chapter-picker"><div className="chapter-select-wrap"><select id={`chapter-picker-${book.id}`} value={selectedChapterId} onChange={(event) => setSelectedChapterId(Number(event.target.value))} aria-label={`${groupTitle(group)} အခန်းရွေးရန်`}>{chapters.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapterLabel(chapter)}</option>)}</select></div><button type="button" className="chapter-open-button" onClick={() => selectedChapter && onOpen(selectedChapter)}>ဖတ်မည် →</button></div></div>}
     <div className="book-stats"><span>{chapters.length > 1 ? `◷ ${chapters.length} ခန်း` : book.externalUrl ? "Wattpad မူရင်း link" : `◷ ${book.readingTime} မိနစ်`}</span><span className={book.externalUrl ? "rights-summary" : book.rights === "full" ? "rights-full" : "rights-summary"}>{book.externalUrl ? "မူရင်းမှာဖတ်မည်" : book.rights === "full" ? "ဖတ်ရှုနိုင်သည်" : "အကျဉ်းချုပ်"}</span></div>
-  </article>;
-}
+    {book.rights === "full" && !book.externalUrl && chapters.some((chapter) => chapter.pdfUrl) && <div className={`book-offline-status ${offlineStatus}`}><span aria-live="polite">{offlineStatus === "saved" ? "✓ Offline သိမ်းပြီး" : offlineStatus === "saving" ? "↓ သိမ်းနေသည်…" : offlineStatus === "error" ? (typeof navigator !== "undefined" && !navigator.onLine ? "Internet မရှိပါ · Online ပြန်ရမှ retry လုပ်ပါ" : "သိမ်းမအောင်မြင်ပါ · ပြန်စမ်းပါ") : offlineStatus === "partial" ? "အချို့အခန်းများ Offline သိမ်းပြီး" : "မသိမ်းရသေး"}</span>{offlineStatus !== "saved" && <button type="button" onClick={onDownload} disabled={offlineStatus === "saving"}>{offlineStatus === "saving" ? "သိမ်းနေသည်" : offlineStatus === "error" ? "ပြန်စမ်းမည်" : "Offline သိမ်းမည်"}</button>}</div>}
+    </article>;
+  }
 
 function BookCover({ book, label }: { book: Book; label: string }) {
   const [pdfCover, setPdfCover] = useState<string | null>(null);
@@ -659,10 +754,19 @@ function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Them
   const [fullscreen, setFullscreen] = useState(false);
   const [offlineSaved, setOfflineSaved] = useState(false);
   const [savingOffline, setSavingOffline] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
+  const [isOnline, setIsOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
   useEffect(() => {
     const onChange = () => setFullscreen(document.fullscreenElement === shell.current);
+    const onConnectionChange = () => setIsOnline(navigator.onLine);
     document.addEventListener("fullscreenchange", onChange);
-    return () => document.removeEventListener("fullscreenchange", onChange);
+    window.addEventListener("online", onConnectionChange);
+    window.addEventListener("offline", onConnectionChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange);
+      window.removeEventListener("online", onConnectionChange);
+      window.removeEventListener("offline", onConnectionChange);
+    };
   }, []);
   async function toggleFullscreen() {
     try {
@@ -673,7 +777,20 @@ function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Them
   async function saveOffline() {
     if (!book.pdfUrl || !("caches" in window)) return;
     setSavingOffline(true);
-    try { const response = await fetch(book.pdfUrl, { cache: "no-store" }); if (!response.ok) throw new Error("offline_download_failed"); const cache = await caches.open("thuthayatethar-books"); await cache.put(book.pdfUrl, response.clone()); if (book.slug) await cache.put(`/api/books/${encodeURIComponent(book.slug)}/pdf`, response.clone()); writeLocalValue(`thuthayatethar:offline:${book.slug ?? book.id}`, "1"); setOfflineSaved(true); } catch { setOfflineSaved(false); } finally { setSavingOffline(false); }
+    setDownloadError("");
+    try {
+      const response = await fetch(book.pdfUrl, { cache: "no-store" });
+      if (!response.ok) throw new Error("offline_download_failed");
+      const cache = await caches.open("thuthayatethar-books");
+      await cache.put(book.pdfUrl, response.clone());
+      if (book.slug) await cache.put(`/api/books/${encodeURIComponent(book.slug)}/pdf`, response.clone());
+      writeLocalValue(`thuthayatethar:offline:${book.slug ?? book.id}`, "1");
+      setOfflineSaved(true);
+      window.dispatchEvent(new Event("thuthayatethar:offline-cache"));
+    } catch {
+      setOfflineSaved(false);
+      setDownloadError(isOnline ? "သိမ်းမအောင်မြင်ပါ။ Internet ကိုစစ်ပြီး ပြန်စမ်းပါ။" : "Internet မရှိပါ။ Offline သိမ်းရန် Internet ပြန်ချိတ်ပြီး ပြန်စမ်းပါ။");
+    } finally { setSavingOffline(false); }
   }
   useEffect(() => { setOfflineSaved(readLocalValue(`thuthayatethar:offline:${book.slug ?? book.id}`) === "1"); }, [book.id, book.slug]);
   useEffect(() => {
@@ -690,7 +807,7 @@ function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Them
     return () => { active = false; };
   }, [book.pdfUrl, book.id, book.slug]);
   const offlinePdfUrl = book.slug ? `/api/books/${encodeURIComponent(book.slug)}/pdf` : book.pdfUrl ?? "";
-  return <div ref={shell} className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose} aria-label="စာကြည့်တိုက်သို့ ပြန်မည်">← <span>စာကြည့်တိုက်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-header-actions"><div className="reader-theme-buttons" role="group" aria-label="ဖတ်ရှုရန်အရောင်"><button type="button" className={theme === "paper" ? "active paper" : "paper"} onClick={() => setTheme("paper")} aria-label="စာရွက်အရောင်">●</button><button type="button" className={theme === "sepia" ? "active sepia" : "sepia"} onClick={() => setTheme("sepia")} aria-label="Sepia အရောင်">●</button><button type="button" className={theme === "night" ? "active night" : "night"} onClick={() => setTheme("night")} aria-label="ညအရောင်">●</button></div><button type="button" className="reader-offline" onClick={saveOffline} disabled={savingOffline} aria-label="Offline သိမ်းမည်">{savingOffline ? "…" : offlineSaved ? "✓" : "⇩"}<span>{offlineSaved ? "Offline သိမ်းပြီး" : "Offline သိမ်းမည်"}</span></button><button type="button" className="reader-fullscreen" onClick={toggleFullscreen} aria-label={fullscreen ? "အပြည့်မျက်နှာပြင်ပိတ်မည်" : "အပြည့်မျက်နှာပြင်ဖွင့်မည်"}>{fullscreen ? "⤢" : "⛶"}<span>{fullscreen ? "ပိတ်မည်" : "အပြည့်"}</span></button><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></div></header><div className="pdf-reader-workspace"><FlipBook key={book.slug ?? book.id} url={book.pdfUrl ?? ""} offlineUrl={offlinePdfUrl} title={book.title} progressKey={readingProgressKey(book)} /></div><footer className="reader-nav"><span>လက်နှစ်ချောင်းဖြင့် ချဲ့ကြည့်နိုင်ပါသည်။</span></footer></div>;
+  return <div ref={shell} className={`reader-shell theme-${theme}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose} aria-label="စာကြည့်တိုက်သို့ ပြန်မည်">← <span>စာကြည့်တိုက်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-header-actions"><div className="reader-theme-buttons" role="group" aria-label="ဖတ်ရှုရန်အရောင်"><button type="button" className={theme === "paper" ? "active paper" : "paper"} onClick={() => setTheme("paper")} aria-label="စာရွက်အရောင်">●</button><button type="button" className={theme === "sepia" ? "active sepia" : "sepia"} onClick={() => setTheme("sepia")} aria-label="Sepia အရောင်">●</button><button type="button" className={theme === "night" ? "active night" : "night"} onClick={() => setTheme("night")} aria-label="ညအရောင်">●</button></div><button type="button" className="reader-offline" onClick={saveOffline} disabled={savingOffline} aria-label="Offline သိမ်းမည်">{savingOffline ? "…" : offlineSaved ? "✓" : "⇩"}<span>{offlineSaved ? "Offline သိမ်းပြီး" : "Offline သိမ်းမည်"}</span></button><button type="button" className="reader-fullscreen" onClick={toggleFullscreen} aria-label={fullscreen ? "အပြည့်မျက်နှာပြင်ပိတ်မည်" : "အပြည့်မျက်နှာပြင်ဖွင့်မည်"}>{fullscreen ? "⤢" : "⛶"}<span>{fullscreen ? "ပိတ်မည်" : "အပြည့်"}</span></button><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></div></header><div className="pdf-reader-workspace"><FlipBook key={book.slug ?? book.id} url={book.pdfUrl ?? ""} offlineUrl={offlinePdfUrl} title={book.title} progressKey={readingProgressKey(book)} /></div>{downloadError && <div className="reader-offline-error" role="status"><span>{downloadError}</span><button type="button" onClick={saveOffline} disabled={savingOffline}>ပြန်စမ်းမည်</button></div>}<footer className="reader-nav"><span>လက်နှစ်ချောင်းဖြင့် ချဲ့ကြည့်နိုင်ပါသည်။</span></footer></div>;
 }
 function Reader(props: ReaderProps) {
   if (props.book.pages.length === 0 && props.book.pdfUrl) return <PdfReader book={props.book} theme={props.theme} setTheme={props.setTheme} onClose={props.onClose} />;

@@ -13,15 +13,15 @@ const ZOOM_STEP = 0.5;
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 type PageImage = { original: string; trimmed: string };
-const PageImages = createContext<{ images: Record<number, PageImage>; hideMargins: boolean }>({ images: {}, hideMargins: false });
+const PageImages = createContext<{ images: Record<number, PageImage>; hideMargins: boolean; errors: Record<number, boolean>; retry: (page: number) => void }>({ images: {}, hideMargins: false, errors: {}, retry: () => undefined });
 const Page = forwardRef<HTMLDivElement, { number: number; total: number; title: string }>(function Page({ number, total, title }, ref) {
-  const { images, hideMargins } = useContext(PageImages);
+  const { images, hideMargins, errors, retry } = useContext(PageImages);
   const image = images[number];
   const src = hideMargins ? image?.trimmed : image?.original;
   const isCover = number === 1;
   return <div className={`flip-page${isCover ? " is-cover" : ""}`} ref={ref}>
     <div className="flip-page-inner">
-      {src ? <img src={src} alt={`${title} ${isCover ? "စာအုပ်အဖုံး" : `စာမျက်နှာ ${number}`}`} draggable={false} /> : <div className="flip-page-loading"><span></span>{isCover ? "စာအုပ်အဖုံးကို ပြင်ဆင်နေသည်…" : `စာမျက်နှာ ${number} ကို ပြင်ဆင်နေသည်…`}</div>}
+      {src ? <img src={src} alt={`${title} ${isCover ? "စာအုပ်အဖုံး" : `စာမျက်နှာ ${number}`}`} draggable={false} /> : errors[number] ? <div className="flip-page-loading flip-page-error">{`စာမျက်နှာ ${number} ပုံ မတင်နိုင်ပါ`}<button type="button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); retry(number); }}>ပြန်စမ်းမည်</button></div> : <div className="flip-page-loading"><span></span>{isCover ? "စာအုပ်အဖုံးကို ပြင်ဆင်နေသည်…" : `စာမျက်နှာ ${number} ကို ပြင်ဆင်နေသည်…`}</div>}
       <div className="flip-page-number">{isCover ? "အဖုံး" : `${number} / ${total}`}</div>
     </div>
   </div>;
@@ -30,10 +30,13 @@ const Page = forwardRef<HTMLDivElement, { number: number; total: number; title: 
 export default function FlipBook({ url, offlineUrl, title, progressKey }: { url: string; offlineUrl?: string; title: string; progressKey: string }) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [passwordPrompt, setPasswordPrompt] = useState(false);
   const [passwordValue, setPasswordValue] = useState("tgcf");
   const [passwordIncorrect, setPasswordIncorrect] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => typeof navigator === "undefined" ? true : navigator.onLine);
   const [images, setImages] = useState<Record<number, PageImage>>({});
+  const [renderErrors, setRenderErrors] = useState<Record<number, boolean>>({});
   const [hires, setHires] = useState<Record<string, PageImage>>({});
   const [hideMargins, setHideMargins] = useState(false);
   const [current, setCurrent] = useState(() => {
@@ -49,15 +52,35 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
   const book = useRef<any>(null);
   const stage = useRef<HTMLDivElement>(null);
   const rendering = useRef(new Set<string>());
+  const currentSize = useRef(size);
+  currentSize.current = size;
   const passwordUpdater = useRef<((password: string) => void) | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ dist: number; zoom: number; x: number; y: number; px: number; py: number } | null>(null);
   const lastTap = useRef(0);
+  const searchRequest = useRef(0);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchMatches, setSearchMatches] = useState<number[]>([]);
+  const [searchIndex, setSearchIndex] = useState(0);
+  const [searching, setSearching] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [bookmarks, setBookmarks] = useState<number[]>(() => {
+    try { return JSON.parse(localStorage.getItem(`${progressKey}:bookmarks`) || "[]"); } catch { return []; }
+  });
+  const [notes, setNotes] = useState<Record<number, string>>(() => {
+    try { return JSON.parse(localStorage.getItem(`${progressKey}:notes`) || "{}"); } catch { return {}; }
+  });
 
   useEffect(() => {
     let cancelled = false;
     let fallbackTried = false;
     let loadingTask: any;
+    setDoc(null);
+    setError(null);
+    setImages({});
+    setRenderErrors({});
+    setHires({});
     (async () => {
       try {
         const pdfjs: any = await import("pdfjs-dist");
@@ -92,7 +115,17 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
       }
     })();
     return () => { cancelled = true; loadingTask?.destroy?.(); };
-  }, [url]);
+  }, [url, loadAttempt]);
+
+  useEffect(() => {
+    const updateConnection = () => setIsOnline(navigator.onLine);
+    window.addEventListener("online", updateConnection);
+    window.addEventListener("offline", updateConnection);
+    return () => {
+      window.removeEventListener("online", updateConnection);
+      window.removeEventListener("offline", updateConnection);
+    };
+  }, []);
 
   useEffect(() => {
     const el = stage.current;
@@ -115,13 +148,19 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     return () => ro.disconnect();
   }, [ratio, doc]);
 
+  useEffect(() => {
+    setImages({});
+    setHires({});
+    setRenderErrors({});
+  }, [size.w]);
+
   const draw = useCallback(async (n: number, cssWidth: number) => {
     if (!doc) throw new Error("PDF is not ready");
     const page = await doc.getPage(n);
     const base = page.getViewport({ scale: 1 }).width;
     // Render above the CSS size so scanned text stays sharp on Retina displays
     // and remains readable when the high-resolution zoom layer is shown.
-    const px = Math.min(cssWidth * Math.min(window.devicePixelRatio || 1, 2), 3200);
+    const px = Math.min(cssWidth * Math.min(window.devicePixelRatio || 1, 2), 2600);
     const vp = page.getViewport({ scale: px / base });
     const canvas = document.createElement("canvas");
     canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
@@ -139,11 +178,13 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
   }, [doc]);
 
   const renderPage = useCallback(async (n: number) => {
-    const key = `${n}`;
+    const key = `${n}@${size.w}`;
     if (!doc || n < 1 || n > doc.numPages || rendering.current.has(key)) return;
     rendering.current.add(key);
     try {
       const data = await draw(n, size.w);
+      if (currentSize.current.w !== size.w) return;
+      setRenderErrors((previous) => { if (!previous[n]) return previous; const next = { ...previous }; delete next[n]; return next; });
       setImages((prev) => {
         const next = { ...prev, [n]: data };
         for (const page of Object.keys(next)) {
@@ -151,7 +192,9 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
         }
         return next;
       });
-    } catch { /* The page can be retried on the next navigation. */ }
+    } catch {
+      if (currentSize.current.w === size.w) setRenderErrors((previous) => ({ ...previous, [n]: true }));
+    }
     finally { rendering.current.delete(key); }
   }, [doc, size.w, draw, current]);
 
@@ -160,12 +203,14 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     const first = current + 1;
     const spread = size.single || first === 1 ? [first] : [first % 2 === 0 ? first : first - 1, first % 2 === 0 ? first + 1 : first];
     const nearby = [current, current + 1, current + 2, current - 1].map((page) => page + 1);
-    const queue = Array.from(new Set([...spread, ...nearby])).filter((page) => page >= 1 && page <= doc.numPages);
+    const visibleQueue = Array.from(new Set(spread)).filter((page) => page >= 1 && page <= doc.numPages);
+    const prefetchQueue = Array.from(new Set(nearby)).filter((page) => page >= 1 && page <= doc.numPages && !visibleQueue.includes(page));
     let cancelled = false;
     (async () => {
-      // One-at-a-time avoids several large range requests competing on mobile;
-      // the visible spread is always rendered before neighboring pages.
-      for (const page of queue) {
+      // Only the visible spread renders concurrently. Serial prefetch avoids
+      // exhausting mobile canvas memory while keeping adjacent flips ready.
+      await Promise.all(visibleQueue.map((page) => renderPage(page)));
+      for (const page of prefetchQueue) {
         if (cancelled) return;
         await renderPage(page);
       }
@@ -201,14 +246,15 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
   useEffect(() => {
     if (!doc || zoom <= 1) return;
     visible.forEach(async (n) => {
-      const key = `${n}@${zoomLevel}`;
-      if (rendering.current.has(key)) return;
-      rendering.current.add(key);
+      const renderKey = `${n}@zoom${zoomLevel}@${size.w}`;
+      if (rendering.current.has(renderKey)) return;
+      rendering.current.add(renderKey);
       try {
         const data = await draw(n, size.w * zoomLevel);
-        setHires((prev) => ({ ...prev, [key]: data }));
+        if (currentSize.current.w !== size.w) return;
+        setHires((prev) => ({ ...prev, [`${n}@${zoomLevel}@${size.w}`]: data }));
       } catch { /* The high-resolution image can be retried later. */ }
-      finally { rendering.current.delete(key); }
+      finally { rendering.current.delete(renderKey); }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc, zoom > 1, zoomLevel, current, size.w, draw]);
@@ -236,6 +282,51 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     });
   }, [clampPan]);
 
+  const toggleBookmark = () => {
+    setBookmarks((currentBookmarks) => {
+      const next = currentBookmarks.includes(current) ? currentBookmarks.filter((page) => page !== current) : [...currentBookmarks, current].sort((a, b) => a - b);
+      try { localStorage.setItem(`${progressKey}:bookmarks`, JSON.stringify(next)); } catch { /* Storage may be disabled. */ }
+      return next;
+    });
+  };
+  const updateNote = (value: string) => {
+    setNotes((currentNotes) => {
+      const next = { ...currentNotes, [current]: value };
+      if (!value.trim()) delete next[current];
+      try { localStorage.setItem(`${progressKey}:notes`, JSON.stringify(next)); } catch { /* Storage may be disabled. */ }
+      return next;
+    });
+  };
+  const runSearch = async () => {
+    const needle = searchTerm.trim().toLocaleLowerCase();
+    if (!doc || !needle) { setSearchMatches([]); setSearchIndex(0); setHasSearched(false); setSearchError(""); return; }
+    const requestId = ++searchRequest.current;
+    setSearching(true);
+    setHasSearched(true);
+    setSearchError("");
+    const found: number[] = [];
+    try {
+      for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
+        const page = await doc.getPage(pageNumber);
+        const content = await page.getTextContent();
+        const text = content.items.map((item: { str?: string }) => item.str ?? "").join(" ").toLocaleLowerCase();
+        if (text.includes(needle)) found.push(pageNumber - 1);
+        if (requestId !== searchRequest.current) return;
+      }
+      setSearchMatches(found);
+      setSearchIndex(0);
+      if (found[0] !== undefined) goToPageRef.current?.(found[0]);
+    } catch {
+      if (requestId === searchRequest.current) {
+        setSearchMatches([]);
+        setSearchError("ဒီ PDF မှာ ရှာဖွေနိုင်သော စာသားမရှိပါ။ ပုံ-only စာမျက်နှာများကို ရှာမရနိုင်ပါ။");
+      }
+    } finally {
+      if (requestId === searchRequest.current) setSearching(false);
+    }
+  };
+  const goToPageRef = useRef<((page: number) => void) | null>(null);
+
   const goTo = (p: number) => {
     const next = clamp(p, 0, Math.max(0, total - 1));
     const controller = book.current?.pageFlip();
@@ -247,6 +338,7 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     setCurrent(actual);
     setPan({ x: 0, y: 0 });
   };
+  goToPageRef.current = goTo;
   const goPrevious = () => {
     const controller = book.current?.pageFlip();
     if (!zoomed && controller && current > 0) {
@@ -364,7 +456,7 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
       onPointerUpCapture={onPointerUp}
       onPointerCancelCapture={onPointerUp}
     >
-      {error && <div className="flip-status">{error} <a href={offlineUrl ?? url} target="_blank" rel="noreferrer">သီးခြားဖွင့်မည် ↗</a></div>}
+      {error && <div className="flip-status"><span>{isOnline ? error : "Internet မရှိပါ။ ဒီစာအုပ်ကို Offline သိမ်းထားပါက စာကြည့်တိုက်မှ ပြန်ဖွင့်ပါ။ မသိမ်းထားပါက Internet ပြန်ရမှ ဖွင့်နိုင်ပါမည်။"}</span><div className="flip-recovery-actions"><button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>ပြန်စမ်းမည်</button><a href={offlineUrl ?? url} target="_blank" rel="noreferrer">သီးခြားဖွင့်မည် ↗</a></div></div>}
       {passwordPrompt && <form className="pdf-password-prompt" onSubmit={(event) => { event.preventDefault(); passwordUpdater.current?.(passwordValue); setPasswordPrompt(false); }}>
         <span className="password-lock" aria-hidden="true">▣</span>
         <strong>စကားဝှက်ဖြင့် ဖတ်ရှုရန်</strong>
@@ -374,7 +466,7 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
         <button type="submit">ဖွင့်မည် →</button>
       </form>}
       {!error && !doc && <div className="flip-status"><span className="flip-spinner"></span>စာအုပ်ကို ဖွင့်နေသည်…</div>}
-      {doc && <PageImages.Provider value={{ images, hideMargins }}><div className="flipbook-holder" style={{ width: size.single ? size.w : size.w * 2, height: size.h }}>
+      {doc && <PageImages.Provider value={{ images, hideMargins, errors: renderErrors, retry: (page) => { setRenderErrors((previous) => { const next = { ...previous }; delete next[page]; return next; }); void renderPage(page); } }}><div className="flipbook-holder" style={{ width: size.single ? size.w : size.w * 2, height: size.h }}>
         <HTMLFlipBook
           key={`${size.w}-${size.h}-${size.single}`}
           ref={book}
@@ -400,7 +492,7 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
       {doc && zoomed && <div className="flip-zoom-layer" aria-label="ချဲ့ကြည့်နေသည်">
         <div className="flip-zoom-spread" style={{ width: size.w * visible.length, height: size.h, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
           {visible.map((n) => {
-            const image = hires[`${n}@${zoomLevel}`] ?? hires[`${n}@2`] ?? images[n];
+            const image = hires[`${n}@${zoomLevel}@${size.w}`] ?? images[n];
             const src = hideMargins ? image?.trimmed : image?.original;
             return <div key={n} className="flip-zoom-page" style={{ width: size.w, height: size.h }}>{src && <img src={src} alt={`${title} စာမျက်နှာ ${n}`} draggable={false} />}</div>;
           })}
@@ -410,6 +502,12 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     </div>
     {doc && <footer className="flip-nav">
       <button type="button" className="flip-nav-btn" onClick={goPrevious} disabled={current === 0} aria-label="အရင်စာမျက်နှာ">‹<span> အရင်သို့</span></button>
+      <form className="flip-search" onSubmit={(event) => { event.preventDefault(); void runSearch(); }}>
+        <input value={searchTerm} onChange={(event) => { searchRequest.current += 1; setSearching(false); setSearchTerm(event.target.value); setSearchMatches([]); setSearchIndex(0); setHasSearched(false); setSearchError(""); }} placeholder="စာအုပ်ထဲ ရှာရန်…" aria-label="PDF ထဲတွင် ရှာရန်" />
+        <button type="submit" disabled={searching}>{searching ? "…" : "ရှာ"}</button>
+        {searchMatches.length > 0 && <button type="button" className="flip-search-result" onClick={() => { const next = (searchIndex + 1) % searchMatches.length; setSearchIndex(next); goTo(searchMatches[next]); }} aria-label="နောက်ရှာတွေ့သည့်စာမျက်နှာသို့သွားမည်">{searchIndex + 1}/{searchMatches.length}</button>}
+        {hasSearched && !searching && searchMatches.length === 0 && <span className="flip-search-empty">{searchError || "မတွေ့ပါ"}</span>}
+      </form>
       <div className="flip-progress">
         <button type="button" className="flip-skip-btn" onClick={() => goTo(0)} disabled={current === 0} aria-label="ပထမစာမျက်နှာသို့ သွားမည်" title="ပထမစာမျက်နှာ">«</button>
         <input type="range" min={1} max={total} value={current + 1} onChange={(e) => goTo(Number(e.target.value) - 1)} aria-label="စာမျက်နှာ ရွေးရန်" />
@@ -421,6 +519,9 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
         <button type="button" className="flip-zoom-value" onClick={() => setZoomTo(zoomed ? 1 : 2)} aria-label="ချဲ့မှုပြန်ညှိမည်">{Math.round(zoom * 100)}%</button>
         <button type="button" onClick={() => setZoomTo(zoom + ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label="ချဲ့မည်">+</button>
       </div>
+      <button type="button" className={`flip-bookmark${bookmarks.includes(current) ? " active" : ""}`} onClick={toggleBookmark} aria-pressed={bookmarks.includes(current)} aria-label="စာမျက်နှာ bookmark လုပ်မည်" title="Bookmark">{bookmarks.includes(current) ? "★" : "☆"}</button>
+      {bookmarks.length > 0 && <select className="flip-bookmark-list" value="" onChange={(event) => { if (event.target.value) goTo(Number(event.target.value)); }} aria-label="Bookmark စာမျက်နှာများ"><option value="">မှတ်သားထားသည် ({bookmarks.length})</option>{bookmarks.map((page) => <option key={page} value={page}>{page + 1} / {total}</option>)}</select>}
+      <input className="flip-note" value={notes[current] ?? ""} onChange={(event) => updateNote(event.target.value)} placeholder="မှတ်စု…" aria-label="လက်ရှိစာမျက်နှာ မှတ်စု" />
       <button type="button" className="flip-margin-toggle" onClick={() => setHideMargins((value) => !value)} aria-pressed={hideMargins} aria-label="အဖြူအစွန်း ဖျောက်/ဖော်" title={hideMargins ? "အဖြူအစွန်း ပြန်ဖော်မည်" : "အဖြူအစွန်း ဖျောက်မည်"}>↥↧</button>
       <button type="button" className="flip-nav-btn" onClick={goNext} disabled={atEnd} aria-label="နောက်စာမျက်နှာ"><span>နောက်သို့ </span>›</button>
     </footer>}
