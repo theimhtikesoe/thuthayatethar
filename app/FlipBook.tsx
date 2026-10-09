@@ -49,11 +49,17 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
   const [ratio, setRatio] = useState(1.414);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const zoomRef = useRef(zoom);
+  const panRef = useRef(pan);
   const book = useRef<any>(null);
   const stage = useRef<HTMLDivElement>(null);
+  const zoomSpread = useRef<HTMLDivElement>(null);
+  const transformFrame = useRef<number | null>(null);
   const rendering = useRef(new Set<string>());
   const currentSize = useRef(size);
   currentSize.current = size;
+  zoomRef.current = zoom;
+  panRef.current = pan;
   const passwordUpdater = useRef<((password: string) => void) | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ dist: number; zoom: number; x: number; y: number; px: number; py: number } | null>(null);
@@ -275,15 +281,29 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
   const setZoomTo = useCallback((z: number, focus?: { x: number; y: number }) => {
     setZoom((prevZ) => {
       const nz = clamp(Math.round(z * 100) / 100, MIN_ZOOM, MAX_ZOOM);
+      zoomRef.current = nz;
       setPan((prev) => {
-        if (nz <= 1) return { x: 0, y: 0 };
+        if (nz <= 1) {
+          panRef.current = { x: 0, y: 0 };
+          return { x: 0, y: 0 };
+        }
         const f = focus ?? { x: 0, y: 0 };
         const k = nz / prevZ;
-        return clampPan(f.x - (f.x - prev.x) * k, f.y - (f.y - prev.y) * k, nz);
+        const next = clampPan(f.x - (f.x - prev.x) * k, f.y - (f.y - prev.y) * k, nz);
+        panRef.current = next;
+        return next;
       });
       return nz;
     });
   }, [clampPan]);
+
+  const applyZoomTransform = useCallback((nextZoom: number, nextPan: { x: number; y: number }) => {
+    if (transformFrame.current !== null) return;
+    transformFrame.current = window.requestAnimationFrame(() => {
+      transformFrame.current = null;
+      if (zoomSpread.current) zoomSpread.current.style.transform = `translate3d(${nextPan.x}px, ${nextPan.y}px, 0) scale(${nextZoom})`;
+    });
+  }, []);
 
   const toggleBookmark = () => {
     setBookmarks((currentBookmarks) => {
@@ -417,11 +437,11 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     } else previousTouch.current = null;
     if (pts.length === 2) {
       const mid = localPoint({ clientX: (pts[0].x + pts[1].x) / 2, clientY: (pts[0].y + pts[1].y) / 2 });
-      gesture.current = { dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), zoom, x: pan.x, y: pan.y, px: mid.x, py: mid.y };
+      gesture.current = { dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), zoom: zoomRef.current, x: panRef.current.x, y: panRef.current.y, px: mid.x, py: mid.y };
       e.stopPropagation();
     } else if (zoomed) {
       const p = localPoint(e);
-      gesture.current = { dist: 0, zoom, x: pan.x, y: pan.y, px: p.x, py: p.y };
+      gesture.current = { dist: 0, zoom: zoomRef.current, x: panRef.current.x, y: panRef.current.y, px: p.x, py: p.y };
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     }
     const now = Date.now();
@@ -442,11 +462,16 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
       const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
       const nz = clamp(g.zoom * (d / g.dist), MIN_ZOOM, MAX_ZOOM);
       const k = nz / g.zoom;
-      setZoom(nz);
-      setPan(nz <= 1 ? { x: 0, y: 0 } : clampPan(g.px - (g.px - g.x) * k, g.py - (g.py - g.y) * k, nz));
+      const nextPan = nz <= 1 ? { x: 0, y: 0 } : clampPan(g.px - (g.px - g.x) * k, g.py - (g.py - g.y) * k, nz);
+      zoomRef.current = nz;
+      panRef.current = nextPan;
+      if (!zoomed) setZoom(nz);
+      applyZoomTransform(nz, nextPan);
     } else if (pts.length === 1 && zoomed && g.dist === 0) {
       const p = localPoint(e);
-      setPan(clampPan(g.x + (p.x - g.px), g.y + (p.y - g.py), zoom));
+      const nextPan = clampPan(g.x + (p.x - g.px), g.y + (p.y - g.py), zoomRef.current);
+      panRef.current = nextPan;
+      applyZoomTransform(zoomRef.current, nextPan);
     }
   };
   const onPointerUp = (e: React.PointerEvent) => {
@@ -479,12 +504,15 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     }
     if (pointers.current.size === 0) {
       gesture.current = null;
-      if (zoom < 1.05) setZoomTo(1);
+      setZoom(zoomRef.current);
+      setPan(panRef.current);
+      if (zoomRef.current < 1.05) setZoomTo(1);
     }
   };
 
   useEffect(() => () => {
     if (previousSwipeTimer.current !== null) window.clearTimeout(previousSwipeTimer.current);
+    if (transformFrame.current !== null) window.cancelAnimationFrame(transformFrame.current);
   }, []);
 
   return <div className={`flipbook-wrap${zoomed ? " is-zoomed" : ""}${hideMargins ? " hides-white-margins" : ""}`}>
@@ -530,7 +558,7 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
         </HTMLFlipBook>
       </div></PageImages.Provider>}
       {doc && zoomed && <div className="flip-zoom-layer" aria-label="ချဲ့ကြည့်နေသည်">
-        <div className="flip-zoom-spread" style={{ width: size.w * visible.length, height: size.h, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
+        <div ref={zoomSpread} className="flip-zoom-spread" style={{ width: size.w * visible.length, height: size.h, transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})` }}>
           {visible.map((n) => {
             const image = hires[`${n}@${zoomLevel}@${size.w}`] ?? images[n];
             const src = hideMargins ? image?.trimmed : image?.original;

@@ -145,7 +145,7 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .flip-page-loading span, .flip-spinner { width: 22px; height: 22px; border: 2px solid rgba(169,158,141,.3); border-top-color: var(--gold); border-radius: 50%; animation: flip-spin 1s linear infinite; }
 @keyframes flip-spin { to { transform: rotate(360deg); } }
 .flip-zoom-layer { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.flip-zoom-spread { display: flex; flex: none; transform-origin: center center; box-shadow: 0 22px 44px rgba(50,40,28,.28); will-change: transform; }
+.flip-zoom-spread { display: flex; flex: none; transform-origin: center center; box-shadow: 0 22px 44px rgba(50,40,28,.28); will-change: transform; backface-visibility: hidden; contain: layout paint; }
 .flip-zoom-page { background: #fffaf0; flex: none; }
 .flip-zoom-hint { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); padding: 6px 12px; border-radius: 999px; background: rgba(24,30,38,.72); color: #f6f1e8; font-size: 11px; white-space: nowrap; pointer-events: none; animation: flip-hint 3.2s ease forwards; }
 @keyframes flip-hint { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
