@@ -57,16 +57,31 @@ function progressStorageKey(book: Audiobook) {
   return `thuthayatethar:audio-progress:${book.slug ?? book.id}`;
 }
 
+function soundcloudCoverUrl(url?: string) {
+  return url ? `/api/soundcloud/cover?url=${encodeURIComponent(url)}` : null;
+}
+
+function AudiobookCover({ book }: { book: Audiobook }) {
+  const fallback = soundcloudCoverUrl(book.soundcloud_url);
+  const [src, setSrc] = useState(book.coverImage || fallback);
+
+  useEffect(() => {
+    setSrc(book.coverImage || fallback);
+  }, [book.coverImage, book.soundcloud_url, fallback]);
+
+  return <div className="audiobook-cover" aria-hidden="true">
+    {src ? <img src={src} loading="lazy" alt="" onError={() => { if (src !== fallback) setSrc(fallback); else setSrc(null); }} /> : <span>♫</span>}
+    <span className="audiobook-cover-mark">သုတရိပ်သာ · AUDIO</span>
+  </div>;
+}
+
 export function AudiobookShelf({ books, onPlay }: { books: Audiobook[]; onPlay: (book: Audiobook) => void }) {
   if (!books.length) return null;
   return <section className="audiobook-section" aria-label="အသံစာအုပ်များ">
     <div className="audiobook-section-heading"><div><p className="eyebrow">နားဆင်ရန်</p><h2>အသံစာအုပ်များ</h2></div><span>{books.length} အုပ်</span></div>
     <div className="audiobook-grid">
       {books.map((book) => <article className="audiobook-card" key={book.slug ?? book.id}>
-        <div className="audiobook-cover" aria-hidden="true">
-          {book.coverImage ? <img src={book.coverImage} loading="lazy" alt="" /> : <span>♫</span>}
-          <span className="audiobook-cover-mark">သုတရိပ်သာ · AUDIO</span>
-        </div>
+        <AudiobookCover book={book} />
         <div className="audiobook-card-copy"><small>{book.submissionSource === "telegram" ? "Telegram မှ ရောက်ရှိ" : book.category || "အသံစာအုပ်"}</small><strong>{book.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
         <button type="button" className="audiobook-listen" onClick={() => onPlay(book)} aria-label={`${book.title} ကို နားထောင်မည်`}><span aria-hidden="true">▶</span> နားထောင်မည်</button>
       </article>)}

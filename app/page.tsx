@@ -194,8 +194,6 @@ const books: Book[] = [
   }
 ];
 
-const categories = ["အားလုံး", "ဝတ္ထု", "ကဗျာ", "သမိုင်းဝတ္ထု", "အက်ဆေး", "လူငယ်", "သုတ"];
-const times = ["အားလုံး", "၁၅ မိနစ်အောက်", "၁၅–၂၅ မိနစ်", "၂၅ မိနစ်အထက်"];
 const formats = ["အားလုံး", "စာအုပ်", "အသံစာအုပ်", "Wattpad"];
 const coverPalette = [
   ["#cad7d3", "#264e4b"], ["#e5c6b2", "#8a4f3d"], ["#d6c6a9", "#655139"],
@@ -222,6 +220,10 @@ function bookPdfProxyUrl(book: Pick<Book, "slug" | "pdfUrl">) {
 
 function bookCoverProxyUrl(book: Pick<Book, "slug" | "coverImage">) {
   return book.slug ? `/api/books/${encodeURIComponent(book.slug)}/cover` : book.coverImage;
+}
+
+function soundcloudCoverProxyUrl(url?: string) {
+  return url ? `/api/soundcloud/cover?url=${encodeURIComponent(url)}` : undefined;
 }
 
 function readLocalValue(key: string): string | null {
@@ -267,13 +269,6 @@ function getRecentReadings(booksToRead: Book[]): RecentReading[] {
     }
     return recent.sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 3);
   } catch { return []; }
-}
-
-function matchesTime(minutes: number, time: string) {
-  if (time === "၁၅ မိနစ်အောက်") return minutes < 15;
-  if (time === "၁၅–၂၅ မိနစ်") return minutes >= 15 && minutes <= 25;
-  if (time === "၂၅ မိနစ်အထက်") return minutes > 25;
-  return true;
 }
 
 function chapterGroupKey(title: string): string {
@@ -324,10 +319,7 @@ function groupBooks(booksToGroup: Book[]): BookGroup[] {
 export default function HomePage() {
   const [catalogBooks, setCatalogBooks] = useState<Book[] | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
-  const [query, setQuery] = useState("");
   const [format, setFormat] = useState("အားလုံး");
-  const [category, setCategory] = useState("အားလုံး");
-  const [time, setTime] = useState("အားလုံး");
   const [selected, setSelected] = useState<Book | null>(null);
   const [readerBook, setReaderBook] = useState<Book | null>(null);
   const [audioBook, setAudioBook] = useState<Book | null>(null);
@@ -337,7 +329,6 @@ export default function HomePage() {
   const [lineHeight, setLineHeight] = useState(1.8);
   const [storageOpen, setStorageOpen] = useState(false);
   const [offlinePickerOpen, setOfflinePickerOpen] = useState(false);
-  const [offlinePickerSearch, setOfflinePickerSearch] = useState("");
   const [offlineSelection, setOfflineSelection] = useState<string[]>([]);
   const [offlineBatchRunning, setOfflineBatchRunning] = useState(false);
   const [offlineBatchMessage, setOfflineBatchMessage] = useState("");
@@ -349,14 +340,8 @@ export default function HomePage() {
     const syncHashTab = () => {
       if (window.location.hash === "#audiobooks") {
         setFormat("အသံစာအုပ်");
-        setQuery("");
-        setCategory("အားလုံး");
-        setTime("အားလုံး");
       } else if (window.location.hash === "#catalog") {
         setFormat("စာအုပ်");
-        setQuery("");
-        setCategory("အားလုံး");
-        setTime("အားလုံး");
       }
     };
     syncHashTab();
@@ -386,7 +371,7 @@ export default function HomePage() {
             pdfUrl: book.pdfUrl || (!book.soundcloud_url && !book.externalUrl ? bookPdfProxyUrl(book) : undefined),
             coverImage: book.coverImage === "/covers/tian-guan-ci-fu.jpg"
               ? "/covers/tian-guan-ci-fu.webp"
-              : book.coverImage || bookCoverProxyUrl(book),
+              : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || bookCoverProxyUrl(book),
           }));
           setCatalogBooks(offlineSafeBooks);
           writeLocalValue("thuthayatethar:catalog", JSON.stringify(offlineSafeBooks));
@@ -429,7 +414,7 @@ export default function HomePage() {
             // ingestion catalog currently has no cover object for these PDFs.
             coverImage: isTianGuanCiFu
               ? "/covers/tian-guan-ci-fu.webp"
-              : book.coverImage || bookCoverProxyUrl(book),
+              : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || bookCoverProxyUrl(book),
             externalUrl: book.externalUrl,
             soundcloud_url: book.soundcloud_url,
             sourceType: book.sourceType,
@@ -601,37 +586,24 @@ export default function HomePage() {
   }
 
   const matchingAudioBooks = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return availableBooks.filter((book) => {
-      const haystack = `${book.title} ${book.author} ${book.category} ${book.summary} ${book.tag}`.toLowerCase();
-      return Boolean(book.soundcloud_url) && (!normalized || haystack.includes(normalized)) &&
-        (category === "အားလုံး" || book.category === category) &&
-        (time === "အားလုံး" || matchesTime(book.readingTime, time));
-    });
-  }, [availableBooks, category, query, time]);
+    return availableBooks.filter((book) => Boolean(book.soundcloud_url));
+  }, [availableBooks]);
   const filteredBooks = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
     return availableBooks.filter((book) => {
-      const haystack = `${book.title} ${book.author} ${book.category} ${book.summary} ${book.tag}`.toLowerCase();
       const isWattpad = Boolean(book.externalUrl || book.sourceType === "wattpad");
       const isAudioOnly = Boolean(book.soundcloud_url && !book.pdfUrl && !book.pages.length);
       const matchesFormat = format === "အားလုံး" ||
         (format === "စာအုပ်" && !isWattpad && !book.soundcloud_url) ||
         (format === "Wattpad" && isWattpad);
-      return !isAudioOnly && matchesFormat && (!normalized || haystack.includes(normalized)) &&
-        (category === "အားလုံး" || book.category === category) &&
-        (time === "အားလုံး" || matchesTime(book.readingTime, time));
+      return !isAudioOnly && matchesFormat;
     });
-  }, [availableBooks, category, format, query, time]);
+  }, [availableBooks, format]);
   const filteredGroups = useMemo(() => groupBooks(filteredBooks), [filteredBooks]);
   const audioOnlyCount = matchingAudioBooks.filter((book) => !book.pdfUrl && !book.pages.length).length;
   const visibleResultCount = format === "အသံစာအုပ်" ? matchingAudioBooks.length : filteredGroups.length + (format === "အားလုံး" ? audioOnlyCount : 0);
   const savedOfflineBooks = availableBooks.filter((book) => book.pdfUrl && offlineStatuses[offlineBookKey(book)] === "saved");
   const offlineCandidates = useMemo(() => availableBooks.filter((book) => book.pdfUrl && book.rights === "full" && !book.externalUrl), [availableBooks]);
-  const offlinePickerBooks = useMemo(() => {
-    const normalized = offlinePickerSearch.trim().toLocaleLowerCase();
-    return offlineCandidates.filter((book) => !normalized || `${book.title} ${book.author}`.toLocaleLowerCase().includes(normalized));
-  }, [offlineCandidates, offlinePickerSearch]);
+  const offlinePickerBooks = offlineCandidates;
   const storageRatio = storageInfo.quota > 0 ? storageInfo.usage / storageInfo.quota : 0;
 
   useEffect(() => {
@@ -671,10 +643,7 @@ export default function HomePage() {
   };
 
   const resetFilters = () => {
-    setQuery("");
     setFormat("အားလုံး");
-    setCategory("အားလုံး");
-    setTime("အားလုံး");
   };
 
   return (
@@ -685,8 +654,8 @@ export default function HomePage() {
           <span><strong>သုတရိပ်သာ</strong><small>မြန်မာစာအုပ်များအတွက် ဒစ်ဂျစ်တယ်ရိပ်သာ</small></span>
         </a>
         <nav className="topnav" aria-label="အဓိကမီနူး">
-          <a className={format !== "အသံစာအုပ်" ? "active" : ""} href="#catalog" aria-current={format !== "အသံစာအုပ်" ? "page" : undefined} onClick={() => { setFormat("စာအုပ်"); setQuery(""); setCategory("အားလုံး"); setTime("အားလုံး"); }}>စာအုပ်များ</a>
-          <a className={format === "အသံစာအုပ်" ? "active" : ""} href="#audiobooks" aria-current={format === "အသံစာအုပ်" ? "page" : undefined} onClick={() => { setFormat("အသံစာအုပ်"); setQuery(""); setCategory("အားလုံး"); setTime("အားလုံး"); }}>အသံစာအုပ်</a>
+          <a className={format !== "အသံစာအုပ်" ? "active" : ""} href="#catalog" aria-current={format !== "အသံစာအုပ်" ? "page" : undefined} onClick={() => setFormat("စာအုပ်")}>စာအုပ်များ</a>
+          <a className={format === "အသံစာအုပ်" ? "active" : ""} href="#audiobooks" aria-current={format === "အသံစာအုပ်" ? "page" : undefined} onClick={() => setFormat("အသံစာအုပ်")}>အသံစာအုပ်</a>
         </nav>
       </header>
 
@@ -731,7 +700,6 @@ export default function HomePage() {
         </div>
         {offlinePickerOpen && <section className="offline-picker-panel" id="offline-picker-panel" aria-label="Offline သိမ်းရန် စာအုပ်ရွေးရန်">
           <div className="offline-picker-heading"><strong>ဒီစက်တွင် သိမ်းမည့်စာအုပ်များ</strong><small>{savedOfflineBooks.length} အုပ် သိမ်းထားပြီး</small></div>
-          <label className="offline-picker-search"><span aria-hidden="true">⌕</span><input value={offlinePickerSearch} onChange={(event) => setOfflinePickerSearch(event.target.value)} placeholder="စာအုပ်ရှာရန်…" aria-label="Offline သိမ်းရန်စာအုပ်ရှာရန်" /></label>
           <div className="offline-picker-list" role="group" aria-label="စာအုပ်ရွေးရန်">
             {offlinePickerBooks.length ? offlinePickerBooks.map((book) => {
               const key = offlineBookKey(book);
@@ -749,13 +717,8 @@ export default function HomePage() {
         </section>}
         <div className="catalog-layout">
           <aside className="filters" aria-label="စာအုပ်ရှာဖွေမှု">
-            <div className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="စာအုပ်ရှာရန်..." aria-label="စာအုပ်ရှာရန်" />{query ? <button type="button" className="search-clear" onClick={() => setQuery("")} aria-label="ရှာဖွေမှု ရှင်းရန်">×</button> : <kbd>⌘ K</kbd>}</div>
             <div className="format-filter-tabs" role="group" aria-label="အကြောင်းအရာအမျိုးအစား">
               {formats.map((item) => <button type="button" key={item} className={format === item ? "active" : ""} aria-pressed={format === item} onClick={() => setFormat(item)}>{item}</button>)}
-            </div>
-            <div className="filter-controls">
-              <label className="filter-select"><span>အမျိုးအစား</span><select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="စာအုပ်အမျိုးအစားရွေးရန်">{categories.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-              <label className="filter-select"><span>ဖတ်ရှုချိန်</span><select value={time} onChange={(event) => setTime(event.target.value)} aria-label="ဖတ်ရှုချိန်ရွေးရန်">{times.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
             </div>
           </aside>
           <div className="book-grid" aria-live="polite">
