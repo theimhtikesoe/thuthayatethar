@@ -217,8 +217,20 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
           if (expectedBytes > 0 && progress.bytes !== expectedBytes) throw new Error("telegram_file_size_mismatch");
         },
       }));
-      const fixedLengthBody = countedBody.pipeThrough(new FixedLengthStream(expectedBytes));
-      const stored = await env.BUCKET.put(key, fixedLengthBody, { httpMetadata, customMetadata: { intakeId, visibility: "private" } });
+      // Pass FixedLengthStream's native readable half directly to R2. Wrapping it
+      // in pipeThrough() strips the runtime's known-length marker, so large files fail.
+      const fixedLengthStream = new FixedLengthStream(expectedBytes);
+      const abortController = new AbortController();
+      const uploadPromise = env.BUCKET.put(key, fixedLengthStream.readable, { httpMetadata, customMetadata: { intakeId, visibility: "private" } });
+      const streamPromise = countedBody.pipeTo(fixedLengthStream.writable, { signal: abortController.signal });
+      let stored: R2Object | null;
+      try {
+        [stored] = await Promise.all([uploadPromise, streamPromise]);
+      } catch (error) {
+        abortController.abort();
+        await Promise.allSettled([uploadPromise, streamPromise]);
+        throw error;
+      }
       if (!stored || stored.size === 0 || stored.size > maxBytes) throw new Error("r2_storage_failed");
       byteSize = stored.size;
     }
@@ -318,9 +330,29 @@ async function catalog(request: Request, env: RuntimeEnv): Promise<Response> {
 async function adminDrafts(request: Request, env: RuntimeEnv): Promise<Response> {
   if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
-  const statement = env.DB.prepare(`SELECT b.id, b.intake_id, b.title, b.slug, b.author, b.category, b.year, b.summary, b.metadata_json, b.publication_status, b.updated_at, i.status AS intake_status, i.original_filename, i.storage_key, i.source_type, i.source_url, r.rights_status, r.rights_holder, r.evidence_note, r.allowed_uses, r.reviewer, r.reviewed_at FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id LEFT JOIN rights_records r ON r.intake_id = b.intake_id ORDER BY b.updated_at DESC`);
+  const statement = env.DB.prepare(`SELECT COALESCE(b.id, i.id) AS id, i.id AS intake_id, COALESCE(b.title, i.original_filename, 'စာအုပ်အသစ်') AS title, b.slug, b.author, b.category, b.year, b.summary, b.metadata_json, COALESCE(b.publication_status, i.status) AS publication_status, COALESCE(b.updated_at, i.updated_at) AS updated_at, i.status AS intake_status, i.original_filename, i.storage_key, i.source_type, i.source_url, i.failure_code, i.failure_message, r.rights_status, r.rights_holder, r.evidence_note, r.allowed_uses, r.reviewer, r.reviewed_at FROM intake_items i LEFT JOIN book_drafts b ON b.intake_id = i.id LEFT JOIN rights_records r ON r.intake_id = i.id ORDER BY i.updated_at DESC`);
   const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
   return json({ ok: true, drafts: result.results });
+}
+
+async function retryIntake(request: Request, env: RuntimeEnv, intakeId: string, ctx?: ExecutionContext): Promise<Response> {
+  if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+  if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+  if (!/^[0-9a-f-]{36}$/i.test(intakeId)) return json({ ok: false, error: "invalid_intake_id" }, 400);
+  if (!env.BUCKET || !env.TELEGRAM_BOT_TOKEN) return json({ ok: false, error: "processor_unavailable" }, 503);
+  const item = await env.DB.prepare("SELECT id, status, media_type, mime_type, original_filename, telegram_file_id FROM intake_items WHERE id = ? LIMIT 1").bind(intakeId).first<JsonRecord>();
+  if (!item) return json({ ok: false, error: "intake_not_found" }, 404);
+  if (item.status !== "failed") return json({ ok: false, error: "intake_not_failed" }, 409);
+  const isPdf = item.media_type === "document" && ((typeof item.mime_type === "string" && item.mime_type.toLowerCase() === "application/pdf") || (typeof item.original_filename === "string" && item.original_filename.toLowerCase().endsWith(".pdf")));
+  if (!isPdf || typeof item.telegram_file_id !== "string") return json({ ok: false, error: "pdf_retry_unavailable" }, 409);
+  const now = new Date().toISOString();
+  const queued = await env.DB.prepare("UPDATE intake_items SET status = 'received', failure_code = NULL, failure_message = NULL, updated_at = ? WHERE id = ? AND status = 'failed'").bind(now, intakeId).run();
+  if (queued.meta.changes === 0) return json({ ok: false, error: "intake_not_failed" }, 409);
+  await env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'retry_queued', '{}', ?)").bind(intakeId, now).run();
+  const task = processIntake(intakeId, env);
+  if (ctx) ctx.waitUntil(task);
+  else await task;
+  return json({ ok: true, status: "retrying", intakeId }, 202);
 }
 
 async function approveAndPublish(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
@@ -472,6 +504,7 @@ export default {
     if (url.pathname === "/catalog") return catalog(request, runtimeEnv);
     if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv, ctx);
     if (url.pathname === "/admin/drafts") return adminDrafts(request, runtimeEnv);
+    if (url.pathname.startsWith("/admin/retry/")) return retryIntake(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/retry/".length)), ctx);
     if (request.method === "POST" && url.pathname.startsWith("/admin/approve-publish/")) return approveAndPublish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/approve-publish/".length)));
     if (request.method === "PUT" && url.pathname.startsWith("/admin/update/")) return updateBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/update/".length)));
     if (request.method === "DELETE" && url.pathname.startsWith("/admin/delete/")) return deleteBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/delete/".length)));
