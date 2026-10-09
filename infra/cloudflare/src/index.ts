@@ -52,6 +52,7 @@ type JsonRecord = Record<string, unknown>;
 type MediaType = "document" | "photo";
 const MAX_UPDATE_BYTES = 256 * 1024;
 const DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024;
+const AUTO_PUBLISH_CUTOFF = new Date().toISOString();
 
 async function secretValue(value: string | SecretStoreBinding | undefined): Promise<string | undefined> {
   return typeof value === "string" ? value : value ? await value.get() : undefined;
@@ -171,7 +172,8 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
   if (!item || typeof item.telegram_file_id !== "string") return;
   if (item.source_type === "wattpad_link") return;
   const maxBytes = maxFileBytes(env);
-  const isTelegramPdf = item.source_type === "telegram_media" && item.media_type === "document" &&
+  const createdAt = typeof item.created_at === "string" ? Date.parse(item.created_at) : Number.NaN;
+  const isTelegramPdf = Number.isFinite(createdAt) && createdAt >= Date.parse(AUTO_PUBLISH_CUTOFF) && item.source_type === "telegram_media" && item.media_type === "document" &&
     ((typeof item.mime_type === "string" && item.mime_type.toLowerCase() === "application/pdf") ||
       (typeof item.original_filename === "string" && item.original_filename.toLowerCase().endsWith(".pdf")));
   logWorkerEvent("file_processing_started", { intakeId, mediaType: item.media_type, announcedBytes: typeof item.byte_size === "number" ? item.byte_size : null, autoPublish: isTelegramPdf });

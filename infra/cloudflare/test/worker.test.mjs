@@ -34,6 +34,7 @@ function makeDb({ failFirstBatch = false } = {}) {
                 original_filename: values[7],
                 mime_type: values[8],
                 byte_size: values[9],
+                created_at: values[10],
                 status: "received",
                 source_type: "telegram_media",
                 updated_at: values[11],
@@ -371,6 +372,34 @@ test("does not publish a Telegram document with a PDF filename but invalid PDF b
   assert.equal(DB.state.intakeItem.status, "failed");
   assert.equal(DB.state.failureValues[0], "invalid_pdf_header");
   assert.ok(!DB.state.statements.some((statement) => statement.values[6] === "published"));
+});
+
+test("keeps Telegram PDFs already queued before deployment as drafts", async () => {
+  const DB = makeDb();
+  const env = {
+    ...makeEnv(DB),
+    TELEGRAM_BOT_TOKEN: "test-token",
+    BUCKET: {
+      async put(key, body) {
+        const size = body instanceof ArrayBuffer ? body.byteLength : (await new Response(body).arrayBuffer()).byteLength;
+        return { key, size, httpEtag: "pre-cutover-etag" };
+      },
+      async get() { return null; },
+    },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => String(input).includes("getFile?")
+    ? new Response(JSON.stringify({ ok: true, result: { file_path: "/documents/pre-cutover.pdf" } }), { headers: { "content-type": "application/json" } })
+    : new Response(pdfBytes(1024), { headers: { "content-length": "1024" } });
+  try {
+    await worker.fetch(makeRequest(1024), env);
+    DB.state.intakeItem.created_at = "2020-01-01T00:00:00.000Z";
+    await worker.scheduled({ cron: "* * * * *", scheduledTime: Date.now() }, env);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(DB.state.intakeItem.status, "draft");
+  assert.ok(DB.state.statements.some((statement) => statement.sql.includes("INSERT OR IGNORE INTO book_drafts") && statement.values[6] === "draft"));
 });
 
 test("scheduled processor skips a live download and recovers a stale one", async () => {
