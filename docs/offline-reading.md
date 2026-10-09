@@ -7,6 +7,8 @@
 3. The same catalog and full PDF can then be opened without internet. Reading progress and reader theme are stored locally.
 4. PDF pages that contain an embedded text layer are checked locally with the bundled `myanmar-tools` Zawgyi detector. Detected Zawgyi text is converted to Unicode and shown as a readable overlay; no network request is needed.
 
+Audiobook catalog metadata and covers are cached with the catalog/book assets, and the last SoundCloud playback position is stored locally per book. SoundCloud audio itself remains a third-party stream and is not downloaded or cached, so listening requires an internet connection.
+
 ## Important limitation
 
 A scanned/image-only PDF has no text layer for PDF.js to extract. The browser cannot reliably OCR those pages with this feature alone, so the reader shows **ပုံ-only PDF — OCR overlay မပါ** instead of pretending that overlay is available. To support those books, OCR must be run during ingestion (for example, Burmese OCR on the server/worker) and its page text/coordinates stored alongside the PDF. That OCR output can then be cached and rendered with the same overlay component.

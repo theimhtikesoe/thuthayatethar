@@ -1,7 +1,7 @@
 // Keep user-downloaded books independent from deploy-specific app-shell caches.
 // A new Vercel build may replace the shell, but must not make users download
 // every saved PDF again.
-const SHELL_CACHE = "thuthayatethar-shell-v4";
+const SHELL_CACHE = "thuthayatethar-shell-v5";
 const BOOK_CACHE = "thuthayatethar-books";
 const CATALOG_CACHE = "thuthayatethar-catalog";
 const BOOK_WORKER_ORIGIN = "https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev";
@@ -33,6 +33,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   const isAppNavigation = request.mode === "navigate" && url.origin === self.location.origin;
   const isExternalBookAsset = url.origin === BOOK_WORKER_ORIGIN && /^\/book\/[^/]+\/(?:pdf|cover)$/.test(url.pathname);
+  // Catalog responses include SoundCloud URLs and remain available offline;
+  // book covers use the book-asset cache below. SoundCloud audio itself is a
+  // licensed third-party stream and is intentionally never cached here.
+  if (url.hostname === "w.soundcloud.com" || url.hostname === "soundcloud.com" || url.hostname === "on.soundcloud.com") return;
   if (isExternalBookAsset) {
     event.respondWith((async () => {
       const cache = await caches.open(BOOK_CACHE);

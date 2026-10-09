@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS book_drafts (
   summary TEXT,
   reading_time INTEGER,
   cover_storage_key TEXT,
+  soundcloud_url TEXT,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   ocr_text_storage_key TEXT,
   page_count INTEGER,

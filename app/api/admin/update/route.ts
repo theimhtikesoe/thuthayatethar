@@ -11,7 +11,7 @@ function workerBase() {
 export async function PUT(request: Request) {
   const token = cookies().get("admin_session")?.value;
   if (!token) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-  let body: { slug?: string; title?: string; author?: string; category?: string; year?: string; summary?: string; coverImage?: string } = {};
+  let body: { slug?: string; title?: string; author?: string; category?: string; year?: string; summary?: string; coverImage?: string; soundcloud_url?: string } = {};
   try { body = await request.json(); } catch { return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 }); }
   if (!body.slug || !/^[a-z0-9][a-z0-9-]*$/.test(body.slug)) return NextResponse.json({ ok: false, error: "invalid_slug" }, { status: 400 });
   try {

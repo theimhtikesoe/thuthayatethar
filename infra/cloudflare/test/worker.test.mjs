@@ -37,6 +37,7 @@ function makeDb({ failFirstBatch = false } = {}) {
                 created_at: values[10],
                 status: "received",
                 source_type: "telegram_media",
+                source_url: values[12] ?? null,
                 updated_at: values[11],
               };
               return { meta: { changes: 1 } };
@@ -115,7 +116,7 @@ function makeEnv(DB) {
   };
 }
 
-function makeRequest(fileSize = 4096, { fileName = "book.pdf", mimeType = "application/pdf" } = {}) {
+function makeRequest(fileSize = 4096, { fileName = "book.pdf", mimeType = "application/pdf", caption = "" } = {}) {
   return new Request("https://worker.test/telegram/webhook", {
     method: "POST",
     headers: {
@@ -133,6 +134,7 @@ function makeRequest(fileSize = 4096, { fileName = "book.pdf", mimeType = "appli
           mime_type: mimeType,
           file_size: fileSize,
         },
+        ...(caption ? { caption } : {}),
       },
     }),
   });
@@ -211,6 +213,54 @@ test("ignores documents that are not PDFs", async () => {
   assert.equal(response.status, 200);
   assert.equal((await response.json()).status, "ignored");
   assert.equal(DB.state.insertCalls, 0);
+});
+
+test("accepts standalone SoundCloud URLs as audiobook drafts and rejects unrelated hosts", async () => {
+  const DB = makeDb();
+  const env = makeEnv(DB);
+  const request = new Request("https://worker.test/telegram/webhook", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": "test-secret" },
+    body: JSON.stringify({
+      update_id: 11,
+      message: {
+        message_id: 5,
+        chat: { id: -12345, type: "supergroup" },
+        text: "Book title by Author https://soundcloud.com/artist/track",
+      },
+    }),
+  });
+  const response = await worker.fetch(request, env);
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.status, "accepted");
+  assert.equal(payload.sourceType, "soundcloud_link");
+  assert.equal(DB.state.insertCalls, 1);
+  assert.equal(DB.state.batchCalls, 1);
+
+  const unsafeDb = makeDb();
+  const unsafe = new Request("https://worker.test/telegram/webhook", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": "test-secret" },
+    body: JSON.stringify({
+      update_id: 12,
+      message: {
+        message_id: 6,
+        chat: { id: -12345, type: "supergroup" },
+        text: "https://soundcloud.example/artist/track",
+      },
+    }),
+  });
+  const unsafeResponse = await worker.fetch(unsafe, makeEnv(unsafeDb));
+  assert.equal((await unsafeResponse.json()).status, "ignored");
+  assert.equal(unsafeDb.state.insertCalls, 0);
+});
+
+test("retains a SoundCloud URL sent with a PDF until draft creation", async () => {
+  const DB = makeDb();
+  const response = await worker.fetch(makeRequest(4096, { caption: "https://soundcloud.com/artist/audiobook" }), makeEnv(DB));
+  assert.equal(response.status, 200);
+  assert.equal(DB.state.intakeItem.source_url, "https://soundcloud.com/artist/audiobook");
 });
 
 test("repairs rights and received-event rows after an interrupted D1 batch", async () => {

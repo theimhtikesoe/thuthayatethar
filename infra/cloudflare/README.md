@@ -36,6 +36,12 @@ The authenticated `/admin` list includes failed intake rows and their error mess
 
 ## Validation and deployments
 
+### SoundCloud audiobook support
+
+- Published catalog rows may include `soundcloud_url`. SoundCloud-only Telegram links enter the same rights-review flow as other link submissions; a reviewer must approve them before publication. A SoundCloud URL posted with a PDF is retained on that PDF's book draft.
+- Before deploying the Worker code, apply `migrations/0004_soundcloud_audiobooks.sql` to existing D1 databases (for example, from the repository root: `pnpm dlx wrangler d1 execute thuthayatethar-ingestion --remote --file=infra/cloudflare/migrations/0004_soundcloud_audiobooks.sql`). Do not reapply the `ALTER TABLE` if the column already exists. Fresh schema installations already include the column in `schema.sql`.
+- The website caches catalog metadata and book covers for offline browsing and stores SoundCloud playback position locally. SoundCloud audio is still streamed by SoundCloud and is unavailable offline; the service worker intentionally does not cache the third-party audio stream.
+
 - `pnpm test:ingestion` covers webhook intake, duplicate delivery, large known-length stream, private-draft retry, stale-claim recovery, size-limit failures, and PDF range requests.
 - `pnpm typecheck` and `pnpm build` validate the Next.js admin proxy/UI.
 - Cloudflare's script-content API changes Worker code without replacing bindings/settings. Use the dedicated schedules endpoint to set Cron triggers; preserve existing schedules and Worker configuration when editing them.
