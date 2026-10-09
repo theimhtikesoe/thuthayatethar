@@ -4,7 +4,8 @@
 const SHELL_CACHE = "thuthayatethar-shell-v4";
 const BOOK_CACHE = "thuthayatethar-books";
 const CATALOG_CACHE = "thuthayatethar-catalog";
-const SHELL = ["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js"];
+const BOOK_WORKER_ORIGIN = "https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev";
+const SHELL = ["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js", "/covers/tian-guan-ci-fu.webp"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -31,6 +32,22 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   const url = new URL(request.url);
   const isAppNavigation = request.mode === "navigate" && url.origin === self.location.origin;
+  const isExternalBookAsset = url.origin === BOOK_WORKER_ORIGIN && /^\/book\/[^/]+\/(?:pdf|cover)$/.test(url.pathname);
+  if (isExternalBookAsset) {
+    event.respondWith((async () => {
+      const cache = await caches.open(BOOK_CACHE);
+      const cached = await cache.match(request.url);
+      if (cached) return cached;
+      try {
+        const response = await fetch(request);
+        if (response.ok && !(url.pathname.endsWith("/pdf") && request.headers.has("range"))) {
+          await cache.put(request.url, response.clone());
+        }
+        return response;
+      } catch { return cached || new Response("Offline", { status: 503 }); }
+    })());
+    return;
+  }
   if (url.pathname.startsWith("/api/books/") && url.pathname.endsWith("/pdf")) {
     event.respondWith((async () => {
       const cache = await caches.open(BOOK_CACHE);
@@ -68,7 +85,7 @@ self.addEventListener("fetch", (event) => {
     })());
     return;
   }
-  if (url.origin === self.location.origin && ["/pdf.worker.min.js"].includes(url.pathname)) {
+  if (url.origin === self.location.origin && ["/pdf.worker.min.js", "/covers/tian-guan-ci-fu.webp"].includes(url.pathname)) {
     event.respondWith((async () => {
       const cache = await caches.open(SHELL_CACHE);
       const cached = await cache.match(request);

@@ -355,8 +355,10 @@ export default function HomePage() {
         if (Array.isArray(cachedBooks)) {
           const offlineSafeBooks = cachedBooks.map((book) => ({
             ...book,
-            pdfUrl: bookPdfProxyUrl(book),
-            coverImage: bookCoverProxyUrl(book),
+            pdfUrl: book.pdfUrl || bookPdfProxyUrl(book),
+            coverImage: book.coverImage === "/covers/tian-guan-ci-fu.jpg"
+              ? "/covers/tian-guan-ci-fu.webp"
+              : book.coverImage || bookCoverProxyUrl(book),
           }));
           setCatalogBooks(offlineSafeBooks);
           writeLocalValue("thuthayatethar:catalog", JSON.stringify(offlineSafeBooks));
@@ -386,16 +388,15 @@ export default function HomePage() {
             mark: book.mark ?? "စာ",
             rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
             tag: book.tag ?? "ထုတ်ဝေထားသည်",
-            // Always use the same-origin proxy when a slug is available. This
-            // keeps PDF.js, the password fallback link, and the service-worker
-            // cache on one URL so offline reading never jumps to the external
-            // ingestion worker URL.
-            pdfUrl: bookPdfProxyUrl(book),
+            // Large PDFs are served directly by the Cloudflare Worker/R2 URL
+            // returned by the catalog. Keep the Vercel proxy as a fallback and
+            // offline URL so PDF bytes do not pass through a Vercel Function.
+            pdfUrl: book.pdfUrl || bookPdfProxyUrl(book),
             // Use a bundled cover for every chapter in this series because the
             // ingestion catalog currently has no cover object for these PDFs.
             coverImage: isTianGuanCiFu
-              ? "/covers/tian-guan-ci-fu.jpg"
-              : bookCoverProxyUrl(book),
+              ? "/covers/tian-guan-ci-fu.webp"
+              : book.coverImage || bookCoverProxyUrl(book),
             externalUrl: book.externalUrl,
             sourceType: book.sourceType,
             slug: book.slug,
@@ -514,7 +515,7 @@ export default function HomePage() {
     try {
       if ("serviceWorker" in navigator) await navigator.serviceWorker.ready;
       const shell = await caches.open("thuthayatethar-shell-v4");
-      await shell.addAll(["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js"]);
+      await shell.addAll(["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js", "/covers/tian-guan-ci-fu.webp"]);
       for (let index = 0; index < downloadableBooks.length; index += 1) {
         const book = downloadableBooks[index];
         try {
