@@ -1,37 +1,34 @@
-# Cloudflare ingestion infrastructure
+# Cloudflare Telegram ingestion infrastructure
 
-This directory contains infrastructure inputs for the Telegram ingestion pipeline.
+This directory contains the Worker source, D1 schema, and test harness for the Telegram PDF ingestion pipeline.
 
-## Resources
+## Production resources
 
-- D1 database: `thuthayatethar-ingestion` (schema applied and verified)
-- R2 bucket: `thuthayatethar-private-ingestion` (APAC, Standard, private by default)
-- Schema: [`schema.sql`](./schema.sql)
+- Worker: `thuthayatethar-telegram-ingestion` at `https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev`.
+- D1: `thuthayatethar-ingestion` (`e6631b37-bcbb-4550-b4c7-3acebb961484`).
+- R2: `thuthayatethar-private-ingestion` (private by default; no public `r2.dev` or custom-domain exposure).
+- The public website domain is a verified Vercel project domain. Its DNS is unproxied and there is no Cloudflare Worker route for the site root; Cloudflare is used here for ingestion and private storage, not as the site's reverse proxy.
+- The Worker receives Telegram/API and relay credentials through secret bindings/Secret Store. Never print, commit, or request those values in chat.
 
-## Automatic cleanup
+## Storage and security
 
-The bucket lifecycle is configured to abort incomplete multipart uploads after 1 day, delete `tmp/` after 2 days, delete `ocr-temp/` after 7 days, delete `quarantine-expiring/` after 14 days, and delete `failed/` after 30 days. Approved originals, published assets, and rights evidence must use different prefixes and are not covered by these deletion rules.
+The bucket lifecycle is configured to abort incomplete multipart uploads after 1 day, delete `tmp/` after 2 days, `ocr-temp/` after 7 days, `quarantine-expiring/` after 14 days, and `failed/` after 30 days. Approved originals, published assets, and rights evidence must use separate prefixes and are not covered by those deletion rules.
 
-R2 Standard currently includes 10 GB-month of storage, 1 million Class A operations, 10 million Class B operations, and free egress each month. This cleanup policy reduces temporary-file growth but cannot guarantee the account stays under 10 GB if approved originals accumulate; storage usage must still be monitored.
+Keep originals private. A successful retry creates a D1 book draft and private R2 object only; it does not approve rights or publish the book. Rights evidence and a human admin approval remain prerequisites for publication. The Worker currently does not provide automated OCR or a malware verdict.
 
-## Security rules
+## Large-file stream requirement
 
-- Keep the bucket private. Do not attach a public `r2.dev` or custom domain for originals.
-- Keep Telegram bot tokens, webhook secrets, Cloudflare API tokens, R2 S3 credentials, `api_id`, and `api_hash` outside Git.
-- Use VPS/secret-manager environment variables for worker credentials.
-- Do not register or change the Telegram webhook until the durable receiver and rollback path are tested.
+R2 must receive the native `readable` half of `FixedLengthStream` so Cloudflare retains the known-length metadata required for streaming. Do not pass a derived result from `source.pipeThrough(new FixedLengthStream(size))` to `R2Bucket.put`; that can fail with `Provided readable stream must have a known length` for large PDFs.
 
-This is intentionally a staging contract; it does not perform Telegram cutover by itself.
+The intake processor builds `new FixedLengthStream(expectedBytes)`, sends `fixedLengthStream.readable` directly to `BUCKET.put`, and pipes the incoming counted stream into `fixedLengthStream.writable`. The stream is aborted on upload/pipe errors, and the intake stays failed rather than publishing partial content.
 
-## Deployed staging receiver
+## Admin recovery
 
-- Worker: `thuthayatethar-telegram-ingestion` (`workers.dev` enabled; preview URLs disabled).
-- Health URL: `https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev/health`.
-- Webhook path: `https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev/telegram/webhook`.
-- The Worker is bound to the `thuthayatethar-ingestion` D1 database and allowlisted for the approved group ID. Its webhook secret is intentionally not configured yet.
-- Verified behavior: `GET /health` returns HTTP 200; `POST /telegram/webhook` without a secret returns HTTP 503 (`webhook_not_configured`). The Telegram webhook has not been registered or changed.
-- The `feat/telegram-pdf-reader` source branch accepts only PDF documents from the allowlisted group, validates the `%PDF-` header and configured byte limit, stores the bytes in private R2, records the operator's rights attestation, and creates a published D1 book record. The `GET /books/:slug/pdf` route serves only published objects inline; `/catalog` includes its PDF reader URL.
-- The Next.js site consumes the catalog response and opens the PDF in a responsive reader frame. It keeps the sample catalog only when the catalog API is not configured or unavailable.
-- A dedicated Cloudflare Tunnel and DNS name, `pdf-relay.rz99systems.com`, have been created with the origin set to the future `pdf-relay:8090` container. The route is not active yet because the tunnel connector and relay container have not been installed on the VPS.
-- The VPS relay source is in `infra/vps/pdf-relay`. It proxies only Telegram `getFile` metadata and streams files from the Local Bot API's read-only data volume. A Cloudflare Access self-hosted app and Service Auth policy now protect `pdf-relay.rz99systems.com`, allowing only the dedicated ingestion Worker token; its client ID and secret are stored as Worker secret bindings. Never publish relay port 8090 or Local Bot API port 8081 on the VPS host.
-- Live Worker settings remain on `https://api.telegram.org` and `MAX_FILE_BYTES=20971520`; the `feat/telegram-pdf-reader` template uses `https://pdf-relay.rz99systems.com` and `MAX_FILE_BYTES=167772160`. The live Worker has not been switched or deployed, and Telegram's webhook/session has not been changed.
+The authenticated `/admin` list includes failed intake rows and their error messages. `POST /admin/retry/:intakeId` requires the existing admin token, accepts only a failed PDF intake, prevents duplicate concurrent retries by changing its status conditionally, and schedules private reprocessing. On success, check the resulting D1 `storage_key`, `byte_size`, and `draft` state. Do not read the PDF payload to verify storage.
+
+## Validation and deployments
+
+- `pnpm test:ingestion` runs Worker webhook, large-stream, private-draft retry, and PDF range-request tests.
+- `pnpm typecheck` and `pnpm build` validate the Next.js admin proxy/UI.
+- Cloudflare's script-content update API changes Worker code **without touching config or metadata**; use this code-only endpoint so live D1/R2 and secret bindings are preserved. Verify `/health` and `/catalog` after deployment.
+- The website UI deploys through GitHub `main` → Vercel. Do not point the site domain at the ingestion Worker or legacy proxy.

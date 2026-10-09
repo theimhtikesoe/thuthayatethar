@@ -34,6 +34,8 @@ function makeDb({ failFirstBatch = false } = {}) {
                 original_filename: values[7],
                 mime_type: values[8],
                 byte_size: values[9],
+                status: "received",
+                source_type: "telegram_media",
               };
               return { meta: { changes: 1 } };
             }
@@ -41,13 +43,23 @@ function makeDb({ failFirstBatch = false } = {}) {
           }
           if (sql.includes("UPDATE intake_items SET status = 'failed'")) {
             state.failureValues = values;
+            if (state.intakeItem) state.intakeItem.status = "failed";
             return { meta: { changes: 1 } };
           }
+          if (sql.includes("UPDATE intake_items SET status = 'received'")) {
+            if (state.intakeItem?.status !== "failed") return { meta: { changes: 0 } };
+            state.intakeItem.status = "received";
+            state.intakeItem.failure_code = null;
+            state.intakeItem.failure_message = null;
+            return { meta: { changes: 1 } };
+          }
+          if (sql.includes("'retry_queued'")) return { meta: { changes: 1 } };
           if (sql.includes("'processing_failed'")) return { meta: { changes: 1 } };
           throw new Error(`Unexpected D1 run query: ${sql}`);
         },
         async first() {
           if (sql.includes("SELECT * FROM intake_items")) return state.intakeItem;
+          if (sql.includes("FROM intake_items")) return state.intakeItem;
           return state.intakeId ? { id: state.intakeId } : null;
         },
         get sql() {
@@ -67,6 +79,7 @@ function makeDb({ failFirstBatch = false } = {}) {
         sql: statement.sql,
         values: statement.values,
       })));
+      if (state.intakeItem && statements.some((statement) => statement.sql.includes("UPDATE intake_items SET status = 'draft'"))) state.intakeItem.status = "draft";
       return [];
     },
   };
@@ -77,6 +90,7 @@ function makeEnv(DB) {
     DB,
     TELEGRAM_WEBHOOK_SECRET: "test-secret",
     TELEGRAM_ALLOWED_CHAT_IDS: "-12345",
+    ADMIN_TOKEN: "admin-test-token",
   };
 }
 
@@ -118,6 +132,7 @@ function streamOfSize(totalBytes, chunkSize = 1024 * 1024) {
 }
 
 const fixedLengthStreamCalls = [];
+const fixedLengthReadables = new WeakSet();
 globalThis.FixedLengthStream = class extends TransformStream {
   constructor(length) {
     fixedLengthStreamCalls.push(length);
@@ -132,6 +147,7 @@ globalThis.FixedLengthStream = class extends TransformStream {
         if (bytesWritten !== length) throw new Error("fixed_length_mismatch");
       },
     });
+    fixedLengthReadables.add(this.readable);
   }
 };
 
@@ -207,6 +223,7 @@ test("streams files larger than 20 MiB into private R2 and records their size", 
         if (body instanceof ArrayBuffer) {
           size = body.byteLength;
         } else {
+          assert.ok(fixedLengthReadables.has(body), "R2 must receive FixedLengthStream.readable directly");
           const reader = body.getReader();
           while (true) {
             const part = await reader.read();
@@ -257,6 +274,53 @@ test("streams files larger than 20 MiB into private R2 and records their size", 
   const rights = DB.state.statements.find((statement) => statement.sql.includes("INSERT OR IGNORE INTO rights_records"));
   assert.ok(rights);
   assert.equal(rights.values.length, 4);
+});
+
+test("admin can retry a failed Telegram PDF and restore it as a private draft", async () => {
+  const DB = makeDb();
+  const uploads = [];
+  const env = {
+    ...makeEnv(DB),
+    TELEGRAM_BOT_TOKEN: "test-token",
+    TELEGRAM_API_BASE_URL: "https://api.telegram.org",
+    BUCKET: {
+      async put(key, body, options) {
+        const size = body instanceof ArrayBuffer ? body.byteLength : (await new Response(body).arrayBuffer()).byteLength;
+        uploads.push({ key, size, options });
+        return { key, size, httpEtag: "retry-etag" };
+      },
+      async get() { return null; },
+    },
+  };
+  const accepted = await worker.fetch(makeRequest(1024), env);
+  const intakeId = (await accepted.json()).intakeId;
+  DB.state.intakeItem.status = "failed";
+  const pending = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    if (String(input).includes("getFile?")) {
+      return new Response(JSON.stringify({ ok: true, result: { file_path: "/documents/retry.pdf" } }), {
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(new Uint8Array(1024), { headers: { "content-length": "1024" } });
+  };
+
+  try {
+    const response = await worker.fetch(new Request(`https://worker.test/admin/retry/${intakeId}`, {
+      method: "POST",
+      headers: { "x-admin-token": "admin-test-token" },
+    }), env, { waitUntil(promise) { pending.push(promise); } });
+    assert.equal(response.status, 202);
+    assert.equal((await response.json()).status, "retrying");
+    await Promise.all(pending);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(uploads.length, 1);
+  assert.equal(DB.state.intakeItem.status, "draft");
+  assert.ok(DB.state.statements.some((statement) => statement.sql.includes("INSERT OR IGNORE INTO book_drafts") && statement.sql.includes("'draft'")));
 });
 
 test("does not send a streamed upload to R2 when the total file size is unknown", async () => {
