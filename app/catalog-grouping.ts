@@ -1,0 +1,85 @@
+export type ChapterBook = {
+  id: string | number;
+  title: string;
+  author?: string;
+};
+
+export type ChapterGroup<T extends ChapterBook> = {
+  book: T;
+  chapters: T[];
+};
+
+function normalizeDigits(value: string): string {
+  return value.replace(/[၀-၉]/g, (digit) => String(digit.charCodeAt(0) - 0x1040));
+}
+
+function normalizedTitle(title: string): string {
+  return normalizeDigits(title.normalize("NFKC")).toLowerCase().trim();
+}
+
+export function chapterNumberFromTitle(title: string): number | null {
+  const normalized = normalizedTitle(title);
+  const match = normalized.match(/\b(?:chapter|episode|part)\s*[-_:]?\s*(\d+)\b/i)
+    ?? normalized.match(/(?:အခန်း|အပိုင်း)\s*[-_:]?\s*(\d+)/)
+    ?? normalized.match(/(?:^|[\s._-])(\d+)\s*$/);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function stripChapterNumber(title: string): string {
+  return normalizeDigits(title.normalize("NFKC"))
+    .replace(/\b(?:chapter|episode|part)\s*[-_:]?\s*\d+\b/gi, " ")
+    .replace(/(?:အခန်း|အပိုင်း)\s*[-_:]?\s*\d+/g, " ")
+    .replace(/[\s._-]*\d+\s*$/, "")
+    .replace(/[\s._-]+/g, " ")
+    .trim();
+}
+
+function chapterGroupKey(title: string): string {
+  return stripChapterNumber(title).toLowerCase();
+}
+
+export function chapterLabel(book: ChapterBook): string {
+  const chapter = chapterNumberFromTitle(book.title);
+  return chapter === null ? book.title : `အခန်း ${chapter}`;
+}
+
+export function groupTitle<T extends ChapterBook>(group: ChapterGroup<T>): string {
+  if (group.chapters.length < 2) return group.book.title;
+  return stripChapterNumber(group.book.title) || group.book.title;
+}
+
+export function groupBooks<T extends ChapterBook>(books: T[]): ChapterGroup<T>[] {
+  const candidates = new Map<string, Array<{ book: T; index: number; chapter: number }>>();
+  const result: Array<{ index: number; group: ChapterGroup<T> }> = [];
+
+  books.forEach((book, index) => {
+    const chapter = chapterNumberFromTitle(book.title);
+    if (chapter === null) {
+      // Identical titles can refer to separate works; never merge them by title alone.
+      result.push({ index, group: { book, chapters: [book] } });
+      return;
+    }
+    const author = book.author?.normalize("NFKC").toLowerCase().trim() ?? "";
+    const key = `${chapterGroupKey(book.title)}\u0000${author}`;
+    const items = candidates.get(key);
+    if (items) items.push({ book, index, chapter });
+    else candidates.set(key, [{ book, index, chapter }]);
+  });
+
+  candidates.forEach((items) => {
+    const chapterNumbers = new Set(items.map((item) => item.chapter));
+    if (items.length > 1 && chapterNumbers.size === items.length) {
+      const chapters = [...items]
+        .sort((left, right) => left.chapter - right.chapter)
+        .map((item) => item.book);
+      result.push({ index: items[0].index, group: { book: chapters[0], chapters } });
+    } else {
+      // Duplicate records for the same chapter remain separately manageable cards.
+      for (const item of items) result.push({ index: item.index, group: { book: item.book, chapters: [item.book] } });
+    }
+  });
+
+  return result.sort((left, right) => left.index - right.index).map((item) => item.group);
+}

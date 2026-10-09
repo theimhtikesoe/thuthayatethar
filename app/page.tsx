@@ -4,6 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import dynamic from "next/dynamic";
 import AudiobookPlayer, { AudiobookShelf } from "./components/AudiobookPlayer";
+import { chapterLabel, groupBooks, groupTitle, type ChapterGroup } from "./catalog-grouping";
+import { formatAudioTime, mostRecentListening } from "./audio-progress";
+import { correctedCatalogTitle } from "./burmese-text";
 
 const FlipBook = dynamic(() => import("./FlipBook"), { ssr: false });
 
@@ -34,16 +37,20 @@ type Book = {
   slug?: string;
 };
 
-type BookGroup = {
-  book: Book;
-  chapters: Book[];
-};
+type BookGroup = ChapterGroup<Book>;
 
 type RecentReading = {
   group: BookGroup;
   book: Book;
   page: number;
   totalPages: number;
+  updatedAt: number;
+};
+
+type RecentListening = {
+  book: Book;
+  positionMs: number;
+  durationMs: number;
   updatedAt: number;
 };
 
@@ -271,51 +278,6 @@ function getRecentReadings(booksToRead: Book[]): RecentReading[] {
   } catch { return []; }
 }
 
-function chapterGroupKey(title: string): string {
-  const normalized = title.normalize("NFKC").toLowerCase().trim();
-  const withoutChapter = normalized.replace(/\bchapter\s*[-_:]?\s*\d+\b/gi, "").replace(/[\s._-]*\d+\s*$/, "");
-  return withoutChapter.replace(/[\s._-]+/g, " ").trim() || normalized;
-}
-
-function chapterLabel(book: Book): string {
-  const chapter = book.title.match(/\bchapter\s*[-_:]?\s*(\d+)\b/i)?.[1] ?? book.title.match(/(?:^|[\s._-])(\d+)\s*$/)?.[1];
-  return chapter ? `အခန်း ${chapter}` : book.title;
-}
-
-function chapterNumber(book: Book): number | null {
-  const value = book.title.match(/\bchapter\s*[-_:]?\s*(\d+)\b/i)?.[1] ?? book.title.match(/(?:^|[\s._-])(\d+)\s*$/)?.[1];
-  return value ? Number(value) : null;
-}
-
-function groupTitle(group: BookGroup): string {
-  if (group.chapters.length < 2) return group.book.title;
-  return group.book.title
-    .replace(/\bchapter\s*[-_:]?\s*\d+\b/i, "")
-    .replace(/[\s._-]*\d+\s*$/, "")
-    .trim() || group.book.title;
-}
-
-function groupBooks(booksToGroup: Book[]): BookGroup[] {
-  const groups = new Map<string, BookGroup>();
-  for (const book of booksToGroup) {
-    const key = chapterGroupKey(book.title);
-    const existing = groups.get(key);
-    if (existing) existing.chapters.push(book);
-    else groups.set(key, { book, chapters: [book] });
-  }
-  return Array.from(groups.values()).map((group) => ({
-    ...group,
-    chapters: [...group.chapters].sort((left, right) => {
-      const leftNumber = chapterNumber(left);
-      const rightNumber = chapterNumber(right);
-      if (leftNumber !== null && rightNumber !== null) return leftNumber - rightNumber;
-      if (leftNumber !== null) return -1;
-      if (rightNumber !== null) return 1;
-      return left.title.localeCompare(right.title);
-    }),
-  }));
-}
-
 export default function HomePage() {
   const [catalogBooks, setCatalogBooks] = useState<Book[] | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
@@ -351,9 +313,11 @@ export default function HomePage() {
   useEffect(() => {
     const refreshProgress = () => setProgressRevision((revision) => revision + 1);
     window.addEventListener("thuthayatethar:progress", refreshProgress);
+    window.addEventListener("thuthayatethar:audio-progress", refreshProgress);
     window.addEventListener("storage", refreshProgress);
     return () => {
       window.removeEventListener("thuthayatethar:progress", refreshProgress);
+      window.removeEventListener("thuthayatethar:audio-progress", refreshProgress);
       window.removeEventListener("storage", refreshProgress);
     };
   }, []);
@@ -368,6 +332,7 @@ export default function HomePage() {
           hasCachedCatalog = true;
           const offlineSafeBooks = cachedBooks.map((book) => ({
             ...book,
+            title: correctedCatalogTitle(book.title),
             pdfUrl: book.pdfUrl || (!book.soundcloud_url && !book.externalUrl ? bookPdfProxyUrl(book) : undefined),
             coverImage: book.coverImage === "/covers/tian-guan-ci-fu.jpg"
               ? "/covers/tian-guan-ci-fu.webp"
@@ -394,7 +359,7 @@ export default function HomePage() {
             book.title?.toLowerCase().includes("tian guan ci fu");
           return {
             id: typeof book.id === "number" ? book.id : index + 1,
-            title: book.title ?? "စာအုပ်အသစ်",
+            title: correctedCatalogTitle(book.title),
             author: book.author ?? "မသိရသေးသော စာရေးသူ",
             category: book.category ?? "အခြား",
             year: book.year ?? "—",
@@ -453,7 +418,7 @@ export default function HomePage() {
     try {
       const identity = JSON.parse(saved) as { slug?: string; id?: string | number };
       const book = catalogBooks.find((item) => (identity.slug && item.slug === identity.slug) || String(item.id) === String(identity.id));
-      if (book?.soundcloud_url) setAudioBook(book);
+      if (book?.soundcloud_url) setAudioBook((current) => current ?? book);
     } catch { /* Ignore an invalid last-player record. */ }
   }, [catalogBooks]);
   useEffect(() => {
@@ -474,7 +439,10 @@ export default function HomePage() {
   const availableBooks = catalogBooks ?? [];
   function playAudiobook(book: Book) {
     if (!book.soundcloud_url) return;
-    setAudioBook(book);
+    setAudioBook((current) => {
+      const sameIdentity = current && (current.slug ?? String(current.id)) === (book.slug ?? String(book.id));
+      return sameIdentity && current?.soundcloud_url === book.soundcloud_url ? current : book;
+    });
     writeLocalValue("thuthayatethar:active-audiobook", JSON.stringify({ slug: book.slug, id: book.id }));
   }
   function closeAudiobookPlayer() {
@@ -588,6 +556,11 @@ export default function HomePage() {
   const matchingAudioBooks = useMemo(() => {
     return availableBooks.filter((book) => Boolean(book.soundcloud_url));
   }, [availableBooks]);
+  const recentListening = useMemo<RecentListening | null>(() => {
+    if (typeof window === "undefined") return null;
+    try { return mostRecentListening(matchingAudioBooks, window.localStorage); }
+    catch { return null; }
+  }, [matchingAudioBooks, progressRevision]);
   const filteredBooks = useMemo(() => {
     return availableBooks.filter((book) => {
       const isWattpad = Boolean(book.externalUrl || book.sourceType === "wattpad");
@@ -664,7 +637,7 @@ export default function HomePage() {
           <div><p className="eyebrow">စာကြည့်တိုက်</p><h2>{format === "အသံစာအုပ်" ? "အသံစာအုပ်" : "စာအုပ်များ"}</h2></div>
           <span className="result-count">{visibleResultCount} အုပ်</span>
         </div>
-        {recentReadings[0] && (() => {
+        {format !== "အသံစာအုပ်" && recentReadings[0] && (() => {
           const item = recentReadings[0];
           const progress = item.totalPages > 0 ? Math.min(100, Math.round(((item.page + 1) / item.totalPages) * 100)) : 0;
           const title = groupTitle(item.group);
@@ -678,6 +651,18 @@ export default function HomePage() {
           </section>;
         })()}
         <div id="audiobooks" className="audiobook-listing">
+          {format === "အသံစာအုပ်" && recentListening && (() => {
+            const item = recentListening;
+            const progress = item.durationMs > 0 ? Math.min(100, Math.round((item.positionMs / item.durationMs) * 100)) : 0;
+            return <section className="continue-reading continue-listening" aria-label="နားထောင်လက်စအသံစာအုပ်">
+              <span className="continue-label">နားထောင်လက်စ</span>
+              <button type="button" className="continue-compact" onClick={() => playAudiobook(item.book)} aria-label={`${item.book.title} မှ ဆက်နားထောင်မည်`}>
+                <span className="continue-summary-text"><strong>{item.book.title}</strong><small>{item.durationMs > 0 ? `${formatAudioTime(item.positionMs)} / ${formatAudioTime(item.durationMs)}` : formatAudioTime(item.positionMs)}</small></span>
+                <span className="continue-action">ဆက်နားထောင်မည် →</span>
+                {item.durationMs > 0 && <span className="continue-progress" role="progressbar" aria-label={`${item.book.title} နားထောင်ပြီးမှု`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></span>}
+              </button>
+            </section>;
+          })()}
           {(format === "အားလုံး" || format === "အသံစာအုပ်") && <AudiobookShelf books={matchingAudioBooks} onPlay={(book) => playAudiobook(book as Book)} />}
           {format === "အသံစာအုပ်" && !catalogLoading && !matchingAudioBooks.length && <div className="empty-state audiobook-empty"><span>♫</span><h3>အသံစာအုပ် မတွေ့ပါ</h3><p>Telegram ထဲသို့ SoundCloud link ပို့ထားပါက မကြာမီ ဒီနေရာတွင် ပေါ်လာပါမည်။</p></div>}
         </div>
