@@ -353,6 +353,79 @@ async function adminDrafts(request: Request, env: RuntimeEnv): Promise<Response>
   return json({ ok: true, drafts: result.results });
 }
 
+async function directUpload(request: Request, env: RuntimeEnv): Promise<Response> {
+  if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+  if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+  if (!env.BUCKET) return json({ ok: false, error: "storage_unavailable" }, 503);
+  const fileName = (request.headers.get("x-file-name") ?? "book.pdf").trim().slice(0, 180) || "book.pdf";
+  const mimeType = (request.headers.get("content-type") ?? "application/pdf").split(";", 1)[0].trim().toLowerCase();
+  if (mimeType !== "application/pdf" && !fileName.toLowerCase().endsWith(".pdf")) return json({ ok: false, error: "pdf_required" }, 415);
+  const contentLength = Number(request.headers.get("content-length") ?? "0");
+  const maxBytes = maxFileBytes(env);
+  if (!Number.isSafeInteger(contentLength) || contentLength <= 0) return json({ ok: false, error: "content_length_required" }, 411);
+  if (contentLength > maxBytes) return json({ ok: false, error: "file_too_large" }, 413);
+  if (!request.body) return json({ ok: false, error: "file_body_missing" }, 400);
+
+  const intakeId = crypto.randomUUID();
+  const syntheticUpdateId = -Math.floor(Date.now() * 1000 + Math.random() * 1000);
+  const directFileId = `direct:${intakeId}`;
+  const now = new Date().toISOString();
+  const safeName = safeFileName(fileName, "document");
+  const key = `originals/${intakeId}/${safeName}`;
+  const title = titleFromFile(fileName);
+  const slug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "book"}-${intakeId.slice(0, 8)}`;
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_type, source_chat_id, source_message_id, status, original_filename, mime_type, byte_size, created_at, updated_at) VALUES (?, ?, ?, 'document', 'direct_upload', 'admin', 0, 'downloading', ?, ?, ?, ?, ?)").bind(intakeId, syntheticUpdateId, directFileId, fileName, mimeType, contentLength, now, now),
+    env.DB.prepare("INSERT INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), intakeId, now, now),
+    env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'direct_upload_started', ?, ?)").bind(intakeId, JSON.stringify({ fileName, byteSize: contentLength }), now),
+  ]);
+
+  let progress = 0;
+  const signature: number[] = [];
+  const countedBody = request.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      progress += chunk.byteLength;
+      if (progress > contentLength || progress > maxBytes) throw new Error("file_too_large");
+      if (signature.length < 5) signature.push(...Array.from(chunk.slice(0, 5 - signature.length)));
+      controller.enqueue(chunk);
+    },
+    flush() {
+      if (progress !== contentLength) throw new Error("file_size_mismatch");
+      if (String.fromCharCode(...signature) !== "%PDF-") throw new Error("invalid_pdf_header");
+    },
+  }));
+  try {
+    const fixedLengthStream = new FixedLengthStream(contentLength);
+    const abortController = new AbortController();
+    const uploadPromise = env.BUCKET.put(key, fixedLengthStream.readable, { httpMetadata: { contentType: "application/pdf" }, customMetadata: { intakeId, source: "direct_upload", visibility: "private" } });
+    const streamPromise = countedBody.pipeTo(fixedLengthStream.writable, { signal: abortController.signal });
+    let stored: R2Object | null;
+    try {
+      [stored] = await Promise.all([uploadPromise, streamPromise]);
+    } catch (error) {
+      abortController.abort();
+      await Promise.allSettled([uploadPromise, streamPromise]);
+      throw error;
+    }
+    if (!stored || stored.size !== contentLength) throw new Error("r2_storage_failed");
+    const storedAt = new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE intake_items SET status = 'draft', storage_key = ?, byte_size = ?, updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(key, stored.size, storedAt, intakeId),
+      env.DB.prepare("INSERT INTO book_drafts (id, intake_id, title, slug, summary, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, "မူကြမ်းအဖြစ် စစ်ဆေးရန် စာအုပ်ဖိုင်ကို တိုက်ရိုက်တင်ထားသည်။", JSON.stringify({ source: "direct_upload", assetKey: key, rightsStatus: "missing" }), storedAt, storedAt),
+      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'stored_in_r2', ?, ?)").bind(intakeId, JSON.stringify({ storageKey: key, byteSize: stored.size, source: "direct_upload" }), storedAt),
+    ]);
+    return json({ ok: true, status: "draft", intakeId, slug }, 201);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "direct_upload_failed";
+    const failedAt = new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare("UPDATE intake_items SET status = 'failed', failure_code = ?, failure_message = ?, updated_at = ? WHERE id = ?").bind(message, message, failedAt, intakeId),
+      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'processing_failed', ?, ?)").bind(intakeId, JSON.stringify({ code: message, source: "direct_upload" }), failedAt),
+    ]);
+    return json({ ok: false, status: "failed", intakeId, error: message }, 422);
+  }
+}
+
 async function retryIntake(request: Request, env: RuntimeEnv, intakeId: string): Promise<Response> {
   if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
   if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
@@ -540,6 +613,7 @@ export default {
     if (url.pathname === "/catalog") return catalog(request, runtimeEnv);
     if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv);
     if (url.pathname === "/admin/drafts") return adminDrafts(request, runtimeEnv);
+    if (url.pathname === "/admin/upload") return directUpload(request, runtimeEnv);
     if (url.pathname.startsWith("/admin/retry/")) return retryIntake(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/retry/".length)));
     if (url.pathname.startsWith("/admin/approve/")) return approve(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/approve/".length)));
     if (request.method === "POST" && url.pathname.startsWith("/admin/approve-publish/")) return approveAndPublish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/approve-publish/".length)));
