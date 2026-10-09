@@ -186,6 +186,13 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .theme-night .flip-more-panel { background: rgba(28,37,40,.98); color: #e8e1d5; }
 .flip-bookmark-picker, .flip-note-label { display: grid; gap: 5px; color: var(--muted); font-size: 9px; }
 .flip-bookmark-list, .flip-note { width: 100%; }
+.theme-night .flip-more-panel .flip-bookmark-picker,
+.theme-night .flip-more-panel .flip-note-label { color: #c8d1d3; }
+.theme-night .flip-more-panel .flip-search input,
+.theme-night .flip-more-panel .flip-note,
+.theme-night .flip-more-panel .flip-bookmark-list { border-color: rgba(232,225,213,.38); background: #253237; color: #f3ede3; }
+.theme-night .flip-more-panel input::placeholder { color: #aeb9bb; opacity: 1; }
+.theme-night .flip-more-panel option { background: #253237; color: #f3ede3; }
 .flip-margin-toggle { justify-self: start; min-height: 36px !important; border-radius: 8px !important; font-size: 10px !important; }
 .flip-recovery-actions { display: flex; align-items: center; gap: 8px; }
 .flip-recovery-actions button, .flip-recovery-actions a { border: 1px solid rgba(81,73,60,.22); border-radius: 999px; background: transparent; color: inherit; padding: 8px 12px; font-size: 10px; text-decoration: none; }
