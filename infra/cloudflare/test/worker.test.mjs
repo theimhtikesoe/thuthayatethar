@@ -36,10 +36,19 @@ function makeDb({ failFirstBatch = false } = {}) {
                 byte_size: values[9],
                 status: "received",
                 source_type: "telegram_media",
+                updated_at: values[11],
               };
               return { meta: { changes: 1 } };
             }
             return { meta: { changes: 0 } };
+          }
+          if (sql.includes("UPDATE intake_items SET status = 'downloading'")) {
+            const isReceived = state.intakeItem?.status === "received";
+            const isStale = state.intakeItem?.status === "downloading" && state.intakeItem.updated_at < values[2];
+            if (!isReceived && !isStale) return { meta: { changes: 0 } };
+            state.intakeItem.status = "downloading";
+            state.intakeItem.updated_at = values[0];
+            return { meta: { changes: 1 } };
           }
           if (sql.includes("UPDATE intake_items SET status = 'failed'")) {
             state.failureValues = values;
@@ -53,11 +62,21 @@ function makeDb({ failFirstBatch = false } = {}) {
             state.intakeItem.failure_message = null;
             return { meta: { changes: 1 } };
           }
-          if (sql.includes("'retry_queued'")) return { meta: { changes: 1 } };
+          if (sql.includes("'retry_queued'") || sql.includes("'processing_started'")) return { meta: { changes: 1 } };
           if (sql.includes("'processing_failed'")) return { meta: { changes: 1 } };
           throw new Error(`Unexpected D1 run query: ${sql}`);
         },
         async first() {
+          if (sql.includes("ORDER BY created_at ASC LIMIT 1")) {
+            const item = state.intakeItem;
+            if (!item) return null;
+            const staleBefore = values[0];
+            const activeCutoff = values[1];
+            const hasActiveDownload = item.status === "downloading" && item.updated_at >= activeCutoff;
+            if (hasActiveDownload) return null;
+            const eligible = item.status === "received" || (item.status === "downloading" && item.updated_at < staleBefore);
+            return eligible ? { id: item.id } : null;
+          }
           if (sql.includes("SELECT * FROM intake_items")) return state.intakeItem;
           if (sql.includes("FROM intake_items")) return state.intakeItem;
           return state.intakeId ? { id: state.intakeId } : null;
@@ -237,7 +256,6 @@ test("streams files larger than 20 MiB into private R2 and records their size", 
       async get() { return null; },
     },
   };
-  const pending = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     assert.equal(init?.headers?.["CF-Access-Client-Id"], "relay-client-id");
@@ -254,10 +272,10 @@ test("streams files larger than 20 MiB into private R2 and records their size", 
   };
 
   try {
-    const response = await worker.fetch(makeRequest(fileSize), env, { waitUntil(promise) { pending.push(promise); } });
+    const response = await worker.fetch(makeRequest(fileSize), env);
     assert.equal(response.status, 200);
     assert.equal((await response.json()).status, "accepted");
-    await Promise.all(pending);
+    await worker.scheduled({ cron: "* * * * *", scheduledTime: Date.now() }, env);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -295,7 +313,6 @@ test("admin can retry a failed Telegram PDF and restore it as a private draft", 
   const accepted = await worker.fetch(makeRequest(1024), env);
   const intakeId = (await accepted.json()).intakeId;
   DB.state.intakeItem.status = "failed";
-  const pending = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     if (String(input).includes("getFile?")) {
@@ -310,10 +327,10 @@ test("admin can retry a failed Telegram PDF and restore it as a private draft", 
     const response = await worker.fetch(new Request(`https://worker.test/admin/retry/${intakeId}`, {
       method: "POST",
       headers: { "x-admin-token": "admin-test-token" },
-    }), env, { waitUntil(promise) { pending.push(promise); } });
+    }), env);
     assert.equal(response.status, 202);
     assert.equal((await response.json()).status, "retrying");
-    await Promise.all(pending);
+    await worker.scheduled({ cron: "* * * * *", scheduledTime: Date.now() }, env);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -321,6 +338,48 @@ test("admin can retry a failed Telegram PDF and restore it as a private draft", 
   assert.equal(uploads.length, 1);
   assert.equal(DB.state.intakeItem.status, "draft");
   assert.ok(DB.state.statements.some((statement) => statement.sql.includes("INSERT OR IGNORE INTO book_drafts") && statement.sql.includes("'draft'")));
+});
+
+test("scheduled processor skips a live download and recovers a stale one", async () => {
+  const DB = makeDb();
+  const uploads = [];
+  const env = {
+    ...makeEnv(DB),
+    TELEGRAM_BOT_TOKEN: "test-token",
+    BUCKET: {
+      async put(key, body, options) {
+        const size = body instanceof ArrayBuffer ? body.byteLength : (await new Response(body).arrayBuffer()).byteLength;
+        uploads.push({ key, size, options });
+        return { key, size, httpEtag: "scheduled-etag" };
+      },
+      async get() { return null; },
+    },
+  };
+  await worker.fetch(makeRequest(1024), env);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    if (String(input).includes("getFile?")) {
+      return new Response(JSON.stringify({ ok: true, result: { file_path: "/documents/scheduled.pdf" } }), {
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(new Uint8Array(1024), { headers: { "content-length": "1024" } });
+  };
+
+  try {
+    DB.state.intakeItem.status = "downloading";
+    DB.state.intakeItem.updated_at = new Date().toISOString();
+    await worker.scheduled({ cron: "* * * * *", scheduledTime: Date.now() }, env);
+    assert.equal(uploads.length, 0, "an active lease must not start a second transfer");
+
+    DB.state.intakeItem.updated_at = new Date(Date.now() - 21 * 60 * 1000).toISOString();
+    await worker.scheduled({ cron: "* * * * *", scheduledTime: Date.now() }, env);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(uploads.length, 1);
+  assert.equal(DB.state.intakeItem.status, "draft");
 });
 
 test("does not send a streamed upload to R2 when the total file size is unknown", async () => {
@@ -335,7 +394,6 @@ test("does not send a streamed upload to R2 when the total file size is unknown"
       async get() { return null; },
     },
   };
-  const pending = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     if (String(input).includes("getFile?")) {
@@ -347,8 +405,8 @@ test("does not send a streamed upload to R2 when the total file size is unknown"
   };
 
   try {
-    await worker.fetch(makeRequest(0), env, { waitUntil(promise) { pending.push(promise); } });
-    await Promise.all(pending);
+    await worker.fetch(makeRequest(0), env);
+    await worker.scheduled({ cron: "* * * * *", scheduledTime: Date.now() }, env);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -381,7 +439,6 @@ test("fails a stream that exceeds MAX_FILE_BYTES even without a content-length h
       async get() { return null; },
     },
   };
-  const pending = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     if (String(input).includes("getFile?")) {
@@ -393,8 +450,8 @@ test("fails a stream that exceeds MAX_FILE_BYTES even without a content-length h
   };
 
   try {
-    await worker.fetch(makeRequest(1), env, { waitUntil(promise) { pending.push(promise); } });
-    await Promise.all(pending);
+    await worker.fetch(makeRequest(1), env);
+    await worker.scheduled({ cron: "* * * * *", scheduledTime: Date.now() }, env);
   } finally {
     globalThis.fetch = originalFetch;
   }
