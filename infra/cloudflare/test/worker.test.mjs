@@ -353,6 +353,7 @@ test("serves a published PDF inline from private object storage", async () => {
   };
   const env = {
     ...makeEnv(DB),
+    CATALOG_ORIGIN: "https://library.example",
     BUCKET: { async put() { return null; }, async get(key) {
       assert.equal(key, "originals/intake/book.pdf");
       return { body: new Response("%PDF-1.7 test").body, size: 13, httpEtag: "abc123" };
@@ -362,5 +363,48 @@ test("serves a published PDF inline from private object storage", async () => {
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "application/pdf");
   assert.equal(response.headers.get("content-disposition"), "inline");
+  assert.equal(response.headers.get("access-control-allow-origin"), "https://library.example");
+  assert.match(response.headers.get("access-control-expose-headers"), /Content-Range/);
+  assert.equal(response.headers.get("etag"), '"abc123"');
   assert.equal(await response.text(), "%PDF-1.7 test");
+});
+
+test("supports cross-origin PDF range requests from PDF.js", async () => {
+  const DB = {
+    prepare() {
+      return {
+        bind() { return this; },
+        async first() { return { storage_key: "originals/intake/book.pdf", byte_size: 13 }; },
+      };
+    },
+  };
+  let requestedRange;
+  const env = {
+    ...makeEnv(DB),
+    CATALOG_ORIGIN: "https://library.example",
+    BUCKET: { async put() { return null; }, async get(_key, options) {
+      requestedRange = options?.range;
+      const bytes = new TextEncoder().encode("%PDF-1.7 test").slice(options?.range?.offset ?? 0, (options?.range?.offset ?? 0) + (options?.range?.length ?? 13));
+      return { body: new Response(bytes).body, size: bytes.byteLength, httpEtag: '"abc123"' };
+    } },
+  };
+  const url = "https://worker.test/book/book-123/pdf";
+  const preflight = await worker.fetch(new Request(url, { method: "OPTIONS", headers: {
+    Origin: "https://library.example",
+    "Access-Control-Request-Method": "GET",
+    "Access-Control-Request-Headers": "range, if-range",
+  } }), env);
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-origin"), "https://library.example");
+  assert.match(preflight.headers.get("access-control-allow-headers"), /If-Range/);
+
+  const response = await worker.fetch(new Request(url, { headers: {
+    Origin: "https://library.example",
+    Range: "bytes=0-4",
+  } }), env);
+  assert.equal(response.status, 206);
+  assert.deepEqual(requestedRange, { offset: 0, length: 5 });
+  assert.equal(response.headers.get("content-range"), "bytes 0-4/13");
+  assert.equal(response.headers.get("access-control-allow-origin"), "https://library.example");
+  assert.equal(await response.text(), "%PDF-");
 });

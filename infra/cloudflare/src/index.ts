@@ -376,6 +376,28 @@ async function deleteBook(request: Request, env: RuntimeEnv, slug: string): Prom
   return json({ ok: true, status: "deleted", slug, deletedAt: now });
 }
 
+function publicAssetCorsHeaders(env: RuntimeEnv): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": env.CATALOG_ORIGIN ?? "*",
+    "Access-Control-Expose-Headers": "Accept-Ranges, Content-Length, Content-Range, Content-Disposition, ETag",
+  };
+}
+
+function httpEtag(value: string): string {
+  const tag = value.trim();
+  if ((tag.startsWith('"') || tag.startsWith('W/"')) && tag.endsWith('"')) return tag;
+  return `"${tag.replace(/["\r\n]/g, "")}"`;
+}
+
+function publicAssetPreflight(env: RuntimeEnv): Response {
+  return new Response(null, { status: 204, headers: {
+    ...publicAssetCorsHeaders(env),
+    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+    "Access-Control-Allow-Headers": "Range, If-Range, If-None-Match, If-Modified-Since",
+    "Access-Control-Max-Age": "86400",
+  } });
+}
+
 async function bookPdf(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
   if (!env.BUCKET) return json({ ok: false, error: "storage_unavailable" }, 503);
   const book = await env.DB.prepare("SELECT i.storage_key, i.byte_size FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? AND b.publication_status = 'published' AND i.status = 'published' LIMIT 1").bind(slug).first<{ storage_key: string | null; byte_size: number | null }>();
@@ -398,7 +420,15 @@ async function bookPdf(request: Request, env: RuntimeEnv, slug: string): Promise
   }
   const object = await env.BUCKET.get(book.storage_key, range ? { range } : undefined);
   if (!object) return json({ ok: false, error: "file_not_found" }, 404);
-  const headers: Record<string, string> = { "Content-Type": object.httpMetadata?.contentType ?? "application/pdf", "Content-Disposition": "inline", "Cache-Control": "public, max-age=300", "Accept-Ranges": "bytes", "Content-Length": String(object.size), ...(env.CATALOG_ORIGIN ? { "Access-Control-Allow-Origin": env.CATALOG_ORIGIN } : {}) };
+  const headers: Record<string, string> = {
+    "Content-Type": object.httpMetadata?.contentType ?? "application/pdf",
+    "Content-Disposition": "inline",
+    "Cache-Control": "public, max-age=300",
+    "Accept-Ranges": "bytes",
+    "Content-Length": String(object.size),
+    ETag: httpEtag(object.httpEtag),
+    ...publicAssetCorsHeaders(env),
+  };
   if (contentRange) headers["Content-Range"] = contentRange;
   return new Response(request.method === "HEAD" ? null : object.body, { status: contentRange ? 206 : 200, headers });
 }
@@ -409,7 +439,13 @@ async function bookCover(request: Request, env: RuntimeEnv, slug: string): Promi
   if (!book) return json({ ok: false, error: "book_not_published" }, 404);
   const object = await env.BUCKET.get(`covers/${book.id}/cover.jpg`);
   if (!object) return json({ ok: false, error: "cover_not_found" }, 404);
-  return new Response(request.method === "HEAD" ? null : object.body, { headers: { "Content-Type": "image/jpeg", "Cache-Control": "public, max-age=3600", "Content-Length": String(object.size), ...(env.CATALOG_ORIGIN ? { "Access-Control-Allow-Origin": env.CATALOG_ORIGIN } : {}) } });
+  return new Response(request.method === "HEAD" ? null : object.body, { headers: {
+    "Content-Type": object.httpMetadata?.contentType ?? "image/jpeg",
+    "Cache-Control": "public, max-age=3600",
+    "Content-Length": String(object.size),
+    ETag: httpEtag(object.httpEtag),
+    ...publicAssetCorsHeaders(env),
+  } });
 }
 
 async function publish(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
@@ -432,6 +468,7 @@ export default {
     const runtimeEnv = await resolveSecrets(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "telegram-ingestion", storage: Boolean(runtimeEnv.BUCKET), processor: Boolean(runtimeEnv.TELEGRAM_BOT_TOKEN) });
+    if (request.method === "OPTIONS" && url.pathname.startsWith("/book/") && (url.pathname.endsWith("/pdf") || url.pathname.endsWith("/cover"))) return publicAssetPreflight(runtimeEnv);
     if (url.pathname === "/catalog") return catalog(request, runtimeEnv);
     if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv, ctx);
     if (url.pathname === "/admin/drafts") return adminDrafts(request, runtimeEnv);
@@ -439,8 +476,8 @@ export default {
     if (request.method === "PUT" && url.pathname.startsWith("/admin/update/")) return updateBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/update/".length)));
     if (request.method === "DELETE" && url.pathname.startsWith("/admin/delete/")) return deleteBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/delete/".length)));
     if (request.method === "POST" && url.pathname.startsWith("/admin/publish/")) return publish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/publish/".length)));
-    if (request.method === "GET" && url.pathname.startsWith("/book/") && url.pathname.endsWith("/cover")) return bookCover(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -6)));
-    if (request.method === "GET" && url.pathname.startsWith("/book/") && url.pathname.endsWith("/pdf")) return bookPdf(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -4)));
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/book/") && url.pathname.endsWith("/cover")) return bookCover(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -6)));
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/book/") && url.pathname.endsWith("/pdf")) return bookPdf(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -4)));
     return json({ ok: false, error: "not_found" }, 404);
   },
 };
