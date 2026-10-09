@@ -957,9 +957,12 @@ test("admin delete removes the book, intake and stored cover and returns success
     async batch(batch) { statements.push(...batch.map(({ sql }) => sql)); return []; },
   };
   const env = { ...makeEnv(DB), BUCKET: { async delete(key) { deletedKeys.push(key); } } };
-  const response = await worker.fetch(new Request("https://worker.test/admin/delete/winsome-book", { method: "DELETE", headers: { "x-admin-token": "admin-test-token" } }), env);
+  const legacySlug = "သီချင်း-၁၂၃-abcdef12";
+  const response = await worker.fetch(new Request(`https://worker.test/admin/delete/${encodeURIComponent(legacySlug)}`, { method: "DELETE", headers: { "x-admin-token": "admin-test-token" } }), env);
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).status, "deleted");
+  const payload = await response.json();
+  assert.equal(payload.status, "deleted");
+  assert.equal(payload.slug, legacySlug);
   assert.deepEqual(deletedKeys, ["covers/intake-1/cover.jpg"]);
   assert.ok(statements.some((sql) => sql.includes("DELETE FROM book_drafts")));
   assert.ok(statements.some((sql) => sql.includes("DELETE FROM intake_items")));
@@ -1091,6 +1094,7 @@ test("a Wattpad story URL with an encoded Burmese slug is accepted and named", a
   assert.equal(book.metadata.public.externalUrl, storyLink);
   assert.match(book.title, /တိမ်တိုက်လင်းညို/);
   assert.notEqual(book.title, "Wattpad စာအုပ်");
+  assert.match(book.slug, /^[a-z0-9][a-z0-9-]*$/);
 });
 
 test("every SoundCloud link in one message becomes its own audiobook and a replay creates nothing new (F8)", async () => {

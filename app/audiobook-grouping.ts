@@ -23,77 +23,88 @@ function normalizeTitleDigits(value: string): string {
   return value.normalize("NFKC").replace(/[၀-၉]/g, (digit) => String(digit.charCodeAt(0) - 0x1040));
 }
 
-function chapterNumberFromTitle(title: string): number | null {
-  const normalized = normalizeTitleDigits(title).toLowerCase();
-  const match = normalized.match(/\b(?:chapter|episode|part)\s*[-_:]?\s*(\d+)/i)
-    ?? normalized.match(/(?:အခန်း|အပိုင်း)\s*[-_:]?\s*(\d+)/)
-    ?? normalized.match(/(?:^|[\s._-])(\d+)(?:\s*[-–—]\s*\d+)?\s*$/);
-  if (!match) return null;
-  const chapter = Number(match[1]);
-  return Number.isSafeInteger(chapter) ? chapter : null;
-}
+type NumberedChapter = { baseTitle: string; number: number };
 
-function chapterSeriesTitle(title: string): string {
-  return normalizeTitleDigits(title)
-    .replace(/\b(?:chapter|episode|part)\s*[-_:]?\s*\d+(?:\s*[-–—]\s*\d+)?\b/gi, " ")
-    .replace(/(?:အခန်း|အပိုင်း)\s*[-_:]?\s*\d+(?:\s*[-–—]\s*\d+)?/g, " ")
-    .replace(/[\s._-]*\d+(?:\s*[-–—]\s*\d+)?\s*$/, "")
-    .replace(/[\s._-]+/g, " ")
-    .trim() || title;
-}
-
-function normalizedImageKey(value: string): string {
-  try {
-    const url = new URL(value, "https://thuthayatethar.invalid");
-    url.hash = "";
-    url.search = "";
-    if (/(^|\.)sndcdn\.com$/i.test(url.hostname)) {
-      return `soundcloud-artwork:${url.pathname.replace(/-(?:large|t\d+x\d+|crop|badge|tiny|original)(?=\.[^.]+$)/i, "").toLowerCase()}`;
-    }
-    return url.href.toLowerCase();
-  } catch {
-    return value.trim().split(/[?#]/, 1)[0].toLowerCase();
+function numberedChapter(title: string): NumberedChapter | null {
+  const normalized = normalizeTitleDigits(title).trim();
+  const marked = normalized.match(/\bchapter\s*[-_:]?\s*(\d+)\b/i)
+    ?? normalized.match(/အခန်း\s*[-_:]?\s*(\d+)/);
+  if (marked) {
+    const number = Number(marked[1]);
+    const baseTitle = normalized
+      .replace(/\bchapter\s*[-_:]?\s*\d+(?:\s*[-–—]\s*\d+)?\b/gi, " ")
+      .replace(/အခန်း\s*[-_:]?\s*\d+(?:\s*[-–—]\s*\d+)?/g, " ")
+      .replace(/[\s._-]+/g, " ")
+      .trim();
+    return Number.isSafeInteger(number) && baseTitle ? { baseTitle, number } : null;
   }
+
+  // Labeled parts/episodes are recordings, not chapters to merge into one card.
+  if (/\b(?:part|episode)\s*[-_:]?\s*\d+\b/i.test(normalized) || /အပိုင်း\s*[-_:]?\s*\d+/.test(normalized)) return null;
+
+  // Some long-running chapter series carry only a trailing number (for example
+  // chapters 20–88). Short numbered audio parts such as "... 6" and "... 7"
+  // remain distinct recordings rather than becoming one selector.
+  const trailing = normalized.match(/(?:^|[\s._-])(\d+)\s*$/);
+  if (!trailing) return null;
+  const number = Number(trailing[1]);
+  const baseTitle = normalized.slice(0, trailing.index).replace(/[\s._-]+$/g, "").replace(/[\s._-]+/g, " ").trim();
+  return Number.isSafeInteger(number) && number >= 20 && baseTitle ? { baseTitle, number } : null;
 }
 
-function isSoundCloudCoverProxy(value?: string): boolean {
-  if (!value) return false;
-  try { return new URL(value, "https://thuthayatethar.invalid").pathname === "/api/soundcloud/cover"; }
-  catch { return false; }
+function normalizedIdentity(value: string): string {
+  return normalizeTitleDigits(value).normalize("NFKC").replace(/[’]/g, "'").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-export function groupAudiobooks<T extends AudiobookShelfBook>(
-  books: T[],
-  resolvedCoverKeys: Record<string, string> = {},
-): AudiobookCoverGroup<T>[] {
-  type IndexedGroup = { firstIndex: number; books: T[]; image?: string };
-  const groups = new Map<string, IndexedGroup>();
+export function groupAudiobooks<T extends AudiobookShelfBook>(books: T[]): AudiobookCoverGroup<T>[] {
+  type ChapterEntry = { book: T; index: number; number: number };
+  const chapterGroups = new Map<string, ChapterEntry[]>();
+  const grouped: Array<{ firstIndex: number; group: AudiobookCoverGroup<T> }> = [];
 
   books.forEach((book, index) => {
-    const explicitImage = book.coverImage?.trim();
-    const resolvedCoverKey = resolvedCoverKeys[recordKey(book)];
-    const imageKey = resolvedCoverKey
-      ? `soundcloud:${normalizedImageKey(resolvedCoverKey)}`
-      : explicitImage && !isSoundCloudCoverProxy(explicitImage)
-        ? `image:${normalizedImageKey(explicitImage)}`
-        : `track:${recordKey(book)}`;
-    const group = groups.get(imageKey);
-    if (group) group.books.push(book);
-    else groups.set(imageKey, { firstIndex: index, books: [book], image: explicitImage || undefined });
+    const chapter = numberedChapter(book.title);
+    if (!chapter) {
+      // Shared artwork is not enough to identify one audiobook: compilations
+      // often reuse a cover while each numbered track must remain playable.
+      grouped.push({
+        firstIndex: index,
+        group: { key: `track:${recordKey(book)}`, title: book.title, coverImage: book.coverImage, books: [book] },
+      });
+      return;
+    }
+    const author = normalizedIdentity(book.author ?? "");
+    const key = `${normalizedIdentity(chapter.baseTitle)}\u0000${author}`;
+    const entries = chapterGroups.get(key);
+    const entry = { book, index, number: chapter.number };
+    if (entries) entries.push(entry);
+    else chapterGroups.set(key, [entry]);
   });
 
-  return Array.from(groups.entries())
-    .sort((left, right) => left[1].firstIndex - right[1].firstIndex)
-    .map(([key, group]) => {
-      const entries = group.books.map((book, index) => ({ book, index, chapter: chapterNumberFromTitle(book.title) }));
-      if (entries.length > 1 && entries.every((entry) => entry.chapter !== null)) {
-        entries.sort((left, right) => left.chapter! - right.chapter! || left.index - right.index);
-      }
-      const sortedBooks = entries.map((entry) => entry.book);
-      const baseTitle = chapterSeriesTitle(sortedBooks[0].title);
-      const title = sortedBooks.every((book) => chapterSeriesTitle(book.title).normalize("NFKC").toLowerCase() === baseTitle.normalize("NFKC").toLowerCase())
-        ? baseTitle
-        : sortedBooks[0].title;
-      return { key, title, coverImage: group.image, books: sortedBooks };
+  chapterGroups.forEach((entries) => {
+    const uniqueNumbers = new Set(entries.map((entry) => entry.number));
+    if (entries.length < 2 || uniqueNumbers.size !== entries.length) {
+      // Duplicate records for one chapter remain separately manageable cards.
+      entries.forEach((entry) => {
+        grouped.push({
+          firstIndex: entry.index,
+          group: { key: `track:${recordKey(entry.book)}`, title: entry.book.title, coverImage: entry.book.coverImage, books: [entry.book] },
+        });
+      });
+      return;
+    }
+    const ordered = entries.slice().sort((left, right) => left.number - right.number || left.index - right.index);
+    const first = ordered[0].book;
+    const chapter = numberedChapter(first.title)!;
+    grouped.push({
+      firstIndex: Math.min(...entries.map((entry) => entry.index)),
+      group: {
+        key: `chapters:${normalizedIdentity(chapter.baseTitle)}:${normalizedIdentity(first.author ?? "")}`,
+        title: chapter.baseTitle,
+        coverImage: first.coverImage,
+        books: ordered.map((entry) => entry.book),
+      },
     });
+  });
+
+  return grouped.sort((left, right) => left.firstIndex - right.firstIndex).map(({ group }) => group);
 }

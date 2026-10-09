@@ -99,31 +99,7 @@ function AudiobookCover({ book }: { book: Audiobook }) {
 }
 
 export function AudiobookShelf({ books, onPlay }: { books: Audiobook[]; onPlay: (book: Audiobook) => void }) {
-  const [resolvedCoverKeys, setResolvedCoverKeys] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    let active = true;
-    const soundCloudCoverBooks = books.filter((book) => book.soundcloud_url && book.coverImage?.includes("/api/soundcloud/cover?"));
-    if (!soundCloudCoverBooks.length) {
-      setResolvedCoverKeys({});
-      return () => { active = false; };
-    }
-    void Promise.all(soundCloudCoverBooks.map(async (book) => {
-      try {
-        const url = `/api/soundcloud/cover?url=${encodeURIComponent(book.soundcloud_url!)}&metadata=1`;
-        const response = await fetch(url, { cache: "force-cache" });
-        if (!response.ok) return null;
-        const payload = await response.json() as { coverKey?: string };
-        return payload.coverKey ? [String(book.slug ?? book.id), payload.coverKey] as const : null;
-      } catch { return null; }
-    })).then((entries) => {
-      if (!active) return;
-      setResolvedCoverKeys(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => entry !== null)));
-    });
-    return () => { active = false; };
-  }, [books]);
-
-  const groups = useMemo(() => groupAudiobooks(books, resolvedCoverKeys), [books, resolvedCoverKeys]);
+  const groups = useMemo(() => groupAudiobooks(books), [books]);
   if (!books.length) return null;
   return <section className="audiobook-section" aria-label="အသံစာအုပ်များ">
     <div className="audiobook-section-heading"><div><p className="eyebrow">နားထောင်ရန်</p><h2>အသံစာအုပ်များ</h2></div><span>{groups.length} အုပ် · {books.length} ခေါင်းစဉ်</span></div>
