@@ -19,6 +19,13 @@
 6. `MAX_FILE_BYTES` хязгаараас хэтэрсэн, таталт/validation/R2 хадгалалт амжилтгүй болсон файл public болохгүй; `failed` хэвээр үлдэж admin retry хийх шаардлагатай. Example/default limit нь 160 MiB; энэ нь хязгааргүй хэмжээний файл гэсэн үг биш.
 7. Worker structured logs: `telegram_file_received`, `queue_candidate_found`, `queue_claimed`, `file_processing_started`, `telegram_pdf_published`, `file_processing_failed`, `cron_tick_started`/`cron_tick_finished`. Log-д token, Telegram file ID эсвэл filename бичихгүй.
 
+## SoundCloud channel links
+
+- When an allowed Telegram group sends a public SoundCloud profile URL, `/tracks` URL or `/popular-tracks` URL, the Worker fetches the page and creates one `intake_items` row, `book_drafts` row and pending `rights_records` row for each discovered track (maximum 50 per message). Track title, uploader label and canonical permalink are saved. Repeated imports deduplicate by the SoundCloud permalink, including a track that was previously submitted directly.
+- These records are drafts and require the normal admin rights review before publication. A successful webhook response reports the number created and the number already present. Fetch failures, empty pages and unsupported HTML return an error response and are logged; check Worker logs before retrying the message.
+- The page fetch is limited to 8 seconds and 1 MiB and will not follow a redirect away from HTTPS SoundCloud. This is a public-page HTML extractor, not the SoundCloud API; markup changes can break extraction. The official API is a more durable option but requires SoundCloud OAuth application credentials.
+- Playlist URLs such as `/user/sets/playlist-name` are not expanded in this version. They continue through the existing single-link draft flow, so they should be reviewed as one embedded playlist. For a future playlist importer, decide whether to preserve the set as one player item or split it into ordered track drafts with a stored playlist relationship.
+
 ## Admin recovery
 
 - Authenticated admin interface: `https://thuthayatethar.rz99systems.com/admin`.
