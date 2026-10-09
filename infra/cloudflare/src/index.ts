@@ -369,7 +369,7 @@ async function saveLinkIntake(env: RuntimeEnv, input: LinkIntakeInput): Promise<
   const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_type, source_url, source_chat_id, source_message_id, status, original_filename, mime_type, created_at, updated_at) VALUES (?, ?, ?, 'document', '${input.sourceType}', ?, ?, ?, '${readyStatus}', ?, '${mimeType}', ?, ?)`).bind(intakeId, input.updateId, input.linkKey, input.url, input.chatId, input.messageId, input.title, now, now).run();
   const persisted = await env.DB.prepare("SELECT id FROM intake_items WHERE telegram_file_id = ? LIMIT 1").bind(input.linkKey).first<{ id: string }>();
   if (!persisted?.id) throw new Error("link_intake_not_persisted");
-  const slugBase = input.title.toLowerCase().replace(/[^a-z0-9\u1000-\u109f]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || input.slugFallback;
+  const slugBase = input.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || input.slugFallback;
   const slug = `${slugBase}-${persisted.id.slice(0, 8)}`;
   await env.DB.batch([
     env.DB.prepare("INSERT OR IGNORE INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), persisted.id, now, now),

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { isValidAdminSlug } from "../slug";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +14,10 @@ export async function PUT(request: Request) {
   if (!token) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   let body: { slug?: string; title?: string; author?: string; category?: string; year?: string; summary?: string; coverImage?: string; soundcloud_url?: string } = {};
   try { body = await request.json(); } catch { return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 }); }
-  if (!body.slug || !/^[a-z0-9][a-z0-9-]*$/.test(body.slug)) return NextResponse.json({ ok: false, error: "invalid_slug" }, { status: 400 });
+  const slug = body.slug;
+  if (!isValidAdminSlug(slug)) return NextResponse.json({ ok: false, error: "invalid_slug" }, { status: 400 });
   try {
-    const response = await fetch(`${workerBase()}/admin/update/${encodeURIComponent(body.slug)}`, {
+    const response = await fetch(`${workerBase()}/admin/update/${encodeURIComponent(slug)}`, {
       method: "PUT",
       headers: { "content-type": "application/json", "x-admin-token": token },
       body: JSON.stringify(body),
