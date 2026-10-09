@@ -52,6 +52,10 @@ function chapterGroupKey(title: string): string {
   return key;
 }
 
+function isTianGuanCiFuTitle(title: string): boolean {
+  return /^tian\s+guan\s+ci\s+fu(?:\s|$)/i.test(chapterGroupKey(title));
+}
+
 function isKnownSeriesWithoutChapterNumber(title: string): boolean {
   return ["tian guan ci fu", "heaven official's blessing", "heaven officials blessing"].includes(normalizedTitle(title).replace(/[’]/g, "'"));
 }
@@ -85,7 +89,12 @@ export function groupBooks<T extends ChapterBook>(books: T[]): ChapterGroup<T>[]
       return;
     }
     const author = book.author?.normalize("NFKC").toLowerCase().trim() ?? "";
-    const key = `${chapterGroupKey(book.title)}\u0000${author}`;
+    // Chapter uploads in the production catalog do not consistently carry
+    // the same author metadata. The title is the canonical identity for this
+    // known series, so do not split its chapter picker by author.
+    const key = isTianGuanCiFuTitle(book.title)
+      ? chapterGroupKey(book.title)
+      : `${chapterGroupKey(book.title)}\u0000${author}`;
     const items = candidates.get(key);
     if (items) items.push({ book, index, chapter });
     else candidates.set(key, [{ book, index, chapter }]);

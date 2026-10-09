@@ -27,20 +27,17 @@ type NumberedChapter = { baseTitle: string; number: number };
 
 function numberedChapter(title: string): NumberedChapter | null {
   const normalized = normalizeTitleDigits(title).trim();
-  const marked = normalized.match(/\bchapter\s*[-_:]?\s*(\d+)\b/i)
-    ?? normalized.match(/အခန်း\s*[-_:]?\s*(\d+)/);
+  const marked = normalized.match(/\b(?:chapter|part|episode)\s*[-_:()]?\s*(\d+)\b/i)
+    ?? normalized.match(/(?:အခန်း|အပိုင်း)\s*[-_:()]?\s*(\d+)/);
   if (marked) {
     const number = Number(marked[1]);
     const baseTitle = normalized
-      .replace(/\bchapter\s*[-_:]?\s*\d+(?:\s*[-–—]\s*\d+)?\b/gi, " ")
-      .replace(/အခန်း\s*[-_:]?\s*\d+(?:\s*[-–—]\s*\d+)?/g, " ")
+      .replace(/\b(?:chapter|part|episode)\s*[-_:()]?\s*\d+(?:\s*[-–—]\s*\d+)?\b/gi, " ")
+      .replace(/(?:အခန်း|အပိုင်း)\s*[-_:()]?\s*\d+(?:\s*[-–—]\s*\d+)?/g, " ")
       .replace(/[\s._-]+/g, " ")
       .trim();
     return Number.isSafeInteger(number) && baseTitle ? { baseTitle, number } : null;
   }
-
-  // Labeled parts/episodes are recordings, not chapters to merge into one card.
-  if (/\b(?:part|episode)\s*[-_:]?\s*\d+\b/i.test(normalized) || /အပိုင်း\s*[-_:]?\s*\d+/.test(normalized)) return null;
 
   // Some long-running chapter series carry only a trailing number (for example
   // chapters 20–88). Short numbered audio parts such as "... 6" and "... 7"
@@ -73,7 +70,11 @@ export function groupAudiobooks<T extends AudiobookShelfBook>(books: T[]): Audio
       return;
     }
     const author = normalizedIdentity(book.author ?? "");
-    const key = `${normalizedIdentity(chapter.baseTitle)}\u0000${author}`;
+    const baseTitle = normalizedIdentity(chapter.baseTitle);
+    const isTianGuanCiFu = /^tian\s+guan\s+ci\s+fu(?:\s|$)/i.test(baseTitle);
+    // Metadata authors are inconsistent across uploads of the same Tian Guan
+    // Ci Fu series, so title identity must win for this known series.
+    const key = isTianGuanCiFu ? baseTitle : `${baseTitle}\u0000${author}`;
     const entries = chapterGroups.get(key);
     const entry = { book, index, number: chapter.number };
     if (entries) entries.push(entry);

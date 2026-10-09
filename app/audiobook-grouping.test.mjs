@@ -35,12 +35,24 @@ test("numbered audiobook parts 6 and 7 stay separate even when they reuse one co
   assert.deepEqual(groups.map((group) => group.books[0].id), [1, 2]);
 });
 
-test("explicit part numbers stay separate even when the number is above 20", () => {
+test("chapter, part, and episode labels for one audiobook share one selector", () => {
   const groups = groupAudiobooks([
     book(1, "Story Part 20", "/covers/shared.jpg"),
-    book(2, "Story Part 21", "/covers/shared.jpg"),
+    book(2, "Story chapter 21", "/covers/shared.jpg"),
+    book(3, "Story အပိုင်း 22", "/covers/shared.jpg"),
+    book(4, "Story Episode 23", "/covers/shared.jpg"),
   ]);
-  assert.equal(groups.length, 2);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0].books.map(({ id }) => id), [1, 2, 3, 4]);
+});
+
+test("Tian Guan Ci Fu audio chapters stay together when author metadata differs", () => {
+  const groups = groupAudiobooks([
+    book(1, "Tian guan ci fu chapter 20", "/covers/one.jpg", { author: "" }),
+    book(2, "Tian guan ci fu part 21", "/covers/two.jpg", { author: "Unknown" }),
+  ]);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0].books.map(({ id }) => id), [1, 2]);
 });
 
 test("identical covers do not merge unrelated or unnumbered recordings", () => {

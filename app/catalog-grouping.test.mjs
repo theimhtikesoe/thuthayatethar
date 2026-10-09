@@ -58,6 +58,16 @@ test("the production Tian Guan Ci Fu chapters 20 through 88 render as one picker
   assert.equal(groupTitle(groups[0]), "Tian guan ci fu");
 });
 
+test("Tian Guan Ci Fu chapters stay together when uploaded author metadata differs", () => {
+  const groups = groupBooks([
+    book(1, "Tian guan ci fu chapter 20", ""),
+    book(2, "Tian guan ci fu chapter 21", "Mo Xiang Tong Xiu"),
+    book(3, "Tian guan ci fu chapter 22", "မသိရသေးသော စာရေးသူ"),
+  ]);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0].chapters.map(({ id }) => id), [1, 2, 3]);
+});
+
 test("Myanmar chapter numerals are recognized and sorted numerically", () => {
   assert.equal(chapterNumberFromTitle("ဇာတ်လမ်း အခန်း ၁၂"), 12);
   const groups = groupBooks([
