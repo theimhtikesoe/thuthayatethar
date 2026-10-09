@@ -31,6 +31,7 @@ export interface Env {
   FILE_RELAY_ACCESS_ID?: string | SecretStoreBinding;
   FILE_RELAY_ACCESS_SECRET?: string | SecretStoreBinding;
   MAX_FILE_BYTES?: string;
+  AUTO_PUBLISH_FROM?: string;
   CATALOG_ORIGIN?: string | SecretStoreBinding;
   ADMIN_TOKEN?: string | SecretStoreBinding;
   TELEGRAM_WEBHOOK_SECRET_STORE?: SecretStoreBinding;
@@ -52,7 +53,9 @@ type JsonRecord = Record<string, unknown>;
 type MediaType = "document" | "photo";
 const MAX_UPDATE_BYTES = 256 * 1024;
 const DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024;
-const AUTO_PUBLISH_CUTOFF = new Date().toISOString();
+// Telegram PDFs received before this instant stay private drafts. Override with the AUTO_PUBLISH_FROM var.
+// This must be a fixed value: a module-scope `new Date()` changes with every isolate start.
+const DEFAULT_AUTO_PUBLISH_FROM = "2026-10-09T08:06:29.995077Z"; // first production auto-publish Worker deployment; 2026-10-09 15:06 UTC+7
 const MAX_SOUNDCLOUD_PAGE_BYTES = 1024 * 1024;
 const MAX_SOUNDCLOUD_CHANNEL_TRACKS = 50;
 const SOUNDCLOUD_FETCH_TIMEOUT_MS = 8_000;
@@ -155,25 +158,29 @@ function normalizeSoundCloudUrl(value: unknown): string | null {
   } catch { return null; }
 }
 
-function soundcloudUrlFor(message: JsonRecord): string | null {
+const MAX_SOUNDCLOUD_LINKS_PER_MESSAGE = 10;
+
+function soundcloudUrlsFor(message: JsonRecord): string[] {
   const values: string[] = [];
   for (const key of ["text", "caption"]) if (typeof message[key] === "string") values.push(message[key] as string);
   for (const key of ["entities", "caption_entities"]) {
     const entities = message[key];
     if (Array.isArray(entities)) for (const entity of entities) if (isRecord(entity) && typeof entity.url === "string") values.push(entity.url);
   }
+  const urls: string[] = [];
   for (const value of values) {
     const candidates = value.match(/https?:\/\/[^\s<>]+/gi) ?? [];
     for (const candidate of candidates) {
       const normalized = normalizeSoundCloudUrl(candidate.replace(/[),.!?;:\]]+$/g, ""));
-      if (normalized) return normalized;
+      if (normalized && !urls.includes(normalized)) urls.push(normalized);
+      if (urls.length >= MAX_SOUNDCLOUD_LINKS_PER_MESSAGE) return urls;
     }
   }
-  return null;
+  return urls;
 }
 
-function soundcloudMetadata(message: JsonRecord, soundcloudUrl: string): { title: string; author: string | null } {
-  const text = [message.text, message.caption].find((value) => typeof value === "string") as string | undefined;
+function soundcloudMetadata(message: JsonRecord, soundcloudUrl: string, useCaption = true): { title: string; author: string | null } {
+  const text = useCaption ? [message.text, message.caption].find((value) => typeof value === "string") as string | undefined : undefined;
   const clean = (text ?? "").replace(/https?:\/\/[^\s<>]+/gi, " ").replace(/\s+/g, " ").trim();
   const match = clean.match(/(.+?)\s+by\s+(.+)/i);
   let trackTitle = "";
@@ -321,28 +328,56 @@ function soundCloudTrackUpdateId(trackUrl: string): number {
   return -(safeHash || 1);
 }
 
+type LinkIntakeInput = {
+  sourceType: "wattpad_link" | "soundcloud_link";
+  eventType: "wattpad_link_received" | "soundcloud_link_received" | "soundcloud_track_received";
+  url: string;
+  linkKey: string;
+  updateId: number;
+  chatId: string;
+  messageId: number;
+  title: string;
+  author: string | null;
+  summary: string;
+  category: string | null;
+  soundcloudUrl: string | null;
+  slugFallback: string;
+  metadata: JsonRecord;
+  eventDetail: JsonRecord;
+};
+
+// Every statement is idempotent, so replaying an update also repairs rows left behind by an interrupted batch.
+async function saveLinkIntake(env: RuntimeEnv, input: LinkIntakeInput): Promise<{ intakeId: string; created: boolean }> {
+  const now = new Date().toISOString();
+  const intakeId = crypto.randomUUID();
+  const mimeType = input.sourceType === "wattpad_link" ? "text/html" : "text/uri-list";
+  const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_type, source_url, source_chat_id, source_message_id, status, original_filename, mime_type, created_at, updated_at) VALUES (?, ?, ?, 'document', '${input.sourceType}', ?, ?, ?, 'draft', ?, '${mimeType}', ?, ?)`).bind(intakeId, input.updateId, input.linkKey, input.url, input.chatId, input.messageId, input.title, now, now).run();
+  const persisted = await env.DB.prepare("SELECT id FROM intake_items WHERE telegram_file_id = ? LIMIT 1").bind(input.linkKey).first<{ id: string }>();
+  if (!persisted?.id) throw new Error("link_intake_not_persisted");
+  const slugBase = input.title.toLowerCase().replace(/[^a-z0-9\u1000-\u109f]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || input.slugFallback;
+  const slug = `${slugBase}-${persisted.id.slice(0, 8)}`;
+  await env.DB.batch([
+    env.DB.prepare("INSERT OR IGNORE INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), persisted.id, now, now),
+    env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, author, summary, soundcloud_url, metadata_json, category, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), persisted.id, input.title, slug, input.author, input.summary, input.soundcloudUrl, JSON.stringify(input.metadata), input.category, now, now),
+    env.DB.prepare(`INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) SELECT ?, '${input.eventType}', ?, ? WHERE NOT EXISTS (SELECT 1 FROM ingestion_events WHERE intake_id = ? AND event_type = '${input.eventType}')`).bind(persisted.id, JSON.stringify(input.eventDetail), now, persisted.id),
+  ]);
+  return { intakeId: persisted.id, created: insert.meta.changes > 0 };
+}
+
 async function saveSoundCloudChannelTracks(
   tracks: SoundCloudTrack[], channelUrl: string, updateId: number, chatId: string, messageId: number, env: RuntimeEnv,
 ): Promise<{ created: number; duplicates: number }> {
   let created = 0;
   let duplicates = 0;
   for (const track of tracks) {
-    const now = new Date().toISOString();
-    const intakeId = crypto.randomUUID();
-    const linkKey = `soundcloud:${track.url}`;
-    const syntheticUpdateId = await soundCloudTrackUpdateId(track.url);
-    const insert = await env.DB.prepare("INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_type, source_url, source_chat_id, source_message_id, status, original_filename, mime_type, created_at, updated_at) VALUES (?, ?, ?, 'document', 'soundcloud_link', ?, ?, ?, 'draft', ?, 'text/uri-list', ?, ?)").bind(intakeId, syntheticUpdateId, linkKey, track.url, chatId, messageId, track.title, now, now).run();
-    const persisted = await env.DB.prepare("SELECT id FROM intake_items WHERE telegram_file_id = ? LIMIT 1").bind(linkKey).first<{ id: string }>();
-    if (!persisted?.id) throw new Error("soundcloud_track_intake_conflict");
-    const slugBase = track.title.toLowerCase().replace(/[^a-z0-9\u1000-\u109f]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "soundcloud-track";
-    const slug = `${slugBase}-${persisted.id.slice(0, 8)}`;
-    const metadata = JSON.stringify({ source: "telegram", sourceType: "soundcloud_track", sourceUrl: track.url, channelUrl, telegramUpdateId: updateId, public: { sourceType: "soundcloud" } });
-    await env.DB.batch([
-      env.DB.prepare("INSERT OR IGNORE INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), persisted.id, now, now),
-      env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, author, category, summary, soundcloud_url, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'အသံစာအုပ်', ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), persisted.id, track.title, slug, track.author, "SoundCloud channel မှ တစ်ပုဒ်ချင်း ခွဲသိမ်းထားသော အသံစာအုပ် track ဖြစ်သည်။", track.url, metadata, now, now),
-      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) SELECT ?, 'soundcloud_track_received', ?, ? WHERE NOT EXISTS (SELECT 1 FROM ingestion_events WHERE intake_id = ? AND event_type = 'soundcloud_track_received')").bind(persisted.id, JSON.stringify({ channelUrl, trackUrl: track.url }), now, persisted.id),
-    ]);
-    if (insert.meta.changes > 0) created += 1;
+    const saved = await saveLinkIntake(env, {
+      sourceType: "soundcloud_link", eventType: "soundcloud_track_received", url: track.url, linkKey: `soundcloud:${track.url}`,
+      updateId: soundCloudTrackUpdateId(track.url), chatId, messageId, title: track.title, author: track.author,
+      summary: "SoundCloud channel မှ တစ်ပုဒ်ချင်း ခွဲသိမ်းထားသော အသံစာအုပ် track ဖြစ်သည်။", category: "အသံစာအုပ်", soundcloudUrl: track.url, slugFallback: "soundcloud-track",
+      metadata: { source: "telegram", sourceType: "soundcloud_track", sourceUrl: track.url, channelUrl, telegramUpdateId: updateId, public: { sourceType: "soundcloud" } },
+      eventDetail: { channelUrl, trackUrl: track.url },
+    });
+    if (saved.created) created += 1;
     else duplicates += 1;
   }
   return { created, duplicates };
@@ -382,7 +417,8 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
   if (item.source_type === "wattpad_link") return;
   const maxBytes = maxFileBytes(env);
   const createdAt = typeof item.created_at === "string" ? Date.parse(item.created_at) : Number.NaN;
-  const isTelegramPdf = Number.isFinite(createdAt) && createdAt >= Date.parse(AUTO_PUBLISH_CUTOFF) && item.source_type === "telegram_media" && item.media_type === "document" &&
+  const autoPublishFrom = Date.parse(env.AUTO_PUBLISH_FROM ?? DEFAULT_AUTO_PUBLISH_FROM); // NaN (bad config) fails closed to draft
+  const isTelegramPdf = Number.isFinite(createdAt) && createdAt >= autoPublishFrom && item.source_type === "telegram_media" && item.media_type === "document" &&
     ((typeof item.mime_type === "string" && item.mime_type.toLowerCase() === "application/pdf") ||
       (typeof item.original_filename === "string" && item.original_filename.toLowerCase().endsWith(".pdf")));
   logWorkerEvent("file_processing_started", { intakeId, mediaType: item.media_type, announcedBytes: typeof item.byte_size === "number" ? item.byte_size : null, autoPublish: isTelegramPdf });
@@ -479,9 +515,12 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
     const publicationStatus = isTelegramPdf ? "published" : "draft";
     await env.DB.batch([
       env.DB.prepare("UPDATE intake_items SET status = ?, storage_key = ?, sha256 = ?, byte_size = ?, updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(publicationStatus, key, checksum, byteSize, now, intakeId),
-      env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, summary, metadata_json, publication_status, created_at, updated_at, soundcloud_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, "Telegram-аас ирсэн PDF.", JSON.stringify({ source: "telegram", assetKey: key, rightsStatus: "missing", ...(coverKey ? { public: { coverImage: `/book/${slug}/cover` } } : {}) }), publicationStatus, now, now, normalizeSoundCloudUrl(item.source_url)),
+      env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, summary, metadata_json, publication_status, created_at, updated_at, soundcloud_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, "Telegram မှ ရောက်ရှိလာသော PDF ဖြစ်သည်။", JSON.stringify({ source: "telegram", assetKey: key, rightsStatus: "missing", ...(coverKey ? { public: { coverImage: `/book/${slug}/cover` } } : {}) }), publicationStatus, now, now, normalizeSoundCloudUrl(item.source_url)),
       env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'stored_in_r2', ?, ?)").bind(intakeId, JSON.stringify({ storageKey: key, byteSize, checksumComputed: Boolean(checksum) }), now),
-      ...(isTelegramPdf ? [env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'published', ?, ?)").bind(intakeId, JSON.stringify({ source: "telegram_auto_publish", rightsReview: "not_performed" }), now)] : []),
+      ...(isTelegramPdf ? [
+        env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'published', ?, ?)").bind(intakeId, JSON.stringify({ source: "telegram_auto_publish", rightsReview: "not_performed" }), now),
+        env.DB.prepare("UPDATE rights_records SET evidence_note = 'auto_publish_unreviewed', updated_at = ? WHERE intake_id = ? AND rights_status = 'missing'").bind(now, intakeId),
+      ] : []),
     ]);
     logWorkerEvent(isTelegramPdf ? "telegram_pdf_published" : "file_saved_as_draft", { intakeId, slug, byteSize, rightsReview: isTelegramPdf ? "not_performed" : "required" });
   } catch (error) {
@@ -542,63 +581,68 @@ async function receive(request: Request, env: RuntimeEnv): Promise<Response> {
   const chat = message && isRecord(message.chat) ? message.chat : null;
   const chatId = chat && (typeof chat.id === "number" || typeof chat.id === "string") ? String(chat.id) : null;
   if (!message || !chat || !chatId || (chat.type !== "group" && chat.type !== "supergroup") || !allowedChatIds(env.TELEGRAM_ALLOWED_CHAT_IDS ?? "").has(chatId)) return json({ ok: true, status: "ignored" });
-  const wattpadUrl = wattpadUrlFor(message);
-  const soundcloudUrl = soundcloudUrlFor(message);
-  const messageId = message.message_id;
-  if (wattpadUrl && Number.isSafeInteger(messageId)) {
-    const now = new Date().toISOString();
-    const intakeId = crypto.randomUUID();
-    const linkKey = `wattpad:${wattpadUrl}`;
-    const metadata = wattpadMetadata(message);
-    const slugBase = metadata.title.toLowerCase().replace(/[^a-z0-9\u1000-\u109f]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "wattpad-book";
-    const slug = `${slugBase}-${intakeId.slice(0, 8)}`;
-    const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_type, source_url, source_chat_id, source_message_id, status, original_filename, mime_type, created_at, updated_at) VALUES (?, ?, ?, 'document', 'wattpad_link', ?, ?, ?, 'draft', ?, 'text/html', ?, ?)`).bind(intakeId, parsed.update_id, linkKey, wattpadUrl, chatId, messageId, metadata.title, now, now).run();
-    const persisted = insert.meta.changes > 0 ? { id: intakeId } : await env.DB.prepare("SELECT id FROM intake_items WHERE telegram_update_id = ? OR telegram_file_id = ? LIMIT 1").bind(parsed.update_id, linkKey).first<{ id: string }>();
-    if (!persisted?.id) throw new Error("persisted_link_not_found");
-    if (insert.meta.changes > 0) await env.DB.batch([
-      env.DB.prepare("INSERT INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), persisted.id, now, now),
-      env.DB.prepare("INSERT INTO book_drafts (id, intake_id, title, slug, author, summary, soundcloud_url, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), persisted.id, metadata.title, slug, metadata.author, "Wattpad မူရင်းစာမျက်နှာသို့ သွားဖတ်ရန် link card ဖြစ်သည်။", soundcloudUrl, JSON.stringify({ source: "telegram", sourceType: "wattpad_link", sourceUrl: wattpadUrl, public: { sourceType: "wattpad", externalUrl: wattpadUrl } }), now, now),
-      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'wattpad_link_received', ?, ?)").bind(persisted.id, JSON.stringify({ url: wattpadUrl }), now),
-    ]);
-    return json({ ok: true, status: insert.meta.changes > 0 ? "accepted" : "duplicate", updateId: parsed.update_id, intakeId: persisted.id, sourceType: "wattpad_link" });
-  }
   const media = mediaFor(message);
-  if (soundcloudUrl && !media && Number.isSafeInteger(messageId)) {
-    if (isSoundCloudChannelUrl(soundcloudUrl)) {
+  const hasPdf = media?.type === "document";
+  const wattpadUrl = wattpadUrlFor(message);
+  const soundcloudUrls = soundcloudUrlsFor(message);
+  const messageId = message.message_id;
+  // A PDF always wins over links in its caption. Photos carry links but are never stored themselves.
+  if (!hasPdf && Number.isSafeInteger(messageId) && (wattpadUrl || soundcloudUrls.length)) {
+    if (!wattpadUrl && soundcloudUrls.length === 1 && isSoundCloudChannelUrl(soundcloudUrls[0])) {
+      const channelUrl = soundcloudUrls[0];
       try {
-        const tracks = await fetchSoundCloudChannelTracks(soundcloudUrl);
+        const tracks = await fetchSoundCloudChannelTracks(channelUrl);
         if (!tracks.length) {
-          logWorkerEvent("soundcloud_channel_no_tracks", { channelUrl: soundcloudUrl });
+          logWorkerEvent("soundcloud_channel_no_tracks", { channelUrl });
           return json({ ok: false, error: "soundcloud_channel_tracks_not_found" }, 502);
         }
-        const saved = await saveSoundCloudChannelTracks(tracks, soundcloudUrl, parsed.update_id as number, chatId, messageId as number, env);
-        logWorkerEvent("soundcloud_channel_imported", { channelUrl: soundcloudUrl, trackCount: tracks.length, created: saved.created, duplicates: saved.duplicates });
+        const saved = await saveSoundCloudChannelTracks(tracks, channelUrl, parsed.update_id as number, chatId, messageId as number, env);
+        logWorkerEvent("soundcloud_channel_imported", { channelUrl, trackCount: tracks.length, created: saved.created, duplicates: saved.duplicates });
         return json({ ok: true, status: saved.created ? "accepted" : "duplicate", sourceType: "soundcloud_channel", trackCount: tracks.length, ...saved });
       } catch (error) {
-        logWorkerEvent("soundcloud_channel_import_failed", { channelUrl: soundcloudUrl, error: error instanceof Error ? error.message.slice(0, 120) : "unknown_error" });
+        logWorkerEvent("soundcloud_channel_import_failed", { channelUrl, error: error instanceof Error ? error.message.slice(0, 120) : "unknown_error" });
         return json({ ok: false, error: "soundcloud_channel_import_failed" }, 502);
       }
     }
-    const now = new Date().toISOString();
-    const intakeId = crypto.randomUUID();
-    const metadata = soundcloudMetadata(message, soundcloudUrl);
-    const slugBase = metadata.title.toLowerCase().replace(/[^a-z0-9\u1000-\u109f]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "soundcloud-audiobook";
-    const slug = `${slugBase}-${intakeId.slice(0, 8)}`;
-    const linkKey = `soundcloud:${soundcloudUrl}`;
-    const insert = await env.DB.prepare("INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_type, source_url, source_chat_id, source_message_id, status, original_filename, mime_type, created_at, updated_at) VALUES (?, ?, ?, 'document', 'soundcloud_link', ?, ?, ?, 'draft', ?, 'text/uri-list', ?, ?)").bind(intakeId, parsed.update_id, linkKey, soundcloudUrl, chatId, messageId, metadata.title, now, now).run();
-    const persisted = insert.meta.changes > 0 ? { id: intakeId } : await env.DB.prepare("SELECT id FROM intake_items WHERE telegram_update_id = ? OR telegram_file_id = ? LIMIT 1").bind(parsed.update_id, linkKey).first<{ id: string }>();
-    if (!persisted?.id) throw new Error("persisted_soundcloud_link_not_found");
-    if (insert.meta.changes > 0) await env.DB.batch([
-      env.DB.prepare("INSERT INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), persisted.id, now, now),
-      env.DB.prepare("INSERT INTO book_drafts (id, intake_id, title, slug, author, summary, soundcloud_url, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), persisted.id, metadata.title, slug, metadata.author, "SoundCloud အသံစာအုပ်ကို နားဆင်ရန် link card ဖြစ်သည်။", soundcloudUrl, JSON.stringify({ source: "telegram", sourceType: "soundcloud_link", public: { sourceType: "soundcloud" } }), now, now),
-      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'soundcloud_link_received', ?, ?)").bind(persisted.id, JSON.stringify({ url: soundcloudUrl }), now),
-    ]);
-    return json({ ok: true, status: insert.meta.changes > 0 ? "accepted" : "duplicate", updateId: parsed.update_id, intakeId: persisted.id, sourceType: "soundcloud_link" });
+    const saved: { intakeId: string; created: boolean; sourceType: "wattpad_link" | "soundcloud_link" }[] = [];
+    if (wattpadUrl) {
+      const metadata = wattpadMetadata(message);
+      const result = await saveLinkIntake(env, {
+        sourceType: "wattpad_link", eventType: "wattpad_link_received", url: wattpadUrl, linkKey: `wattpad:${wattpadUrl}`,
+        updateId: parsed.update_id as number, chatId, messageId: messageId as number, title: metadata.title, author: metadata.author,
+        summary: "Wattpad မူရင်းစာမျက်နှာသို့ သွားဖတ်ရန် link card ဖြစ်သည်။", category: null, soundcloudUrl: null, slugFallback: "wattpad-book",
+        metadata: { source: "telegram", sourceType: "wattpad_link", sourceUrl: wattpadUrl, public: { sourceType: "wattpad", externalUrl: wattpadUrl } },
+        eventDetail: { url: wattpadUrl },
+      });
+      saved.push({ ...result, sourceType: "wattpad_link" });
+    }
+    let skippedChannelUrls = 0;
+    for (const url of soundcloudUrls) {
+      // Channel pages need a page fetch and up to 50 inserts, so they are only expanded when sent alone.
+      if (isSoundCloudChannelUrl(url)) { skippedChannelUrls += 1; continue; }
+      const metadata = soundcloudMetadata(message, url, soundcloudUrls.length === 1 && !wattpadUrl);
+      const result = await saveLinkIntake(env, {
+        sourceType: "soundcloud_link", eventType: "soundcloud_link_received", url, linkKey: `soundcloud:${url}`,
+        // Synthetic per-URL update id: several links can share one real Telegram update, and telegram_update_id is UNIQUE.
+        updateId: soundCloudTrackUpdateId(url), chatId, messageId: messageId as number, title: metadata.title, author: metadata.author,
+        summary: "SoundCloud အသံစာအုပ်ကို နားဆင်ရန် link card ဖြစ်သည်။", category: null, soundcloudUrl: url, slugFallback: "soundcloud-audiobook",
+        metadata: { source: "telegram", sourceType: "soundcloud_link", public: { sourceType: "soundcloud" } },
+        eventDetail: { url },
+      });
+      saved.push({ ...result, sourceType: "soundcloud_link" });
+    }
+    if (skippedChannelUrls) logWorkerEvent("soundcloud_channel_skipped_in_multi_link_message", { skippedChannelUrls, saved: saved.length });
+    if (!saved.length) return json({ ok: true, status: "ignored", skippedChannelUrls });
+    const created = saved.filter((item) => item.created).length;
+    const status = created ? "accepted" : "duplicate";
+    if (saved.length === 1 && !skippedChannelUrls) return json({ ok: true, status, updateId: parsed.update_id, intakeId: saved[0].intakeId, sourceType: saved[0].sourceType });
+    return json({ ok: true, status, updateId: parsed.update_id, sourceType: "links", count: saved.length, created, duplicates: saved.length - created, intakeIds: saved.map((item) => item.intakeId), ...(skippedChannelUrls ? { skippedChannelUrls } : {}) });
   }
+  if (media?.type === "photo") return json({ ok: true, status: "ignored" });
   if (!media || !Number.isSafeInteger(messageId)) return json({ ok: true, status: "ignored" });
   const now = new Date().toISOString();
   const intakeId = crypto.randomUUID();
-  const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, cover_telegram_file_id, media_type, source_chat_id, source_message_id, status, original_filename, mime_type, byte_size, created_at, updated_at, source_url) VALUES (?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?, ?)`).bind(intakeId, parsed.update_id, media.fileId, media.coverFileId, media.type, chatId, messageId, media.fileName, media.mimeType, media.byteSize, now, now, soundcloudUrl).run();
+  const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, cover_telegram_file_id, media_type, source_chat_id, source_message_id, status, original_filename, mime_type, byte_size, created_at, updated_at, source_url) VALUES (?, ?, ?, ?, ?, ?, ?, 'received', ?, ?, ?, ?, ?, ?)`).bind(intakeId, parsed.update_id, media.fileId, media.coverFileId, media.type, chatId, messageId, media.fileName, media.mimeType, media.byteSize, now, now, soundcloudUrls[0] ?? null).run();
   const isNew = insert.meta.changes > 0;
   const persistedIntake = isNew ? { id: intakeId } : await env.DB.prepare("SELECT id FROM intake_items WHERE telegram_update_id = ? OR telegram_file_id = ? ORDER BY CASE WHEN telegram_update_id = ? THEN 0 ELSE 1 END LIMIT 1").bind(parsed.update_id, media.fileId, parsed.update_id).first<{ id: string }>();
   if (!persistedIntake?.id) throw new Error("persisted_intake_not_found");
@@ -613,7 +657,7 @@ async function catalog(request: Request, env: RuntimeEnv): Promise<Response> {
   const origin = env.CATALOG_ORIGIN;
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": origin ?? "*", "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" } });
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405, origin);
-  const statement = env.DB.prepare("SELECT b.id, b.title, b.slug, b.author, b.category, b.year, b.summary, b.reading_time, b.soundcloud_url, b.metadata_json, b.publication_status, b.updated_at, i.storage_key, i.source_type FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.publication_status = 'published' OR (i.source_type = 'soundcloud_link' AND b.soundcloud_url IS NOT NULL) ORDER BY b.updated_at DESC");
+  const statement = env.DB.prepare("SELECT b.id, b.title, b.slug, b.author, b.category, b.year, b.summary, b.reading_time, b.soundcloud_url, b.metadata_json, b.publication_status, b.updated_at, i.storage_key, i.source_type FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.publication_status = 'published' OR (i.source_type = 'soundcloud_link' AND b.soundcloud_url IS NOT NULL AND b.publication_status <> 'unpublished') ORDER BY b.updated_at DESC");
   const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
   const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} const publicMeta = isRecord(metadata.public) ? { ...metadata.public } : {}; if (typeof publicMeta.coverImage === "string" && publicMeta.coverImage.startsWith("/")) publicMeta.coverImage = new URL(publicMeta.coverImage, request.url).toString(); return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(typeof book.storage_key === "string" && book.storage_key ? { pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString() } : {}), ...(typeof book.soundcloud_url === "string" && book.soundcloud_url ? { soundcloud_url: book.soundcloud_url } : {}), ...publicMeta, ...(typeof book.publication_status === "string" ? { publicationStatus: book.publication_status } : {}), ...(book.source_type === "soundcloud_link" ? { submissionSource: "telegram" } : {}) }; });
   return json({ ok: true, books }, 200, origin);
@@ -740,10 +784,12 @@ async function approveAndPublish(request: Request, env: RuntimeEnv, slug: string
 async function approve(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
   if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
   if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
-  const book = await env.DB.prepare("SELECT b.id, b.intake_id, b.publication_status, i.status AS intake_status, i.storage_key, i.source_type, b.soundcloud_url FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? LIMIT 1").bind(slug).first<{ id: string; intake_id: string; publication_status: string; intake_status: string; storage_key: string | null; source_type: string; soundcloud_url: string | null }>();
+  const book = await env.DB.prepare("SELECT b.id, b.intake_id, b.publication_status, i.status AS intake_status, i.storage_key, i.source_type, b.soundcloud_url, (SELECT r.rights_status FROM rights_records r WHERE r.intake_id = b.intake_id LIMIT 1) AS rights_status FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? LIMIT 1").bind(slug).first<{ id: string; intake_id: string; publication_status: string; intake_status: string; storage_key: string | null; source_type: string; soundcloud_url: string | null; rights_status: string | null }>();
   if (!book) return json({ ok: false, error: "book_not_found" }, 404);
-  if ((!book.storage_key && !(book.source_type === "soundcloud_link" && book.soundcloud_url)) || book.intake_status !== "draft") return json({ ok: false, error: "private_draft_not_ready" }, 409);
-  if (book.publication_status === "published") return json({ ok: true, status: "published", rightsStatus: "approved", slug });
+  // An auto-published Telegram PDF has intake status 'published'. It may still receive a rights record afterwards; approve never changes its publication status.
+  const alreadyPublished = book.publication_status === "published" && book.intake_status === "published";
+  if ((!book.storage_key && !(book.source_type === "soundcloud_link" && book.soundcloud_url)) || (book.intake_status !== "draft" && !alreadyPublished)) return json({ ok: false, error: "private_draft_not_ready" }, 409);
+  if (book.publication_status === "published" && book.rights_status === "approved") return json({ ok: true, status: "published", rightsStatus: "approved", slug });
   let body: JsonRecord = {};
   try { body = await request.json() as JsonRecord; } catch {}
   const evidenceNote = typeof body.evidenceNote === "string" ? body.evidenceNote.slice(0, 500) : "Admin dashboard confirmation";
@@ -755,7 +801,7 @@ async function approve(request: Request, env: RuntimeEnv, slug: string): Promise
     env.DB.prepare("UPDATE rights_records SET rights_status = 'approved', rights_holder = ?, evidence_note = ?, allowed_uses = ?, reviewer = 'admin', reviewed_at = ?, updated_at = ? WHERE intake_id = ?").bind(rightsHolder, evidenceNote, allowedUses, now, now, book.intake_id),
     env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'rights_approved', ?, ?)").bind(book.intake_id, JSON.stringify({ reviewer: "admin" }), now),
   ]);
-  return json({ ok: true, status: "approved", rightsStatus: "approved", slug });
+  return json({ ok: true, status: book.publication_status === "published" ? "published" : "approved", rightsStatus: "approved", slug });
 }
 
 async function updateBook(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {

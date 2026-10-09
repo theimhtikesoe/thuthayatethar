@@ -338,6 +338,7 @@ test("lists Telegram SoundCloud drafts in the public catalog but keeps other dra
   assert.equal(payload.books[0].publicationStatus, "draft");
   assert.equal(payload.books[0].soundcloud_url, "https://soundcloud.com/artist/track");
   assert.match(DB.state.catalogSql, /i\.source_type = 'soundcloud_link'/);
+  assert.match(DB.state.catalogSql, /b\.publication_status <> 'unpublished'/);
 });
 
 test("retains a SoundCloud URL sent with a PDF until draft creation", async () => {
@@ -803,4 +804,312 @@ test("logs Cron ticks and idle queue decisions without exposing binding values",
   assert.equal(entries[0].scheduledTime, 1234567890);
   assert.equal(entries[2].processed, false);
   assert.doesNotMatch(JSON.stringify(entries), /test-token-must-not-appear-in-logs|admin-test-token/);
+});
+
+async function retryPdfAndGetDb({ createdAt, extraEnv = {} }) {
+  const DB = makeDb();
+  const env = {
+    ...makeEnv(DB),
+    ...extraEnv,
+    TELEGRAM_BOT_TOKEN: "test-token",
+    TELEGRAM_API_BASE_URL: "https://api.telegram.org",
+    BUCKET: {
+      async put(key, body) {
+        const size = body instanceof ArrayBuffer ? body.byteLength : (await new Response(body).arrayBuffer()).byteLength;
+        return { key, size, httpEtag: "cutoff-etag" };
+      },
+      async get() { return null; },
+    },
+  };
+  const accepted = await worker.fetch(makeRequest(1024), env);
+  const intakeId = (await accepted.json()).intakeId;
+  DB.state.intakeItem.created_at = createdAt;
+  DB.state.intakeItem.status = "failed";
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => String(input).includes("getFile?")
+    ? new Response(JSON.stringify({ ok: true, result: { file_path: "/documents/cutoff.pdf" } }), { headers: { "content-type": "application/json" } })
+    : new Response(pdfBytes(1024), { headers: { "content-length": "1024" } });
+  try {
+    const retry = await worker.fetch(new Request(`https://worker.test/admin/retry/${intakeId}`, { method: "POST", headers: { "x-admin-token": "admin-test-token" } }), env);
+    assert.equal(retry.status, 202);
+    await worker.scheduled({ cron: "* * * * *", scheduledTime: Date.now() }, env);
+  } finally { globalThis.fetch = originalFetch; }
+  return DB;
+}
+
+async function retryPdfAndGetItem(options) {
+  return (await retryPdfAndGetDb(options)).state.intakeItem;
+}
+
+test("auto-publish cutoff is a fixed instant, not the time the Worker module loaded", async () => {
+  const anHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  assert.equal((await retryPdfAndGetItem({ createdAt: anHourAgo })).status, "published");
+});
+
+test("AUTO_PUBLISH_FROM controls the cutoff and an invalid value fails closed to draft", async () => {
+  const anHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  assert.equal((await retryPdfAndGetItem({ createdAt: anHourAgo, extraEnv: { AUTO_PUBLISH_FROM: new Date(Date.now() + 60_000).toISOString() } })).status, "draft");
+  assert.equal((await retryPdfAndGetItem({ createdAt: anHourAgo, extraEnv: { AUTO_PUBLISH_FROM: "not-a-date" } })).status, "draft");
+  assert.equal((await retryPdfAndGetItem({ createdAt: anHourAgo, extraEnv: { AUTO_PUBLISH_FROM: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() } })).status, "published");
+});
+
+const RIGHTS_MARKER_SQL = "UPDATE rights_records SET evidence_note = 'auto_publish_unreviewed'";
+
+test("an auto-published Telegram PDF is marked auto_publish_unreviewed in its rights record, a draft is not", async () => {
+  const anHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const published = await retryPdfAndGetDb({ createdAt: anHourAgo });
+  const marker = published.state.statements.find((statement) => statement.sql.startsWith(RIGHTS_MARKER_SQL));
+  assert.ok(marker, "published PDF must record that rights were not reviewed");
+  assert.match(marker.sql, /rights_status = 'missing'/);
+  assert.equal(marker.values[1], published.state.intakeId);
+
+  const draft = await retryPdfAndGetDb({ createdAt: "2020-01-01T00:00:00.000Z" });
+  assert.equal(draft.state.intakeItem.status, "draft");
+  assert.ok(!draft.state.statements.some((statement) => statement.sql.startsWith(RIGHTS_MARKER_SQL)));
+});
+
+function makeApproveDb(row) {
+  const state = { row, batches: [], bookSql: "" };
+  return {
+    state,
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async first() {
+          if (sql.includes("FROM book_drafts b JOIN intake_items i")) { state.bookSql = sql; return state.row; }
+          throw new Error(`Unexpected approve query: ${sql}`);
+        },
+        get sql() { return sql; },
+        get values() { return values; },
+      };
+    },
+    async batch(statements) { state.batches.push(statements.map((statement) => ({ sql: statement.sql, values: statement.values }))); return []; },
+  };
+}
+
+function approveRequest(slug = "some-book") {
+  return new Request(`https://worker.test/admin/approve/${slug}`, { method: "POST", headers: { "x-admin-token": "admin-test-token", "content-type": "application/json" }, body: JSON.stringify({ evidenceNote: "Owner confirmed" }) });
+}
+
+test("approve records rights for an auto-published PDF without changing its publication status", async () => {
+  const DB = makeApproveDb({ id: "b1", intake_id: "i1", publication_status: "published", intake_status: "published", storage_key: "originals/i1/book.pdf", source_type: "telegram_media", soundcloud_url: null, rights_status: "missing" });
+  const response = await worker.fetch(approveRequest(), makeEnv(DB));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { ok: true, status: "published", rightsStatus: "approved", slug: "some-book" });
+  const sqls = DB.state.batches.flat().map((statement) => statement.sql);
+  assert.ok(sqls.some((sql) => sql.includes("UPDATE rights_records SET rights_status = 'approved'")));
+  assert.ok(!sqls.some((sql) => sql.includes("UPDATE book_drafts") || sql.includes("UPDATE intake_items")));
+});
+
+test("approve does not rewrite rights that an admin already approved on a published book", async () => {
+  const DB = makeApproveDb({ id: "b1", intake_id: "i1", publication_status: "published", intake_status: "published", storage_key: "originals/i1/book.pdf", source_type: "telegram_media", soundcloud_url: null, rights_status: "approved" });
+  const response = await worker.fetch(approveRequest(), makeEnv(DB));
+  assert.equal(response.status, 200);
+  assert.equal(DB.state.batches.length, 0);
+});
+
+test("approve still refuses items that have no stored file or are not draft/published", async () => {
+  for (const row of [
+    { publication_status: "draft", intake_status: "failed", storage_key: null, source_type: "telegram_media", soundcloud_url: null },
+    { publication_status: "draft", intake_status: "received", storage_key: null, source_type: "telegram_media", soundcloud_url: null },
+    { publication_status: "published", intake_status: "draft", storage_key: null, source_type: "telegram_media", soundcloud_url: null },
+  ]) {
+    const DB = makeApproveDb({ id: "b1", intake_id: "i1", rights_status: "missing", ...row });
+    const response = await worker.fetch(approveRequest(), makeEnv(DB));
+    assert.equal(response.status, 409);
+    assert.equal(DB.state.batches.length, 0);
+  }
+});
+
+test("approve keeps the existing private-draft behaviour: rights approved, still draft", async () => {
+  const DB = makeApproveDb({ id: "b1", intake_id: "i1", publication_status: "draft", intake_status: "draft", storage_key: "originals/i1/book.pdf", source_type: "telegram_media", soundcloud_url: null, rights_status: "missing" });
+  const response = await worker.fetch(approveRequest(), makeEnv(DB));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).status, "approved");
+});
+
+// ---- Link intake (F5–F8) -------------------------------------------------------------------------------------------
+function makeLinkDb({ failOnAnyQuery = false, legacyItems = [] } = {}) {
+  const state = { items: new Map(), updateIds: new Set(), books: new Map(), rights: new Set(), events: [] };
+  for (const item of legacyItems) { state.items.set(item.fileKey, item); state.updateIds.add(item.updateId); }
+  return {
+    state,
+    prepare(sql) {
+      if (failOnAnyQuery) throw new Error(`unexpected D1 access: ${sql}`);
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async run() {
+          if (!sql.includes("INSERT OR IGNORE INTO intake_items")) throw new Error(`Unexpected run query: ${sql}`);
+          const [id, updateId, fileKey, sourceUrl, chatId, messageId, title] = values;
+          if (state.items.has(fileKey) || state.updateIds.has(updateId)) return { meta: { changes: 0 } };
+          state.items.set(fileKey, { id, updateId, fileKey, sourceUrl, chatId, messageId, title, sourceType: /'(wattpad_link|soundcloud_link)'/.exec(sql)?.[1] });
+          state.updateIds.add(updateId);
+          return { meta: { changes: 1 } };
+        },
+        async first() {
+          if (!sql.includes("WHERE telegram_file_id = ?")) throw new Error(`Unexpected first query: ${sql}`);
+          const item = state.items.get(values[0]);
+          return item ? { id: item.id } : null;
+        },
+        get sql() { return sql; },
+        get values() { return values; },
+      };
+    },
+    async batch(statements) {
+      for (const statement of statements) {
+        if (statement.sql.includes("INSERT OR IGNORE INTO rights_records")) state.rights.add(statement.values[1]);
+        else if (statement.sql.includes("INSERT OR IGNORE INTO book_drafts")) {
+          const [id, intakeId, title, slug, author, summary, soundcloudUrl, metadataJson, category] = statement.values;
+          if (!state.books.has(intakeId)) state.books.set(intakeId, { id, intakeId, title, slug, author, summary, soundcloudUrl, metadata: JSON.parse(metadataJson), category });
+        } else if (statement.sql.includes("INSERT INTO ingestion_events")) state.events.push(statement.values[0]);
+        else throw new Error(`Unexpected batch query: ${statement.sql}`);
+      }
+      return [];
+    },
+  };
+}
+
+async function postMessage(env, updateId, message) {
+  const response = await worker.fetch(new Request("https://worker.test/telegram/webhook", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": "test-secret" },
+    body: JSON.stringify({ update_id: updateId, message: { message_id: updateId, chat: { id: -12345, type: "supergroup" }, ...message } }),
+  }), env);
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
+const wattpadLink = "https://www.wattpad.com/story/123456789-sample-story";
+
+test("a photo is ignored without touching the database, even with a plain caption (F5)", async () => {
+  const env = makeEnv(makeLinkDb({ failOnAnyQuery: true }));
+  assert.equal((await postMessage(env, 301, { photo: [{ file_id: "p1", file_size: 100 }] })).status, "ignored");
+  assert.equal((await postMessage(env, 302, { photo: [{ file_id: "p2", file_size: 100 }], caption: "ဒီနေ့ စာအုပ်" })).status, "ignored");
+});
+
+test("a SoundCloud link in a photo caption becomes an audiobook link and the photo is not stored (F6)", async () => {
+  const DB = makeLinkDb();
+  const payload = await postMessage(makeEnv(DB), 303, { photo: [{ file_id: "p3", file_size: 100 }], caption: "Night Stories by Narrator https://soundcloud.com/narrator/night-stories" });
+  assert.equal(payload.status, "accepted");
+  assert.equal(payload.sourceType, "soundcloud_link");
+  assert.equal(DB.state.items.size, 1);
+  const [item] = DB.state.items.values();
+  assert.equal(item.sourceType, "soundcloud_link");
+  const [book] = DB.state.books.values();
+  assert.equal(book.soundcloudUrl, "https://soundcloud.com/narrator/night-stories");
+  assert.equal(book.title, "Night Stories");
+  assert.equal(book.author, "Narrator");
+});
+
+test("a PDF whose caption contains a Wattpad link is stored as a PDF, not as a link card (F7)", async () => {
+  const DB = makeDb();
+  const response = await worker.fetch(makeRequest(2048, { caption: `Sample Story ${wattpadLink}` }), makeEnv(DB));
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.status, "accepted");
+  assert.notEqual(payload.sourceType, "wattpad_link");
+  assert.equal(DB.state.intakeItem.telegram_file_id, "file-abc");
+  assert.equal(DB.state.intakeItem.original_filename, "book.pdf");
+  assert.equal(DB.state.intakeItem.status, "received");
+});
+
+test("a Wattpad link without a PDF still becomes a link card with no SoundCloud URL attached (F7)", async () => {
+  const DB = makeLinkDb();
+  const payload = await postMessage(makeEnv(DB), 304, { text: `"Sample Story" by Writer on Wattpad ${wattpadLink}` });
+  assert.equal(payload.sourceType, "wattpad_link");
+  const [item] = DB.state.items.values();
+  assert.equal(item.sourceType, "wattpad_link");
+  const [book] = DB.state.books.values();
+  assert.equal(book.soundcloudUrl, null);
+  assert.equal(book.metadata.public.externalUrl, "https://www.wattpad.com/story/123456789-sample-story");
+});
+
+test("every SoundCloud link in one message becomes its own audiobook and a replay creates nothing new (F8)", async () => {
+  const DB = makeLinkDb();
+  const env = makeEnv(DB);
+  const text = "https://soundcloud.com/a/track-one https://soundcloud.com/a/track-two, https://soundcloud.com/a/track-three https://soundcloud.com/a/track-one";
+  const payload = await postMessage(env, 305, { text });
+  assert.equal(payload.status, "accepted");
+  assert.equal(payload.sourceType, "links");
+  assert.equal(payload.count, 3);
+  assert.equal(payload.created, 3);
+  assert.equal(DB.state.items.size, 3);
+  assert.equal(DB.state.updateIds.size, 3, "each link needs its own telegram_update_id");
+  assert.equal(DB.state.books.size, 3);
+  assert.equal(DB.state.rights.size, 3);
+  assert.deepEqual([...DB.state.books.values()].map((book) => book.title).sort(), ["track one", "track three", "track two"]);
+
+  const replay = await postMessage(env, 305, { text });
+  assert.equal(replay.status, "duplicate");
+  assert.equal(replay.created, 0);
+  assert.equal(replay.duplicates, 3);
+  assert.equal(DB.state.items.size, 3);
+  assert.equal(DB.state.books.size, 3);
+});
+
+test("a message is capped at 10 SoundCloud links", async () => {
+  const DB = makeLinkDb();
+  const text = Array.from({ length: 12 }, (_, index) => `https://soundcloud.com/a/track-${index + 1}`).join(" ");
+  const payload = await postMessage(makeEnv(DB), 306, { text });
+  assert.equal(payload.count, 10);
+  assert.equal(DB.state.items.size, 10);
+});
+
+test("a channel URL is only expanded when sent alone; among other links it is skipped and reported", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("channel pages must not be fetched for multi-link messages"); };
+  try {
+    const DB = makeLinkDb();
+    const payload = await postMessage(makeEnv(DB), 307, { text: "https://soundcloud.com/a/track-one https://soundcloud.com/some-channel" });
+    assert.equal(payload.count, 1);
+    assert.equal(payload.skippedChannelUrls, 1);
+    assert.equal(DB.state.items.size, 1);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("a Wattpad link and a SoundCloud link in one message are saved as two separate intakes (F7/F8)", async () => {
+  const DB = makeLinkDb();
+  const payload = await postMessage(makeEnv(DB), 308, { text: `${wattpadLink} https://soundcloud.com/a/audio-version` });
+  assert.equal(payload.sourceType, "links");
+  assert.equal(payload.count, 2);
+  const books = [...DB.state.books.values()];
+  assert.equal(books.length, 2);
+  assert.equal(books.filter((book) => book.soundcloudUrl).length, 1);
+  assert.equal(books.find((book) => book.metadata.sourceType === "wattpad_link").soundcloudUrl, null);
+});
+
+test("re-delivery of a single SoundCloud link stored before this change deduplicates on its link key", async () => {
+  const url = "https://soundcloud.com/artist/legacy-track";
+  const DB = makeLinkDb({ legacyItems: [{ id: "legacy-id", updateId: 311, fileKey: `soundcloud:${url}`, sourceUrl: url }] });
+  const payload = await postMessage(makeEnv(DB), 311, { text: url });
+  assert.equal(payload.status, "duplicate");
+  assert.equal(payload.intakeId, "legacy-id");
+  assert.equal(DB.state.items.size, 1);
+});
+
+test("accepts the user’s SoundCloud share URL and strips its tracking query", async () => {
+  const DB = makeLinkDb();
+  const url = "https://soundcloud.com/user-482056960/hnin-si-mwae-yar-01-khan-dar-nhint-arr-yone?si=aec1743b5ed44e089234e98cd73e9f98&utm_source=email&utm_medium=email&utm_campaign=social_sharing";
+  const payload = await postMessage(makeEnv(DB), 312, { text: url });
+  assert.equal(payload.status, "accepted");
+  assert.equal(payload.sourceType, "soundcloud_link");
+  const [book] = DB.state.books.values();
+  assert.equal(book.soundcloudUrl, "https://soundcloud.com/user-482056960/hnin-si-mwae-yar-01-khan-dar-nhint-arr-yone");
+});
+
+test("PDFs received before the first production auto-publish deployment remain drafts on retry", async () => {
+  for (const createdAt of ["2026-10-09T07:50:37.382Z", "2026-10-09T07:51:03.432Z"]) {
+    assert.equal((await retryPdfAndGetItem({ createdAt })).status, "draft");
+  }
+});
+
+test("an auto-published PDF gets a Burmese summary and no Mongolian text (F3)", async () => {
+  const anHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const DB = await retryPdfAndGetDb({ createdAt: anHourAgo });
+  const draft = DB.state.statements.find((statement) => statement.sql.startsWith("INSERT OR IGNORE INTO book_drafts"));
+  assert.ok(draft);
+  assert.equal(draft.values[4], "Telegram မှ ရောက်ရှိလာသော PDF ဖြစ်သည်။");
+  assert.ok(!/[\u0400-\u04FF]/.test(JSON.stringify(draft.values)));
 });
