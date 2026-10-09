@@ -19,6 +19,7 @@ type R2Bucket = {
 };
 type SecretStoreBinding = { get: () => Promise<string> };
 type ExecutionContext = { waitUntil: (promise: Promise<unknown>) => void };
+declare const FixedLengthStream: new (length: number) => TransformStream<Uint8Array, Uint8Array>;
 
 export interface Env {
   DB: D1Database;
@@ -200,6 +201,10 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
       byteSize = stored.size;
     } else {
       if (!fileResponse.body) throw new Error("telegram_file_body_missing");
+      if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0) {
+        await fileResponse.body.cancel();
+        throw new Error("file_size_unknown");
+      }
       const progress = { bytes: 0 };
       const countedBody = fileResponse.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, controller) {
@@ -212,7 +217,8 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
           if (expectedBytes > 0 && progress.bytes !== expectedBytes) throw new Error("telegram_file_size_mismatch");
         },
       }));
-      const stored = await env.BUCKET.put(key, countedBody, { httpMetadata, customMetadata: { intakeId, visibility: "private" } });
+      const fixedLengthBody = countedBody.pipeThrough(new FixedLengthStream(expectedBytes));
+      const stored = await env.BUCKET.put(key, fixedLengthBody, { httpMetadata, customMetadata: { intakeId, visibility: "private" } });
       if (!stored || stored.size === 0 || stored.size > maxBytes) throw new Error("r2_storage_failed");
       byteSize = stored.size;
     }

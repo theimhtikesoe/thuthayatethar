@@ -30,10 +30,10 @@ function makeDb({ failFirstBatch = false } = {}) {
               state.intakeItem = {
                 id: values[0],
                 telegram_file_id: values[2],
-                media_type: values[3],
-                original_filename: values[6],
-                mime_type: values[7],
-                byte_size: values[8],
+                media_type: values[4],
+                original_filename: values[7],
+                mime_type: values[8],
+                byte_size: values[9],
               };
               return { meta: { changes: 1 } };
             }
@@ -117,6 +117,24 @@ function streamOfSize(totalBytes, chunkSize = 1024 * 1024) {
   });
 }
 
+const fixedLengthStreamCalls = [];
+globalThis.FixedLengthStream = class extends TransformStream {
+  constructor(length) {
+    fixedLengthStreamCalls.push(length);
+    let bytesWritten = 0;
+    super({
+      transform(chunk, controller) {
+        bytesWritten += chunk.byteLength;
+        if (bytesWritten > length) throw new Error("fixed_length_overflow");
+        controller.enqueue(chunk);
+      },
+      flush() {
+        if (bytesWritten !== length) throw new Error("fixed_length_mismatch");
+      },
+    });
+  }
+};
+
 test("fails closed when the webhook secret is not configured", async () => {
   const env = makeEnv(makeDb());
   delete env.TELEGRAM_WEBHOOK_SECRET;
@@ -173,6 +191,7 @@ test("repairs rights and received-event rows after an interrupted D1 batch", asy
 
 test("streams files larger than 20 MiB into private R2 and records their size", async () => {
   const fileSize = 129 * 1024 * 1024;
+  fixedLengthStreamCalls.length = 0;
   const DB = makeDb();
   const uploads = [];
   const env = {
@@ -228,6 +247,7 @@ test("streams files larger than 20 MiB into private R2 and records their size", 
 
   assert.equal(uploads.length, 1);
   assert.equal(uploads[0].size, fileSize);
+  assert.deepEqual(fixedLengthStreamCalls, [fileSize]);
   assert.equal(uploads[0].options.customMetadata.sha256, undefined);
   const stored = DB.state.statements.find((statement) => statement.sql.includes("UPDATE intake_items SET status = 'draft'"));
   assert.ok(stored);
@@ -237,6 +257,39 @@ test("streams files larger than 20 MiB into private R2 and records their size", 
   const rights = DB.state.statements.find((statement) => statement.sql.includes("INSERT OR IGNORE INTO rights_records"));
   assert.ok(rights);
   assert.equal(rights.values.length, 4);
+});
+
+test("does not send a streamed upload to R2 when the total file size is unknown", async () => {
+  const DB = makeDb();
+  const env = {
+    ...makeEnv(DB),
+    TELEGRAM_BOT_TOKEN: "test-token",
+    TELEGRAM_API_BASE_URL: "https://pdf-relay.rz99systems.com",
+    MAX_FILE_BYTES: String(160 * 1024 * 1024),
+    BUCKET: {
+      async put() { assert.fail("R2 must not receive a stream without a known length"); },
+      async get() { return null; },
+    },
+  };
+  const pending = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    if (String(input).includes("getFile?")) {
+      return new Response(JSON.stringify({ ok: true, result: { file_path: "/var/lib/telegram-bot-api/bot-123/documents/unknown-size.pdf" } }), {
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(streamOfSize(1024), { headers: { "content-type": "application/pdf" } });
+  };
+
+  try {
+    await worker.fetch(makeRequest(0), env, { waitUntil(promise) { pending.push(promise); } });
+    await Promise.all(pending);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(DB.state.failureValues[0], "file_size_unknown");
 });
 
 test("fails a stream that exceeds MAX_FILE_BYTES even without a content-length header", async () => {
@@ -272,7 +325,7 @@ test("fails a stream that exceeds MAX_FILE_BYTES even without a content-length h
         headers: { "content-type": "application/json" },
       });
     }
-    return new Response(streamOfSize(1025, 256), { headers: { "content-type": "application/pdf" } });
+    return new Response(streamOfSize(1025, 2048), { headers: { "content-type": "application/pdf" } });
   };
 
   try {
