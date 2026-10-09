@@ -160,18 +160,19 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     if (!doc) throw new Error("PDF is not ready");
     const page = await doc.getPage(n);
     const base = page.getViewport({ scale: 1 }).width;
-    // Render above the CSS size so scanned text stays sharp on Retina displays
-    // and remains readable when the high-resolution zoom layer is shown.
-    const px = Math.min(cssWidth * Math.min(window.devicePixelRatio || 1, 2), 2600);
+    // Render at the device pixel ratio so scanned text stays as sharp as the
+    // source PDF on Retina/high-density screens, including the zoom layer.
+    const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1);
+    const px = cssWidth * devicePixelRatio;
     const vp = page.getViewport({ scale: px / base });
     const canvas = document.createElement("canvas");
     canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Canvas is not available");
     await page.render({ canvasContext: context, viewport: vp }).promise;
-    // A higher JPEG quality avoids blocky glyphs and thin Myanmar strokes while
-    // keeping memory usage much lower than a PNG for scanned pages.
-    const original = canvas.toDataURL("image/jpeg", 0.94);
+    // Keep the rendered page lossless. JPEG artifacts are especially visible
+    // around thin Myanmar strokes and scanned text at mobile reading sizes.
+    const original = canvas.toDataURL("image/png");
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
     const { top, bottom } = whiteMarginBounds(pixels.data, canvas.width, canvas.height);
     context.clearRect(0, 0, canvas.width, top);
