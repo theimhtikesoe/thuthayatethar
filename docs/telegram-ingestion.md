@@ -9,6 +9,12 @@
 - **Secrets:** Bot token နှင့် webhook secret ကို Cloudflare Worker Secret Store binding များတွင်ထားသည်။ Admin token နှင့် relay Access credentials များကိုလည်း secret binding များဖြင့်သာထားပါ။ တန်ဖိုးကို source, log သို့မဟုတ် chat ထဲမထည့်ပါနှင့်။
 - `@sarpaymyr` နှင့် `@RO_Bookshelf` တို့သည် ယခု workflow ၏ source မဟုတ်ပါ။ Bot သည် ၎င်းတို့ထံမှ file မယူရ။
 
+## Telegram SoundCloud links → audiobook tab
+
+- Allowlisted upload group ထဲသို့ SoundCloud track URL တစ်ခု ပို့လိုက်လျှင် Worker က `soundcloud_link` intake/draft အဖြစ် D1 တွင်သိမ်းပြီး public catalog က ထို link ကို ထုတ်ပေးသည်။ Website ရှိ **အသံစာအုပ်** top-menu tab တွင် ပေါ်လာမည်ဖြစ်ပြီး ဖွင့်ထားသော page ကို အများဆုံး 30 စက္ကန့်အတွင်း အလိုအလျောက် refresh လုပ်သည်။
+- ဒီစီးဆင်းမှုသည် PDF auto-publish မဟုတ်ပါ။ Audio file ကို မဒေါင်းလုဒ်/မကူးယူပါ၊ SoundCloud URL ကိုသာ ပြသပြီး SoundCloud player မှတစ်ဆင့် ဖွင့်သည်။ Telegram မှရောက်လာသည့်အရာဟု card တွင် label ပြထားသည်။ SoundCloud link သည် public/ဖွင့်နိုင်သော track ဖြစ်ကြောင်းနှင့် တင်ပြခွင့်ရှိကြောင်းကို သီးခြားစစ်ဆေးရမည်; catalog တွင်ပေါ်ခြင်းသည် rights approval ဖြစ်သည်ဟု မယူဆရ။
+- မသက်ဆိုင်သော URL host များကို link intake အဖြစ်လက်မခံပါ။ PDF draft များ၊ ပုံများနှင့် အခြား unreviewed draft များသည် public catalog ထဲ မပါဝင်ပါ။
+
 ## Intake → automatic public PDF publication
 
 1. Telegram Worker `POST /telegram/webhook` သည် configured secret-token header နှင့် allowlisted upload group ကိုစစ်ပြီး intake metadata/event ကို D1 တွင် မှတ်တမ်းတင်သည်။ `accepted` ဆိုသည်မှာ file storage ပြီးစီးကြောင်း မဆိုလိုပါ။

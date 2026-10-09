@@ -172,11 +172,15 @@ function soundcloudUrlFor(message: JsonRecord): string | null {
   return null;
 }
 
-function soundcloudMetadata(message: JsonRecord): { title: string; author: string | null } {
+function soundcloudMetadata(message: JsonRecord, soundcloudUrl: string): { title: string; author: string | null } {
   const text = [message.text, message.caption].find((value) => typeof value === "string") as string | undefined;
   const clean = (text ?? "").replace(/https?:\/\/[^\s<>]+/gi, " ").replace(/\s+/g, " ").trim();
   const match = clean.match(/(.+?)\s+by\s+(.+)/i);
-  return { title: (match?.[1] ?? clean).slice(0, 180) || "SoundCloud အသံစာအုပ်", author: match?.[2]?.slice(0, 180) || null };
+  let trackTitle = "";
+  try {
+    trackTitle = decodeURIComponent(new URL(soundcloudUrl).pathname.split("/").filter(Boolean).at(-1) ?? "").replace(/[-_]+/g, " ").trim();
+  } catch { /* The validated URL parser will provide a generic title if necessary. */ }
+  return { title: (match?.[1] ?? clean).slice(0, 180) || trackTitle.slice(0, 180) || "SoundCloud အသံစာအုပ်", author: match?.[2]?.slice(0, 180) || null };
 }
 
 type SoundCloudTrack = { url: string; title: string; author: string | null };
@@ -577,7 +581,7 @@ async function receive(request: Request, env: RuntimeEnv): Promise<Response> {
     }
     const now = new Date().toISOString();
     const intakeId = crypto.randomUUID();
-    const metadata = soundcloudMetadata(message);
+    const metadata = soundcloudMetadata(message, soundcloudUrl);
     const slugBase = metadata.title.toLowerCase().replace(/[^a-z0-9\u1000-\u109f]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "soundcloud-audiobook";
     const slug = `${slugBase}-${intakeId.slice(0, 8)}`;
     const linkKey = `soundcloud:${soundcloudUrl}`;
@@ -609,9 +613,9 @@ async function catalog(request: Request, env: RuntimeEnv): Promise<Response> {
   const origin = env.CATALOG_ORIGIN;
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": origin ?? "*", "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" } });
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405, origin);
-  const statement = env.DB.prepare("SELECT b.id, b.title, b.slug, b.author, b.category, b.year, b.summary, b.reading_time, b.soundcloud_url, b.metadata_json, b.updated_at, i.storage_key FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.publication_status = 'published' ORDER BY b.updated_at DESC");
+  const statement = env.DB.prepare("SELECT b.id, b.title, b.slug, b.author, b.category, b.year, b.summary, b.reading_time, b.soundcloud_url, b.metadata_json, b.publication_status, b.updated_at, i.storage_key, i.source_type FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.publication_status = 'published' OR (i.source_type = 'soundcloud_link' AND b.soundcloud_url IS NOT NULL) ORDER BY b.updated_at DESC");
   const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
-  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} const publicMeta = isRecord(metadata.public) ? { ...metadata.public } : {}; if (typeof publicMeta.coverImage === "string" && publicMeta.coverImage.startsWith("/")) publicMeta.coverImage = new URL(publicMeta.coverImage, request.url).toString(); return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(typeof book.storage_key === "string" && book.storage_key ? { pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString() } : {}), ...(typeof book.soundcloud_url === "string" && book.soundcloud_url ? { soundcloud_url: book.soundcloud_url } : {}), ...publicMeta }; });
+  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} const publicMeta = isRecord(metadata.public) ? { ...metadata.public } : {}; if (typeof publicMeta.coverImage === "string" && publicMeta.coverImage.startsWith("/")) publicMeta.coverImage = new URL(publicMeta.coverImage, request.url).toString(); return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(typeof book.storage_key === "string" && book.storage_key ? { pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString() } : {}), ...(typeof book.soundcloud_url === "string" && book.soundcloud_url ? { soundcloud_url: book.soundcloud_url } : {}), ...publicMeta, ...(typeof book.publication_status === "string" ? { publicationStatus: book.publication_status } : {}), ...(book.source_type === "soundcloud_link" ? { submissionSource: "telegram" } : {}) }; });
   return json({ ok: true, books }, 200, origin);
 }
 

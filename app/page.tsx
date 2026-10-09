@@ -29,6 +29,8 @@ type Book = {
   externalUrl?: string;
   soundcloud_url?: string;
   sourceType?: string;
+  submissionSource?: string;
+  publicationStatus?: string;
   slug?: string;
 };
 
@@ -355,10 +357,12 @@ export default function HomePage() {
 
   useEffect(() => {
     const cached = readLocalValue("thuthayatethar:catalog");
+    let hasCachedCatalog = false;
     if (cached) {
       try {
         const cachedBooks = JSON.parse(cached) as Book[];
         if (Array.isArray(cachedBooks)) {
+          hasCachedCatalog = true;
           const offlineSafeBooks = cachedBooks.map((book) => ({
             ...book,
             pdfUrl: book.pdfUrl || (!book.soundcloud_url && !book.externalUrl ? bookPdfProxyUrl(book) : undefined),
@@ -373,10 +377,15 @@ export default function HomePage() {
         }
       } catch { /* Ignore a stale/corrupt cache and use the network response. */ }
     }
-    fetch("/api/catalog", { cache: "no-store" })
+    let requestActive = false;
+    let disposed = false;
+    const refreshCatalog = () => {
+      if (requestActive || disposed) return;
+      requestActive = true;
+      fetch("/api/catalog", { cache: "no-store" })
       .then((response) => response.json())
       .then((payload: { ok?: boolean; configured?: boolean; books?: Array<Partial<Book> & { id?: string | number; pages?: string[]; pdfUrl?: string }> }) => {
-        if (payload.ok !== true || payload.configured === false || !Array.isArray(payload.books)) { if (!cached) setCatalogBooks([]); return; }
+        if (payload.ok !== true || payload.configured === false || !Array.isArray(payload.books)) { if (!hasCachedCatalog && !disposed) setCatalogBooks([]); return; }
         const nextBooks: Book[] = payload.books.map((book, index) => {
           const isTianGuanCiFu = book.slug?.startsWith("tian-guan-ci-fu-") ||
             book.title?.toLowerCase().includes("tian guan ci fu");
@@ -393,7 +402,7 @@ export default function HomePage() {
             accent: book.accent ?? coverPalette[index % coverPalette.length][1],
             mark: book.mark ?? "စာ",
             rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
-            tag: book.tag ?? "ထုတ်ဝေထားသည်",
+            tag: book.submissionSource === "telegram" && book.publicationStatus !== "published" ? "Telegram မှ ရောက်ရှိ" : book.tag ?? "ထုတ်ဝေထားသည်",
             // Large PDFs are served directly by the Cloudflare Worker/R2 URL
             // returned by the catalog. Keep the Vercel proxy as a fallback only
             // for actual reading items, never for external/audio-only books.
@@ -406,14 +415,33 @@ export default function HomePage() {
             externalUrl: book.externalUrl,
             soundcloud_url: book.soundcloud_url,
             sourceType: book.sourceType,
+            submissionSource: book.submissionSource,
+            publicationStatus: book.publicationStatus,
             slug: book.slug,
           };
         });
-        setCatalogBooks(nextBooks);
-        writeLocalValue("thuthayatethar:catalog", JSON.stringify(nextBooks));
+        if (!disposed) {
+          setCatalogBooks(nextBooks);
+          writeLocalValue("thuthayatethar:catalog", JSON.stringify(nextBooks));
+        }
       })
-      .catch(() => { if (!cached) setCatalogBooks([]); })
-      .finally(() => setCatalogLoading(false));
+      .catch(() => { if (!hasCachedCatalog && !disposed) setCatalogBooks([]); })
+      .finally(() => {
+        requestActive = false;
+        if (!disposed) setCatalogLoading(false);
+      });
+    };
+    const refreshWhenVisible = () => { if (document.visibilityState === "visible") refreshCatalog(); };
+    refreshCatalog();
+    const interval = window.setInterval(refreshCatalog, 30_000);
+    window.addEventListener("focus", refreshCatalog);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshCatalog);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, []);
   useEffect(() => {
     if (!catalogBooks) return;
@@ -639,13 +667,14 @@ export default function HomePage() {
           <span><strong>သုတရိပ်သာ</strong><small>မြန်မာစာအုပ်များအတွက် ဒစ်ဂျစ်တယ်ရိပ်သာ</small></span>
         </a>
         <nav className="topnav" aria-label="အဓိကမီနူး">
-          <a className="active" href="#catalog">စာအုပ်များ</a>
+          <a className={format !== "အသံစာအုပ်" ? "active" : ""} href="#catalog" aria-current={format !== "အသံစာအုပ်" ? "page" : undefined} onClick={() => { setFormat("စာအုပ်"); setQuery(""); setCategory("အားလုံး"); setTime("အားလုံး"); }}>စာအုပ်များ</a>
+          <a className={format === "အသံစာအုပ်" ? "active" : ""} href="#audiobooks" aria-current={format === "အသံစာအုပ်" ? "page" : undefined} onClick={() => { setFormat("အသံစာအုပ်"); setQuery(""); setCategory("အားလုံး"); setTime("အားလုံး"); }}>အသံစာအုပ်</a>
         </nav>
       </header>
 
       <section className="catalog-section" id="catalog">
         <div className="section-heading">
-          <div><p className="eyebrow">စာကြည့်တိုက်</p><h2>စာအုပ်များ</h2></div>
+          <div><p className="eyebrow">စာကြည့်တိုက်</p><h2>{format === "အသံစာအုပ်" ? "အသံစာအုပ်" : "စာအုပ်များ"}</h2></div>
           <span className="result-count">{visibleResultCount} အုပ်</span>
         </div>
         {recentReadings[0] && (() => {
@@ -661,8 +690,10 @@ export default function HomePage() {
             </button>
           </section>;
         })()}
-        {(format === "အားလုံး" || format === "အသံစာအုပ်") && <AudiobookShelf books={matchingAudioBooks} onPlay={(book) => playAudiobook(book as Book)} />}
-        {format === "အသံစာအုပ်" && !catalogLoading && !matchingAudioBooks.length && <div className="empty-state audiobook-empty"><span>♫</span><h3>အသံစာအုပ် မတွေ့ပါ</h3><p>ရှာဖွေမှု သို့မဟုတ် အမျိုးအစားကို ပြောင်းစမ်းပါ။</p></div>}
+        <div id="audiobooks" className="audiobook-listing">
+          {(format === "အားလုံး" || format === "အသံစာအုပ်") && <AudiobookShelf books={matchingAudioBooks} onPlay={(book) => playAudiobook(book as Book)} />}
+          {format === "အသံစာအုပ်" && !catalogLoading && !matchingAudioBooks.length && <div className="empty-state audiobook-empty"><span>♫</span><h3>အသံစာအုပ် မတွေ့ပါ</h3><p>Telegram ထဲသို့ SoundCloud link ပို့ထားပါက မကြာမီ ဒီနေရာတွင် ပေါ်လာပါမည်။</p></div>}
+        </div>
         <div className="offline-actions" aria-label="Offline စာအုပ်စီမံရန်">
           <button type="button" className={`offline-picker-toggle${offlinePickerOpen ? " active" : ""}`} onClick={() => { setOfflinePickerOpen((open) => !open); setOfflineBatchMessage(""); }} aria-expanded={offlinePickerOpen} aria-controls="offline-picker-panel">
             <span className="offline-action-mark" aria-hidden="true">↓</span>

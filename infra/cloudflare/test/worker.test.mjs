@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import worker from "../src/index.ts";
 
-function makeDb({ failFirstBatch = false } = {}) {
+function makeDb({ failFirstBatch = false, catalogItems = [] } = {}) {
   const state = {
     insertCalls: 0,
     batchCalls: 0,
@@ -11,6 +11,8 @@ function makeDb({ failFirstBatch = false } = {}) {
     intakeId: null,
     intakeItem: null,
     failureValues: null,
+    catalogItems,
+    catalogSql: "",
   };
 
   return {
@@ -82,6 +84,14 @@ function makeDb({ failFirstBatch = false } = {}) {
           if (sql.includes("SELECT * FROM intake_items")) return state.intakeItem;
           if (sql.includes("FROM intake_items")) return state.intakeItem;
           return state.intakeId ? { id: state.intakeId } : null;
+        },
+        async all() {
+          state.catalogSql = sql;
+          return {
+            results: state.catalogItems.filter((item) =>
+              item.publication_status === "published" || (item.source_type === "soundcloud_link" && item.soundcloud_url),
+            ),
+          };
         },
         get sql() {
           return sql;
@@ -298,6 +308,36 @@ test("accepts standalone SoundCloud URLs as audiobook drafts and rejects unrelat
   const unsafeResponse = await worker.fetch(unsafe, makeEnv(unsafeDb));
   assert.equal((await unsafeResponse.json()).status, "ignored");
   assert.equal(unsafeDb.state.insertCalls, 0);
+});
+
+test("lists Telegram SoundCloud drafts in the public catalog but keeps other drafts private", async () => {
+  const DB = makeDb({ catalogItems: [
+    {
+      id: "draft-audio", title: "Hnin Si Mwae Yar", slug: "hnin-si-mwae-yar", author: "Unknown",
+      summary: "SoundCloud link", soundcloud_url: "https://soundcloud.com/artist/track",
+      metadata_json: JSON.stringify({ public: { sourceType: "soundcloud" } }),
+      publication_status: "draft", source_type: "soundcloud_link", storage_key: null,
+    },
+    {
+      id: "draft-pdf", title: "Private PDF", slug: "private-pdf", publication_status: "draft",
+      source_type: "telegram_media", soundcloud_url: null, storage_key: null,
+    },
+    {
+      id: "published-audio", title: "Published audio", slug: "published-audio", author: "Author",
+      soundcloud_url: "https://soundcloud.com/artist/published", metadata_json: "{}",
+      publication_status: "published", source_type: "direct_upload", storage_key: null,
+    },
+  ] });
+
+  const response = await worker.fetch(new Request("https://worker.test/catalog"), makeEnv(DB));
+  const payload = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(payload.books.length, 2);
+  assert.deepEqual(payload.books.map((book) => book.id), ["draft-audio", "published-audio"]);
+  assert.equal(payload.books[0].submissionSource, "telegram");
+  assert.equal(payload.books[0].publicationStatus, "draft");
+  assert.equal(payload.books[0].soundcloud_url, "https://soundcloud.com/artist/track");
+  assert.match(DB.state.catalogSql, /i\.source_type = 'soundcloud_link'/);
 });
 
 test("retains a SoundCloud URL sent with a PDF until draft creation", async () => {
