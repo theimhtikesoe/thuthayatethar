@@ -38,7 +38,7 @@ The authenticated `/admin` list includes failed intake rows and their error mess
 
 ### SoundCloud audiobook support
 
-- Published catalog rows may include `soundcloud_url`. SoundCloud-only Telegram links enter the same rights-review flow as other link submissions; a reviewer must approve them before publication. A SoundCloud URL posted with a PDF is retained on that PDF's book draft.
+- SoundCloud-only Telegram links are stored in `intake_items` as `source_type='soundcloud_link'` and in `book_drafts.soundcloud_url`; each intake also receives a `rights_records` row (initially `missing`) and a `soundcloud_link_received` event. The Worker catalog includes these SoundCloud-link drafts so they can appear in the public audiobook tab before publication approval. Only the SoundCloud URL and metadata are listed; the audio remains hosted by SoundCloud. Appearing in the catalog does not mean rights were approved or cleared. Other draft records remain hidden. A SoundCloud URL posted with a PDF is retained on that PDF's book draft.
 - Before deploying the Worker code, apply `migrations/0004_soundcloud_audiobooks.sql` to existing D1 databases (for example, from the repository root: `pnpm dlx wrangler d1 execute thuthayatethar-ingestion --remote --file=infra/cloudflare/migrations/0004_soundcloud_audiobooks.sql`). Do not reapply the `ALTER TABLE` if the column already exists. Fresh schema installations already include the column in `schema.sql`.
 - The website caches catalog metadata and book covers for offline browsing and stores SoundCloud playback position locally. SoundCloud audio is still streamed by SoundCloud and is unavailable offline; the service worker intentionally does not cache the third-party audio stream.
 
