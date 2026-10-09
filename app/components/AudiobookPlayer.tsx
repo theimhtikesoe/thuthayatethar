@@ -10,6 +10,7 @@ type Audiobook = {
   category?: string;
   coverImage?: string;
   soundcloud_url?: string;
+  submissionSource?: string;
 };
 
 type Widget = {
@@ -66,7 +67,7 @@ export function AudiobookShelf({ books, onPlay }: { books: Audiobook[]; onPlay: 
           {book.coverImage ? <img src={book.coverImage} loading="lazy" alt="" /> : <span>♫</span>}
           <span className="audiobook-cover-mark">သုတရိပ်သာ · AUDIO</span>
         </div>
-        <div className="audiobook-card-copy"><small>{book.category || "အသံစာအုပ်"}</small><strong>{book.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
+        <div className="audiobook-card-copy"><small>{book.submissionSource === "telegram" ? "Telegram မှ ရောက်ရှိ" : book.category || "အသံစာအုပ်"}</small><strong>{book.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
         <button type="button" className="audiobook-listen" onClick={() => onPlay(book)} aria-label={`${book.title} ကို နားထောင်မည်`}><span aria-hidden="true">▶</span> နားထောင်မည်</button>
       </article>)}
     </div>
