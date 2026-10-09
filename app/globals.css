@@ -697,7 +697,6 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .audiobook-card { min-width: 0; display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px 13px; align-items: start; padding: 11px; border: 1px solid rgba(232,225,215,.9); border-radius: 11px; background: rgba(255,253,249,.9); box-shadow: 0 5px 15px rgba(57,48,38,.045); }
 .audiobook-cover { position: relative; grid-row: span 2; width: 84px; height: 84px; display: grid; place-items: center; overflow: hidden; border-radius: 8px; background: linear-gradient(145deg, #496d63, #1d3532); color: #f5d69a; font-size: 26px; }
 .audiobook-cover img { width: 100%; height: 100%; object-fit: cover; }
-.audiobook-cover-mark { position: absolute; inset: auto 4px 4px; padding: 2px 3px; border-radius: 3px; background: rgba(18,30,29,.66); color: #fff9ed; font-size: 6px; text-align: center; letter-spacing: .06em; }
 .audiobook-card-copy { min-width: 0; display: grid; gap: 3px; }
 .audiobook-card-copy small { color: var(--green); font-size: 8px; }
 .audiobook-card-copy strong { display: -webkit-box; overflow-wrap: anywhere; overflow: hidden; font-size: 13px; line-height: 1.7; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }

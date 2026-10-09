@@ -31,4 +31,5 @@ test("already-corrected titles and user-entered content are preserved", () => {
   assert.equal(correctedCatalogTitle(title), title);
   assert.equal(correctedCatalogTitle("Custom book title"), "Custom book title");
   assert.equal(correctedCatalogTitle(), "စာအုပ်အသစ်");
+  assert.equal(correctedCatalogTitle("xj3aq3cyzsn4"), "ဝင်းဖေ ဝတ္ထုတိုများ");
 });

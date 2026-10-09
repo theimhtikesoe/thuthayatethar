@@ -138,7 +138,7 @@ function makeSoundCloudDb() {
           if (sql.includes("INSERT OR IGNORE INTO intake_items")) {
             const [id, updateId, fileKey, sourceUrl, chatId, messageId, title, createdAt, updatedAt] = values;
             if (state.items.has(fileKey) || state.updateIds.has(updateId)) return { meta: { changes: 0 } };
-            state.items.set(fileKey, { id, updateId, fileKey, sourceUrl, chatId, messageId, title, createdAt, updatedAt });
+            state.items.set(fileKey, { id, updateId, fileKey, sourceUrl, chatId, messageId, title, status: sql.includes("'published'") ? "published" : "draft", createdAt, updatedAt });
             state.updateIds.add(updateId);
             return { meta: { changes: 1 } };
           }
@@ -160,8 +160,8 @@ function makeSoundCloudDb() {
       for (const statement of statements) {
         if (statement.sql.includes("INSERT OR IGNORE INTO rights_records")) state.rights.add(statement.values[1]);
         else if (statement.sql.includes("INSERT OR IGNORE INTO book_drafts")) {
-          const [id, intakeId, title, slug, author, summary, soundcloudUrl, metadataJson] = statement.values;
-          if (!state.books.has(intakeId)) state.books.set(intakeId, { id, intakeId, title, slug, author, category: "အသံစာအုပ်", summary, soundcloudUrl, metadataJson });
+          const [id, intakeId, title, slug, author, summary, soundcloudUrl, metadataJson, category, publicationStatus] = statement.values;
+          if (!state.books.has(intakeId)) state.books.set(intakeId, { id, intakeId, title, slug, author, category, summary, soundcloudUrl, metadataJson, publicationStatus });
         } else if (statement.sql.includes("INSERT INTO ingestion_events")) state.events.add(statement.values[0]);
         else throw new Error(`Unexpected SoundCloud D1 batch query: ${statement.sql}`);
       }
@@ -929,6 +929,34 @@ test("approve keeps the existing private-draft behaviour: rights approved, still
   assert.equal((await response.json()).status, "approved");
 });
 
+test("admin delete removes the book, intake and stored cover and returns success", async () => {
+  const statements = [];
+  const deletedKeys = [];
+  const DB = {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async first() {
+          if (sql.includes("SELECT id, intake_id FROM book_drafts")) return { id: "book-1", intake_id: "intake-1" };
+          if (sql.includes("SELECT storage_key FROM intake_items")) return { storage_key: null };
+          throw new Error(`Unexpected delete query: ${sql}`);
+        },
+        get sql() { return sql; },
+        get values() { return values; },
+      };
+    },
+    async batch(batch) { statements.push(...batch.map(({ sql }) => sql)); return []; },
+  };
+  const env = { ...makeEnv(DB), BUCKET: { async delete(key) { deletedKeys.push(key); } } };
+  const response = await worker.fetch(new Request("https://worker.test/admin/delete/winsome-book", { method: "DELETE", headers: { "x-admin-token": "admin-test-token" } }), env);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).status, "deleted");
+  assert.deepEqual(deletedKeys, ["covers/intake-1/cover.jpg"]);
+  assert.ok(statements.some((sql) => sql.includes("DELETE FROM book_drafts")));
+  assert.ok(statements.some((sql) => sql.includes("DELETE FROM intake_items")));
+});
+
 // ---- Link intake (F5–F8) -------------------------------------------------------------------------------------------
 function makeLinkDb({ failOnAnyQuery = false, legacyItems = [] } = {}) {
   const state = { items: new Map(), updateIds: new Set(), books: new Map(), rights: new Set(), events: [] };
@@ -944,7 +972,7 @@ function makeLinkDb({ failOnAnyQuery = false, legacyItems = [] } = {}) {
           if (!sql.includes("INSERT OR IGNORE INTO intake_items")) throw new Error(`Unexpected run query: ${sql}`);
           const [id, updateId, fileKey, sourceUrl, chatId, messageId, title] = values;
           if (state.items.has(fileKey) || state.updateIds.has(updateId)) return { meta: { changes: 0 } };
-          state.items.set(fileKey, { id, updateId, fileKey, sourceUrl, chatId, messageId, title, sourceType: /'(wattpad_link|soundcloud_link)'/.exec(sql)?.[1] });
+          state.items.set(fileKey, { id, updateId, fileKey, sourceUrl, chatId, messageId, title, status: sql.includes("'published'") ? "published" : "draft", sourceType: /'(wattpad_link|soundcloud_link)'/.exec(sql)?.[1] });
           state.updateIds.add(updateId);
           return { meta: { changes: 1 } };
         },
@@ -961,8 +989,8 @@ function makeLinkDb({ failOnAnyQuery = false, legacyItems = [] } = {}) {
       for (const statement of statements) {
         if (statement.sql.includes("INSERT OR IGNORE INTO rights_records")) state.rights.add(statement.values[1]);
         else if (statement.sql.includes("INSERT OR IGNORE INTO book_drafts")) {
-          const [id, intakeId, title, slug, author, summary, soundcloudUrl, metadataJson, category] = statement.values;
-          if (!state.books.has(intakeId)) state.books.set(intakeId, { id, intakeId, title, slug, author, summary, soundcloudUrl, metadata: JSON.parse(metadataJson), category });
+          const [id, intakeId, title, slug, author, summary, soundcloudUrl, metadataJson, category, publicationStatus] = statement.values;
+          if (!state.books.has(intakeId)) state.books.set(intakeId, { id, intakeId, title, slug, author, summary, soundcloudUrl, metadata: JSON.parse(metadataJson), category, publicationStatus });
         } else if (statement.sql.includes("INSERT INTO ingestion_events")) state.events.push(statement.values[0]);
         else throw new Error(`Unexpected batch query: ${statement.sql}`);
       }
@@ -1001,6 +1029,16 @@ test("a SoundCloud link in a photo caption becomes an audiobook link and the pho
   assert.equal(book.soundcloudUrl, "https://soundcloud.com/narrator/night-stories");
   assert.equal(book.title, "Night Stories");
   assert.equal(book.author, "Narrator");
+  assert.equal(item.status, "published");
+  assert.equal(book.publicationStatus, "published");
+});
+
+test("a SoundCloud link named with the opaque ID uses the reviewed cover title", async () => {
+  const DB = makeLinkDb();
+  await postMessage(makeEnv(DB), 304, { text: "xj3aq3cyzsn4 https://soundcloud.com/artist/xj3aq3cyzsn4" });
+  const [book] = DB.state.books.values();
+  assert.equal(book.title, "ဝင်းဖေ ဝတ္ထုတိုများ");
+  assert.equal(book.publicationStatus, "published");
 });
 
 test("a PDF whose caption contains a Wattpad link is stored as a PDF, not as a link card (F7)", async () => {

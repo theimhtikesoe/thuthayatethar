@@ -370,7 +370,7 @@ export default function HomePage() {
             accent: book.accent ?? coverPalette[index % coverPalette.length][1],
             mark: book.mark ?? "စာ",
             rights: book.rights === "summary" ? "summary" as Rights : "full" as Rights,
-            tag: book.submissionSource === "telegram" && book.publicationStatus !== "published" ? "Telegram မှ ရောက်ရှိ" : book.tag ?? "ထုတ်ဝေထားသည်",
+            tag: book.tag ?? "ထုတ်ဝေထားသည်",
             // Large PDFs are served directly by the Cloudflare Worker/R2 URL
             // returned by the catalog. Keep the Vercel proxy as a fallback only
             // for actual reading items, never for external/audio-only books.
@@ -738,7 +738,7 @@ function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; o
       {book.rights === "summary" && !book.coverImage && !book.pdfUrl && <span className="summary-ribbon">အကျဉ်းချုပ်သာ</span>}
     </button>
     <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{groupTitle(group)}</h3><p className="book-author">{book.author}</p>{book.externalUrl && <small className="external-source-label">Wattpad မူရင်းစာမျက်နှာမှ ဖတ်ရှုရန်</small>}</div><button className="round-arrow" type="button" onClick={() => onOpen(book)} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
-    {chapters.length > 1 && <div className="chapter-list" aria-label={`${groupTitle(group)} အခန်းများ`}><span className="chapter-list-label">အခန်း {chapters.length} ခန်း · ဖတ်လိုသည့်အခန်း</span><div className="chapter-picker"><div className="chapter-select-wrap"><select id={`chapter-picker-${book.id}`} value={selectedChapterId} onChange={(event) => setSelectedChapterId(Number(event.target.value))} aria-label={`${groupTitle(group)} အခန်းရွေးရန်`}>{chapters.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapterLabel(chapter)}</option>)}</select></div><button type="button" className="chapter-open-button" onClick={() => selectedChapter && onOpen(selectedChapter)}>ဖတ်မည် →</button></div></div>}
+    {chapters.length > 1 && <div className="chapter-list" aria-label={`${groupTitle(group)} အခန်းများ`}><span className="chapter-list-label">အခန်း {chapters.length} ခန်း · ဖတ်လိုသည့်အခန်း</span><div className="chapter-picker"><div className="chapter-select-wrap"><select id={`chapter-picker-${book.id}`} value={selectedChapterId} onChange={(event) => setSelectedChapterId(Number(event.target.value))} aria-label={`${groupTitle(group)} အခန်းရွေးရန်`}>{chapters.map((chapter, chapterIndex) => <option key={chapter.id} value={chapter.id}>{chapterLabel(chapter, chapterIndex + 1)}</option>)}</select></div><button type="button" className="chapter-open-button" onClick={() => selectedChapter && onOpen(selectedChapter)}>ဖတ်မည် →</button></div></div>}
     <div className="book-stats"><span>{chapters.length > 1 ? `◷ ${chapters.length} ခန်း` : book.externalUrl ? "Wattpad မူရင်း link" : `◷ ${book.readingTime} မိနစ်`}</span><span className={book.externalUrl ? "rights-summary" : book.rights === "full" ? "rights-full" : "rights-summary"}>{book.externalUrl ? "မူရင်းမှာဖတ်မည်" : book.rights === "full" ? "ဖတ်ရှုနိုင်သည်" : "အကျဉ်းချုပ်"}</span></div>
 
     </article>;

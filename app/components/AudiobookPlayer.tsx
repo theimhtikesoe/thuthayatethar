@@ -94,7 +94,6 @@ function AudiobookCover({ book }: { book: Audiobook }) {
 
   return <div className="audiobook-cover" aria-hidden="true">
     {src ? <img src={src} loading="lazy" alt="" onError={() => { if (src !== fallback) setSrc(fallback); else setSrc(null); }} /> : <span>♫</span>}
-    <span className="audiobook-cover-mark">သုတရိပ်သာ · AUDIO</span>
   </div>;
 }
 
@@ -105,7 +104,7 @@ export function AudiobookShelf({ books, onPlay }: { books: Audiobook[]; onPlay: 
     <div className="audiobook-grid">
       {books.map((book) => <article className="audiobook-card" key={book.slug ?? book.id}>
         <AudiobookCover book={book} />
-        <div className="audiobook-card-copy"><small>{book.submissionSource === "telegram" ? "Telegram မှ ရောက်ရှိ" : book.category || "အသံစာအုပ်"}</small><strong>{book.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
+        <div className="audiobook-card-copy"><small>{book.category || "အသံစာအုပ်"}</small><strong>{book.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
         <button type="button" className="audiobook-listen" onClick={() => onPlay(book)} aria-label={`${book.title} ကို နားထောင်မည်`}><span aria-hidden="true">▶</span> နားထောင်မည်</button>
       </article>)}
     </div>

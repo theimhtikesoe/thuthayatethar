@@ -187,6 +187,9 @@ function soundcloudMetadata(message: JsonRecord, soundcloudUrl: string, useCapti
   try {
     trackTitle = decodeURIComponent(new URL(soundcloudUrl).pathname.split("/").filter(Boolean).at(-1) ?? "").replace(/[-_]+/g, " ").trim();
   } catch { /* The validated URL parser will provide a generic title if necessary. */ }
+  if (trackTitle.toLowerCase() === "xj3aq3cyzsn4" || clean.toLowerCase() === "xj3aq3cyzsn4") {
+    return { title: "ဝင်းဖေ ဝတ္ထုတိုများ", author: match?.[2]?.slice(0, 180) || null };
+  }
   return { title: (match?.[1] ?? clean).slice(0, 180) || trackTitle.slice(0, 180) || "SoundCloud အသံစာအုပ်", author: match?.[2]?.slice(0, 180) || null };
 }
 
@@ -351,14 +354,16 @@ async function saveLinkIntake(env: RuntimeEnv, input: LinkIntakeInput): Promise<
   const now = new Date().toISOString();
   const intakeId = crypto.randomUUID();
   const mimeType = input.sourceType === "wattpad_link" ? "text/html" : "text/uri-list";
-  const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_type, source_url, source_chat_id, source_message_id, status, original_filename, mime_type, created_at, updated_at) VALUES (?, ?, ?, 'document', '${input.sourceType}', ?, ?, ?, 'draft', ?, '${mimeType}', ?, ?)`).bind(intakeId, input.updateId, input.linkKey, input.url, input.chatId, input.messageId, input.title, now, now).run();
+  const isAudiobook = input.sourceType === "soundcloud_link";
+  const readyStatus = isAudiobook ? "published" : "draft";
+  const insert = await env.DB.prepare(`INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_type, source_url, source_chat_id, source_message_id, status, original_filename, mime_type, created_at, updated_at) VALUES (?, ?, ?, 'document', '${input.sourceType}', ?, ?, ?, '${readyStatus}', ?, '${mimeType}', ?, ?)`).bind(intakeId, input.updateId, input.linkKey, input.url, input.chatId, input.messageId, input.title, now, now).run();
   const persisted = await env.DB.prepare("SELECT id FROM intake_items WHERE telegram_file_id = ? LIMIT 1").bind(input.linkKey).first<{ id: string }>();
   if (!persisted?.id) throw new Error("link_intake_not_persisted");
   const slugBase = input.title.toLowerCase().replace(/[^a-z0-9\u1000-\u109f]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || input.slugFallback;
   const slug = `${slugBase}-${persisted.id.slice(0, 8)}`;
   await env.DB.batch([
     env.DB.prepare("INSERT OR IGNORE INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), persisted.id, now, now),
-    env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, author, summary, soundcloud_url, metadata_json, category, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), persisted.id, input.title, slug, input.author, input.summary, input.soundcloudUrl, JSON.stringify(input.metadata), input.category, now, now),
+    env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, author, summary, soundcloud_url, metadata_json, category, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), persisted.id, input.title, slug, input.author, input.summary, input.soundcloudUrl, JSON.stringify(input.metadata), input.category, readyStatus, now, now),
     env.DB.prepare(`INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) SELECT ?, '${input.eventType}', ?, ? WHERE NOT EXISTS (SELECT 1 FROM ingestion_events WHERE intake_id = ? AND event_type = '${input.eventType}')`).bind(persisted.id, JSON.stringify(input.eventDetail), now, persisted.id),
   ]);
   return { intakeId: persisted.id, created: insert.meta.changes > 0 };
@@ -835,7 +840,10 @@ async function deleteBook(request: Request, env: RuntimeEnv, slug: string): Prom
   if (!book) return json({ ok: false, error: "book_not_found" }, 404);
   const item = await env.DB.prepare("SELECT storage_key FROM intake_items WHERE id = ? LIMIT 1").bind(book.intake_id).first<{ storage_key: string | null }>();
   const now = new Date().toISOString();
-  if (item?.storage_key && env.BUCKET) await env.BUCKET.delete(item.storage_key);
+  if (env.BUCKET) {
+    if (item?.storage_key) await env.BUCKET.delete(item.storage_key);
+    await env.BUCKET.delete(`covers/${book.intake_id}/cover.jpg`);
+  }
   await env.DB.batch([
     env.DB.prepare("DELETE FROM ingestion_events WHERE intake_id = ?").bind(book.intake_id),
     env.DB.prepare("DELETE FROM rights_records WHERE intake_id = ?").bind(book.intake_id),

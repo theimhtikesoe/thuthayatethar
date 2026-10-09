@@ -40,9 +40,13 @@ function chapterGroupKey(title: string): string {
   return stripChapterNumber(title).toLowerCase();
 }
 
-export function chapterLabel(book: ChapterBook): string {
+function isKnownSeriesWithoutChapterNumber(title: string): boolean {
+  return ["tian guan ci fu", "heaven official's blessing", "heaven officials blessing"].includes(normalizedTitle(title).replace(/[’]/g, "'"));
+}
+
+export function chapterLabel(book: ChapterBook, fallbackNumber?: number): string {
   const chapter = chapterNumberFromTitle(book.title);
-  return chapter === null ? book.title : `အခန်း ${chapter}`;
+  return chapter === null ? (fallbackNumber ? `အခန်း ${fallbackNumber}` : book.title) : `အခန်း ${chapter}`;
 }
 
 export function groupTitle<T extends ChapterBook>(group: ChapterGroup<T>): string {
@@ -51,12 +55,19 @@ export function groupTitle<T extends ChapterBook>(group: ChapterGroup<T>): strin
 }
 
 export function groupBooks<T extends ChapterBook>(books: T[]): ChapterGroup<T>[] {
-  const candidates = new Map<string, Array<{ book: T; index: number; chapter: number }>>();
+  const candidates = new Map<string, Array<{ book: T; index: number; chapter: number | null }>>();
   const result: Array<{ index: number; group: ChapterGroup<T> }> = [];
 
   books.forEach((book, index) => {
     const chapter = chapterNumberFromTitle(book.title);
     if (chapter === null) {
+      if (isKnownSeriesWithoutChapterNumber(book.title)) {
+        const key = `known-series:${chapterGroupKey(book.title)}`;
+        const items = candidates.get(key);
+        if (items) items.push({ book, index, chapter: null });
+        else candidates.set(key, [{ book, index, chapter: null }]);
+        return;
+      }
       // Identical titles can refer to separate works; never merge them by title alone.
       result.push({ index, group: { book, chapters: [book] } });
       return;
@@ -70,9 +81,10 @@ export function groupBooks<T extends ChapterBook>(books: T[]): ChapterGroup<T>[]
 
   candidates.forEach((items) => {
     const chapterNumbers = new Set(items.map((item) => item.chapter));
-    if (items.length > 1 && chapterNumbers.size === items.length) {
+    const isKnownUntitledSeries = items.length > 1 && items.every((item) => item.chapter === null);
+    if (isKnownUntitledSeries || (items.length > 1 && chapterNumbers.size === items.length)) {
       const chapters = [...items]
-        .sort((left, right) => left.chapter - right.chapter)
+        .sort((left, right) => left.chapter === null || right.chapter === null ? left.index - right.index : left.chapter - right.chapter)
         .map((item) => item.book);
       result.push({ index: items[0].index, group: { book: chapters[0], chapters } });
     } else {

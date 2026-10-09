@@ -13,6 +13,16 @@ test("identical book titles remain separate catalog cards", () => {
   assert.deepEqual(groups.map((group) => group.chapters.map(({ id }) => id)), [[1], [2]]);
 });
 
+test("Tian Guan Ci Fu volumes with identical titles share one chapter picker", () => {
+  const volumes = [book(1, "Tian guan ci fu"), book(2, "Tian guan ci fu")];
+  const [group] = groupBooks(volumes);
+  assert.equal(groupBooks(volumes).length, 1);
+  assert.deepEqual(group.chapters.map(({ id }) => id), [1, 2]);
+  assert.equal(groupTitle(group), "Tian guan ci fu");
+  assert.equal(chapterLabel(group.chapters[0], 1), "အခန်း 1");
+  assert.equal(chapterLabel(group.chapters[1], 2), "အခန်း 2");
+});
+
 test("distinct numbered chapters group and sort without colliding with other authors", () => {
   const groups = groupBooks([
     book(1, "ဝတ္ထု Chapter 2", "စာရေးသူ"),
