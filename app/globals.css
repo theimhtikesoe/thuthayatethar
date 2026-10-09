@@ -524,3 +524,68 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
   .pdf-reader-shell > .reader-nav { display: none; }
   .pdf-password-prompt { padding: 22px; }
 }
+
+/* Clear offline actions stay at the top of the catalog, not beneath the book grid. */
+.offline-actions { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 9px; margin: 0 0 16px; }
+.offline-picker-toggle { min-width: 0; width: 100%; min-height: 48px; display: flex; align-items: center; gap: 9px; border: 1px solid rgba(73,109,99,.24); border-radius: 8px; background: rgba(237,245,240,.78); color: var(--ink); padding: 8px 11px; text-align: left; cursor: pointer; }
+.offline-picker-toggle:hover, .offline-picker-toggle.active { border-color: rgba(73,109,99,.5); background: #edf5f0; }
+.offline-action-mark { flex: 0 0 28px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: var(--green); color: white; font-size: 17px; }
+.offline-action-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.offline-action-copy strong { font-size: 10px; }
+.offline-action-copy small { color: var(--muted); font-size: 8px; }
+.offline-action-chevron { color: var(--green); font-size: 17px; }
+.offline-storage { min-width: 0; margin: 0; padding: 0 11px; border: 1px solid var(--line); border-top: 1px solid var(--line); border-radius: 8px; background: rgba(255,253,249,.66); }
+.offline-storage-toggle { min-height: 48px; padding: 6px 0; }
+.offline-storage-toggle > span:first-child { display: grid; gap: 2px; }
+.offline-storage-toggle strong { font-size: 10px; }
+.offline-storage-toggle small { font-size: 8px; }
+.offline-storage-toggle > span:last-child { font-size: 9px; }
+.offline-picker-panel { display: grid; gap: 8px; margin: -7px 0 16px; padding: 12px; border: 1px solid rgba(73,109,99,.2); border-radius: 9px; background: rgba(255,253,249,.92); }
+.offline-picker-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.offline-picker-heading strong { font-size: 10px; }
+.offline-picker-heading small, .offline-picker-footer small, .offline-picker-message, .offline-picker-empty { color: var(--muted); font-size: 9px; }
+.offline-picker-search { min-height: 36px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 7px; background: white; padding: 0 9px; }
+.offline-picker-search > span { color: var(--green); font-size: 17px; }
+.offline-picker-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: 11px; }
+.offline-picker-list { display: grid; max-height: 190px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,.7); }
+.offline-picker-item { min-width: 0; display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-bottom: 1px solid rgba(81,73,60,.08); cursor: pointer; }
+.offline-picker-item:last-child { border-bottom: 0; }
+.offline-picker-item input { flex: 0 0 18px; width: 18px; height: 18px; accent-color: var(--green); }
+.offline-picker-book { min-width: 0; flex: 1; display: grid; gap: 1px; }
+.offline-picker-book strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.offline-picker-book small, .offline-picker-status { color: var(--muted); font-size: 8px; }
+.offline-picker-status { flex: 0 0 auto; }
+.offline-picker-status.is-saved { color: var(--green); }
+.offline-picker-status.is-error { color: #a34e3d; }
+.offline-picker-footer { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 2px; background: rgba(255,253,249,.97); }
+.offline-picker-footer button { min-height: 36px; border: 0; border-radius: 7px; background: var(--green); color: white; padding: 7px 12px; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+.offline-picker-footer button:disabled { opacity: .45; cursor: default; }
+.offline-picker-message { margin: 0; }
+.offline-picker-empty { margin: 0; padding: 14px; text-align: center; }
+@media (max-width: 640px) {
+  .offline-actions { gap: 7px; margin-bottom: 12px; }
+  .offline-picker-toggle { min-height: 46px; gap: 6px; padding: 7px; }
+  .offline-action-mark { flex-basis: 25px; width: 25px; height: 25px; font-size: 15px; }
+  .offline-action-copy strong { font-size: 9px; }
+  .offline-action-copy small { font-size: 7px; }
+  .offline-action-chevron { font-size: 14px; }
+  .offline-storage { padding: 0 7px; }
+  .offline-storage-toggle { gap: 4px; min-height: 46px; }
+  .offline-storage-toggle strong { font-size: 8px; }
+  .offline-storage-toggle small, .offline-storage-toggle > span:last-child { font-size: 7px; }
+  .offline-picker-panel { gap: 7px; margin-top: -4px; padding: 9px; }
+  .offline-picker-list { max-height: 180px; }
+  .offline-picker-footer button { min-height: 36px; padding: 7px 9px; font-size: 9px; }
+}
+
+/* Immersive PDF mode hides chrome so scanned pages expand to the full mobile viewport. */
+.pdf-reader-shell.reader-ui-hidden .reader-header,
+.pdf-reader-shell.reader-ui-hidden > .reader-nav,
+.pdf-reader-shell.reader-ui-hidden .flip-nav { display: none !important; }
+.pdf-reader-shell.reader-ui-hidden .pdf-reader-workspace { flex: 1 1 auto; min-height: 0; padding: 0 !important; }
+.pdf-reader-shell.reader-ui-hidden .flipbook-stage { padding: 0 !important; }
+.reader-controls-reveal { position: absolute; z-index: 20; top: calc(10px + env(safe-area-inset-top)); right: 12px; width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid rgba(81,73,60,.25); border-radius: 50%; background: rgba(255,253,249,.78); color: var(--ink); font-size: 24px; line-height: 1; cursor: pointer; backdrop-filter: blur(8px); }
+.reader-controls-reveal:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+@media (max-width: 640px) {
+  .reader-controls-reveal { top: calc(8px + env(safe-area-inset-top)); right: 9px; width: 34px; height: 34px; }
+}
