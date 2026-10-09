@@ -161,6 +161,10 @@ function maxFileBytes(env: Env): number {
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_FILE_BYTES;
 }
 
+function logCronEvent(event: string, fields: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ component: "telegram-intake-cron", event, ...fields }));
+}
+
 async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
   if (!env.BUCKET || !env.TELEGRAM_BOT_TOKEN) return;
   const item = await env.DB.prepare("SELECT * FROM intake_items WHERE id = ? LIMIT 1").bind(intakeId).first<JsonRecord>();
@@ -267,21 +271,35 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
 }
 
 async function processNextQueuedIntake(env: RuntimeEnv): Promise<boolean> {
-  if (!env.BUCKET || !env.TELEGRAM_BOT_TOKEN) return false;
+  if (!env.BUCKET || !env.TELEGRAM_BOT_TOKEN) {
+    logCronEvent("queue_skipped_missing_binding", { storageAvailable: Boolean(env.BUCKET), processorAvailable: Boolean(env.TELEGRAM_BOT_TOKEN) });
+    return false;
+  }
   const staleBefore = new Date(Date.now() - 20 * 60 * 1000).toISOString();
   const candidate = await env.DB.prepare(`SELECT id FROM intake_items
     WHERE (status = 'received' OR (status = 'downloading' AND updated_at < ?))
       AND NOT EXISTS (SELECT 1 FROM intake_items WHERE status = 'downloading' AND updated_at >= ?)
     ORDER BY created_at ASC LIMIT 1`).bind(staleBefore, staleBefore).first<{ id: string }>();
-  if (!candidate?.id) return false;
+  if (!candidate?.id) {
+    logCronEvent("queue_no_eligible_candidate");
+    return false;
+  }
 
   const claimedAt = new Date().toISOString();
+  logCronEvent("queue_candidate_found", { intakeId: candidate.id });
   const claimed = await env.DB.prepare(`UPDATE intake_items SET status = 'downloading', updated_at = ?
     WHERE id = ? AND (status = 'received' OR (status = 'downloading' AND updated_at < ?))`).bind(claimedAt, candidate.id, staleBefore).run();
-  if (claimed.meta.changes !== 1) return false;
+  if (claimed.meta.changes !== 1) {
+    logCronEvent("queue_claim_lost", { intakeId: candidate.id });
+    return false;
+  }
 
+  logCronEvent("queue_claimed", { intakeId: candidate.id, claimedAt });
   await env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'processing_started', ?, ?)").bind(candidate.id, JSON.stringify({ source: "cron" }), claimedAt).run();
+  logCronEvent("intake_processing_started", { intakeId: candidate.id });
   await processIntake(candidate.id, env);
+  const finalState = await env.DB.prepare("SELECT status FROM intake_items WHERE id = ? LIMIT 1").bind(candidate.id).first<{ status?: string }>();
+  logCronEvent("intake_processing_finished", { intakeId: candidate.id, status: finalState?.status ?? "unknown" });
   return true;
 }
 
@@ -624,8 +642,16 @@ export default {
     if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/book/") && url.pathname.endsWith("/pdf")) return bookPdf(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -4)));
     return json({ ok: false, error: "not_found" }, 404);
   },
-  async scheduled(_controller: { cron: string; scheduledTime: number }, env: Env): Promise<void> {
-    const runtimeEnv = await resolveSecrets(env);
-    await processNextQueuedIntake(runtimeEnv);
+  async scheduled(controller: { cron: string; scheduledTime: number }, env: Env): Promise<void> {
+    const startedAt = Date.now();
+    logCronEvent("cron_tick_started", { cron: controller.cron, scheduledTime: controller.scheduledTime });
+    try {
+      const runtimeEnv = await resolveSecrets(env);
+      const processed = await processNextQueuedIntake(runtimeEnv);
+      logCronEvent("cron_tick_finished", { cron: controller.cron, processed, durationMs: Date.now() - startedAt });
+    } catch (error) {
+      logCronEvent("cron_tick_failed", { cron: controller.cron, durationMs: Date.now() - startedAt, errorType: error instanceof Error ? error.name : "unknown" });
+      throw error;
+    }
   },
 };

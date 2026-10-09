@@ -506,9 +506,10 @@ export default function HomePage() {
           const downloadUrl = window.location.hostname === "thuthayatethar.rz99systems.com" || !book.slug
             ? directPdfUrl
             : bookPdfProxyUrl(book) ?? directPdfUrl;
-          const response = await fetch(downloadUrl, { cache: "no-store" });
-          if (!response.ok) throw new Error("offline_download_failed");
           const cache = await caches.open("thuthayatethar-books");
+          const cached = await cache.match(book.pdfUrl) ?? (book.slug ? await cache.match(`/api/books/${encodeURIComponent(book.slug)}/pdf`) : undefined);
+          const response = cached ?? await fetch(downloadUrl, { cache: "no-store" });
+          if (!response.ok) throw new Error("offline_download_failed");
           await cache.put(book.pdfUrl, response.clone());
           if (book.slug) await cache.put(`/api/books/${encodeURIComponent(book.slug)}/pdf`, response.clone());
           writeLocalValue(`thuthayatethar:offline:${key}`, "1");
@@ -701,11 +702,13 @@ function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; o
 function BookCover({ book, label }: { book: Book; label: string }) {
   const [pdfCover, setPdfCover] = useState<string | null>(null);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
+  const [coverImageLoaded, setCoverImageLoaded] = useState(false);
   // A PDF's first page is a valid cover fallback when ingestion did not
   // receive a separate Telegram thumbnail/cover image.
   const usePdfCover = Boolean(book.pdfUrl) && (!book.coverImage || coverImageFailed);
   useEffect(() => {
     setCoverImageFailed(false);
+    setCoverImageLoaded(false);
     setPdfCover(null);
   }, [book.coverImage, book.pdfUrl]);
   useEffect(() => {
@@ -728,21 +731,14 @@ function BookCover({ book, label }: { book: Book; label: string }) {
     })();
     return () => { active = false; };
   }, [book.pdfUrl, usePdfCover]);
-  const backgroundImage = usePdfCover ? pdfCover : book.coverImage;
-  const hasArtwork = Boolean(backgroundImage) && (!usePdfCover || Boolean(pdfCover));
-  const coverStyle: CSSProperties | undefined = backgroundImage
-    ? {
-        backgroundImage: hasArtwork
-          ? `url(${backgroundImage})`
-          : `linear-gradient(rgba(23,33,43,.25),rgba(23,33,43,.25)), url(${backgroundImage})`,
-        backgroundSize: "cover",
-        backgroundPosition: "center",
-      }
+  const hasArtwork = coverImageLoaded || Boolean(pdfCover);
+  const coverStyle: CSSProperties | undefined = pdfCover
+    ? { backgroundImage: `url(${pdfCover})`, backgroundSize: "cover", backgroundPosition: "center" }
     : undefined;
   return (
     <div className={hasArtwork ? "book-cover book-cover-artwork" : "book-cover"} style={coverStyle}>
-      {book.coverImage && <img className="cover-image-probe" src={book.coverImage} onError={() => setCoverImageFailed(true)} alt="" aria-hidden="true" />}
-      {usePdfCover && !pdfCover && book.pdfUrl && <span className="cover-loading" aria-hidden="true" />}
+      {book.coverImage && !coverImageFailed && <img className="cover-artwork-image" src={book.coverImage} loading={label === "01" ? "eager" : "lazy"} decoding="async" onLoad={() => setCoverImageLoaded(true)} onError={() => setCoverImageFailed(true)} alt="" aria-hidden="true" />}
+      {((book.coverImage && !coverImageLoaded && !coverImageFailed) || (usePdfCover && !pdfCover && book.pdfUrl)) && <span className="cover-loading" aria-hidden="true" />}
       {!hasArtwork && <>
         <span className="cover-number">{label}</span>
         <span className="cover-mark">{book.mark}</span>
@@ -816,9 +812,9 @@ function PdfReader({ book, theme, setTheme, onClose }: { book: Book; theme: Them
       const downloadUrl = window.location.hostname === "thuthayatethar.rz99systems.com" || !book.slug
         ? book.pdfUrl
         : offlinePdfUrl;
-      const response = await fetch(downloadUrl, { cache: "no-store" });
-      if (!response.ok) throw new Error("offline_download_failed");
       const cache = await caches.open("thuthayatethar-books");
+      const response = await cache.match(book.pdfUrl) ?? (book.slug ? await cache.match(offlinePdfUrl) : undefined) ?? await fetch(downloadUrl, { cache: "no-store" });
+      if (!response.ok) throw new Error("offline_download_failed");
       await cache.put(book.pdfUrl, response.clone());
       if (book.slug) await cache.put(`/api/books/${encodeURIComponent(book.slug)}/pdf`, response.clone());
       writeLocalValue(`thuthayatethar:offline:${book.slug ?? book.id}`, "1");

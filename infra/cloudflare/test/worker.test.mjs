@@ -529,3 +529,26 @@ test("supports cross-origin PDF range requests from PDF.js", async () => {
   assert.equal(response.headers.get("access-control-allow-origin"), "https://library.example");
   assert.equal(await response.text(), "%PDF-");
 });
+
+test("logs Cron ticks and idle queue decisions without exposing binding values", async () => {
+  const DB = makeDb();
+  const env = {
+    ...makeEnv(DB),
+    TELEGRAM_BOT_TOKEN: "test-token-must-not-appear-in-logs",
+    BUCKET: { async put() { return null; }, async get() { return null; } },
+  };
+  const entries = [];
+  const originalLog = console.log;
+  console.log = (line) => entries.push(JSON.parse(line));
+
+  try {
+    await worker.scheduled({ cron: "* * * * *", scheduledTime: 1234567890 }, env);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(entries.map((entry) => entry.event), ["cron_tick_started", "queue_no_eligible_candidate", "cron_tick_finished"]);
+  assert.equal(entries[0].scheduledTime, 1234567890);
+  assert.equal(entries[2].processed, false);
+  assert.doesNotMatch(JSON.stringify(entries), /test-token-must-not-appear-in-logs|admin-test-token/);
+});

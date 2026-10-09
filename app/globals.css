@@ -89,7 +89,7 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .book-card:hover { box-shadow: 0 14px 30px rgba(57,48,38,.09); transform: translateY(-2px); }
 .cover-wrap { border: 0; background: transparent; padding: 0; width: 100%; position: relative; display: block; }
 .book-cover { background: var(--book-color); color: var(--book-accent); aspect-ratio: .73; border-radius: 4px 10px 10px 4px; box-shadow: 11px 13px 22px rgba(57,48,38,.11); position: relative; overflow: hidden; padding: 20px 19px; display: flex; flex-direction: column; align-items: flex-start; text-align: left; transition: transform .2s ease, box-shadow .2s ease; }
-.cover-image-probe { display: none; }
+.cover-artwork-image { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 .cover-loading { position: absolute; right: 15px; top: 12px; z-index: 2; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.34); border-top-color: rgba(255,255,255,.88); border-radius: 50%; animation: cover-spin .8s linear infinite; }
 .book-cover:before { content: ''; position: absolute; top: 0; bottom: 0; left: 11px; width: 1px; background: rgba(255,255,255,.48); }
 .book-cover:after { content: ''; position: absolute; width: 130px; height: 130px; border: 1px solid rgba(255,255,255,.5); border-radius: 50%; right: -54px; bottom: -33px; }
