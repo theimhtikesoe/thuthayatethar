@@ -739,6 +739,9 @@ export default function HomePage() {
 function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; onOpen: (book: Book) => void }) {
   const { book, chapters } = group;
   const [selectedChapterId, setSelectedChapterId] = useState<number>(chapters[0]?.id ?? 0);
+  useEffect(() => {
+    if (!chapters.some((chapter) => chapter.id === selectedChapterId)) setSelectedChapterId(chapters[0]?.id ?? 0);
+  }, [chapters, selectedChapterId]);
   const selectedChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0];
   return <article className="book-card" style={{ "--book-color": book.color, "--book-accent": book.accent, "--index": index } as CSSProperties}>
     <button type="button" className="cover-wrap" onClick={() => onOpen(book)} aria-label={`${book.title} အသေးစိတ်ကြည့်ရန်`}>

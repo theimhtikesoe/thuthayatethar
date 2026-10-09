@@ -44,7 +44,12 @@ export function chapterSeriesTitle(title: string): string {
 }
 
 function chapterGroupKey(title: string): string {
-  return stripChapterNumber(title).toLowerCase();
+  const key = stripChapterNumber(title).toLowerCase();
+  // Production ingestion uses this exact English series prefix. Keep it as
+  // one stable key even if a later title normalizer changes punctuation or
+  // inserts a volume label before the chapter number.
+  if (/^tian\s+guan\s+ci\s+fu(?:\s|$)/i.test(key)) return "tian guan ci fu";
+  return key;
 }
 
 function isKnownSeriesWithoutChapterNumber(title: string): boolean {

@@ -49,6 +49,15 @@ test("chapter ranges group with single chapters and keep their full range label"
   assert.deepEqual(groups[0].chapters.map((chapter, index) => chapterLabel(chapter, index + 1)), ["အခန်း 20", "အခန်း 21–88", "အခန်း 26"]);
 });
 
+test("the production Tian Guan Ci Fu chapters 20 through 88 render as one picker", () => {
+  const books = Array.from({ length: 69 }, (_, index) => book(index + 20, `Tian guan ci fu chapter ${index + 20}`, index % 2 ? null : ""));
+  const groups = groupBooks(books);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].chapters.length, 69);
+  assert.deepEqual(groups[0].chapters.map((chapter) => chapter.id), Array.from({ length: 69 }, (_, index) => index + 20));
+  assert.equal(groupTitle(groups[0]), "Tian guan ci fu");
+});
+
 test("Myanmar chapter numerals are recognized and sorted numerically", () => {
   assert.equal(chapterNumberFromTitle("ဇာတ်လမ်း အခန်း ၁၂"), 12);
   const groups = groupBooks([
