@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import dynamic from "next/dynamic";
-import AudiobookPlayer, { AudiobookShelf, playPreparedAudiobook } from "./components/AudiobookPlayer";
+import AudiobookPlayer, { AudiobookShelf } from "./components/AudiobookPlayer";
 import { chapterLabel, groupBooks, groupTitle, type ChapterGroup } from "./catalog-grouping";
 import { formatAudioTime, mostRecentListening } from "./audio-progress";
 import { correctedCatalogTitle } from "./burmese-text";
 import { readOfflineSelection, writeOfflineSelection } from "./offline-storage";
+import { pdfCoverCacheKey, readPdfCover, writePdfCover } from "./pdf-cover-cache";
 
 const FlipBook = dynamic(() => import("./FlipBook"), { ssr: false });
 
@@ -343,7 +344,9 @@ export default function HomePage() {
             pdfUrl: book.pdfUrl || (!book.soundcloud_url && !book.externalUrl ? bookPdfProxyUrl(book) : undefined),
             coverImage: book.coverImage === "/covers/tian-guan-ci-fu.jpg"
               ? "/covers/tian-guan-ci-fu.webp"
-              : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || bookCoverProxyUrl(book),
+              : book.coverImage === bookCoverProxyUrl(book)
+                ? soundcloudCoverProxyUrl(book.soundcloud_url) || undefined
+                : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || undefined,
           }));
           setCatalogBooks(offlineSafeBooks);
           writeLocalValue("thuthayatethar:catalog", JSON.stringify(offlineSafeBooks));
@@ -386,7 +389,7 @@ export default function HomePage() {
             // ingestion catalog currently has no cover object for these PDFs.
             coverImage: isTianGuanCiFu
               ? "/covers/tian-guan-ci-fu.webp"
-              : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || bookCoverProxyUrl(book),
+              : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || undefined,
             externalUrl: book.externalUrl,
             soundcloud_url: book.soundcloud_url,
             sourceType: book.sourceType,
@@ -446,9 +449,6 @@ export default function HomePage() {
   const availableBooks = catalogBooks ?? [];
   function playAudiobook(book: Book) {
     if (!book.soundcloud_url) return;
-    // The prepared SoundCloud iframe is already loaded before this tap. Calling
-    // play here keeps the mobile browser's user-activation grant intact.
-    playPreparedAudiobook(book);
     setAudioBook((current) => {
       const sameIdentity = current && (current.slug ?? String(current.id)) === (book.slug ?? String(book.id));
       return sameIdentity && current?.soundcloud_url === book.soundcloud_url ? current : book;
@@ -734,7 +734,7 @@ export default function HomePage() {
 
       {selected && <BookDetail book={selected} onClose={() => setSelected(null)} onRead={() => openReader(selected)} />}
       {readerBook && <Reader book={readerBook} page={page} setPage={setPage} theme={theme} setTheme={setTheme} fontScale={fontScale} setFontScale={setFontScale} lineHeight={lineHeight} setLineHeight={setLineHeight} onClose={closeReader} onListenAudio={() => playAudiobook(readerBook)} />}
-      <AudiobookPlayer book={audioBook} onClose={closeAudiobookPlayer} preloadBooks={matchingAudioBooks} />
+      <AudiobookPlayer book={audioBook} onClose={closeAudiobookPlayer} />
     </main>
   );
 }
@@ -773,23 +773,44 @@ function BookCover({ book, label }: { book: Book; label: string }) {
   useEffect(() => {
     if (!usePdfCover || !book.pdfUrl) return;
     let active = true;
-    (async () => {
+    let coverObjectUrl: string | null = null;
+    const showCover = (cover: Blob) => {
+      if (!active) return;
+      coverObjectUrl = URL.createObjectURL(cover);
+      setPdfCover(coverObjectUrl);
+    };
+    void (async () => {
+      const cacheKey = pdfCoverCacheKey(book.slug, book.id);
+      const cachedCover = await readPdfCover(cacheKey);
+      if (!active) return;
+      if (cachedCover) {
+        showCover(cachedCover);
+        return;
+      }
+      let pdf: any;
       try {
         const pdfjs: any = await import("pdfjs-dist");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
-        const pdf = await pdfjs.getDocument({ url: book.pdfUrl, withCredentials: false, disableAutoFetch: true, disableStream: false }).promise;
+        pdf = await pdfjs.getDocument({ url: book.pdfUrl, withCredentials: false, disableAutoFetch: true, disableStream: false }).promise;
         const page = await pdf.getPage(1);
         const base = page.getViewport({ scale: 1 });
         const viewport = page.getViewport({ scale: Math.min(1.25, 900 / base.width) });
         const canvas = document.createElement("canvas");
         canvas.width = Math.floor(viewport.width); canvas.height = Math.floor(viewport.height);
         await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
-        if (active) setPdfCover(canvas.toDataURL("image/jpeg", 0.82));
-        await pdf.destroy();
-      } catch { /* Keep the colored cover fallback if the PDF cannot be opened. */ }
+        const cover = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
+        if (cover) {
+          await writePdfCover(cacheKey, cover);
+          showCover(cover);
+        }
+      } catch { /* Keep the designed cover fallback if the PDF cannot be opened. */ }
+      finally { if (pdf) await pdf.destroy().catch(() => {}); }
     })();
-    return () => { active = false; };
-  }, [book.pdfUrl, usePdfCover]);
+    return () => {
+      active = false;
+      if (coverObjectUrl) URL.revokeObjectURL(coverObjectUrl);
+    };
+  }, [book.id, book.slug, book.pdfUrl, usePdfCover]);
   const hasArtwork = coverImageLoaded || Boolean(pdfCover);
   const coverStyle: CSSProperties | undefined = pdfCover
     ? { backgroundImage: `url(${pdfCover})`, backgroundSize: "cover", backgroundPosition: "center" }

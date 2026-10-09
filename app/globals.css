@@ -695,8 +695,12 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .audiobook-section-heading > span { color: var(--muted); font-size: 10px; }
 .audiobook-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 13px; }
 .audiobook-card { min-width: 0; display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px 13px; align-items: start; padding: 11px; border: 1px solid rgba(232,225,215,.9); border-radius: 11px; background: rgba(255,253,249,.9); box-shadow: 0 5px 15px rgba(57,48,38,.045); }
-.audiobook-cover { position: relative; grid-row: span 2; width: 84px; height: 84px; display: grid; place-items: center; overflow: hidden; border-radius: 8px; background: linear-gradient(145deg, #496d63, #1d3532); color: #f5d69a; font-size: 26px; }
-.audiobook-cover img { width: 100%; height: 100%; object-fit: cover; }
+.audiobook-cover { position: relative; grid-row: span 2; width: 84px; height: 84px; display: grid; place-items: center; overflow: hidden; border-radius: 8px; background: linear-gradient(145deg, var(--audiobook-cover-bg, #496d63), #fffdf9); color: var(--audiobook-cover-accent, #1d3532); }
+.audiobook-cover img { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.audiobook-cover-placeholder { position: absolute; inset: 5px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 3px; overflow: hidden; padding: 4px; border: 1px solid color-mix(in srgb, var(--audiobook-cover-accent, #1d3532) 22%, transparent); border-radius: 5px; text-align: center; }
+.audiobook-cover-placeholder span { font-size: 17px; line-height: 1; }
+.audiobook-cover-placeholder strong { display: -webkit-box; max-width: 100%; overflow: hidden; overflow-wrap: anywhere; font-size: 7px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.audiobook-cover-placeholder small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 6px; }
 .audiobook-card-copy { min-width: 0; display: grid; gap: 3px; }
 .audiobook-card-copy small { color: var(--green); font-size: 8px; }
 .audiobook-card-copy strong { display: -webkit-box; overflow-wrap: anywhere; overflow: hidden; font-size: 13px; line-height: 1.7; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
@@ -718,7 +722,6 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .audiobook-open-source { color: var(--green); font-size: 9px; white-space: nowrap; }
 .audiobook-dock-close { flex: 0 0 30px; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 50%; background: #f3eee6; color: var(--muted); font-size: 20px; line-height: 1; }
 .audiobook-engine { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
-.audiobook-preloader { position: fixed; left: -2px; bottom: -2px; width: 1px; height: 1px; opacity: 0; pointer-events: none; border: 0; }
 .audiobook-controls { display: grid; grid-template-columns: 34px minmax(60px, 1fr) auto; align-items: center; gap: 10px; padding: 3px 2px 2px; }
 .audiobook-play-toggle { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--green); color: #fffdf9; font-size: 12px; }
 .audiobook-play-toggle:disabled { opacity: .48; cursor: wait; }

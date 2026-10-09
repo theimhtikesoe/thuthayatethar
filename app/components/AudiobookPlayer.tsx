@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { groupAudiobooks, type AudiobookCoverGroup } from "../audiobook-grouping";
 import {
   audioProgressStorageKey,
@@ -48,7 +49,6 @@ declare global {
 }
 
 let apiPromise: Promise<void> | null = null;
-const preparedWidgets = new Map<string, Widget>();
 function loadWidgetApi(): Promise<void> {
   if (typeof window === "undefined" || window.SC?.Widget) return Promise.resolve();
   if (apiPromise) return apiPromise;
@@ -86,16 +86,26 @@ function soundcloudCoverUrl(url?: string) {
   return url ? `/api/soundcloud/cover?url=${encodeURIComponent(url)}` : null;
 }
 
-function AudiobookCover({ book }: { book: Audiobook }) {
-  const fallback = soundcloudCoverUrl(book.soundcloud_url);
-  const [src, setSrc] = useState(book.coverImage || fallback);
+const audiobookCoverPalette = [["#dbe7df", "#315a50"], ["#f0dfc8", "#80553c"], ["#d9dfef", "#485d83"], ["#eedce5", "#814d68"], ["#dce6ec", "#3d6570"], ["#e8e1ce", "#625638"]];
 
-  useEffect(() => {
-    setSrc(book.coverImage || fallback);
-  }, [book.coverImage, book.soundcloud_url, fallback]);
+function audiobookCoverColors(book: Audiobook) {
+  const identity = `${book.slug ?? book.id}:${book.title}`;
+  const hash = Array.from(identity).reduce((value, character) => (value * 31 + character.charCodeAt(0)) >>> 0, 0);
+  return audiobookCoverPalette[hash % audiobookCoverPalette.length];
+}
 
-  return <div className="audiobook-cover" aria-hidden="true">
-    {src ? <img src={src} loading="lazy" alt="" onError={() => { if (src !== fallback) setSrc(fallback); else setSrc(null); }} /> : <span>♫</span>}
+function AudiobookCover({ book, coverImage }: { book: Audiobook; coverImage?: string }) {
+  const candidates = Array.from(new Set([coverImage || book.coverImage, soundcloudCoverUrl(book.soundcloud_url)].filter((value): value is string => Boolean(value))));
+  const candidateKey = candidates.join("\u0000");
+  const [imageIndex, setImageIndex] = useState(0);
+  useEffect(() => setImageIndex(0), [candidateKey]);
+  const src = candidates[imageIndex];
+  const [background, accent] = audiobookCoverColors(book);
+  const style = { "--audiobook-cover-bg": background, "--audiobook-cover-accent": accent } as CSSProperties;
+
+  return <div className="audiobook-cover" style={style}>
+    {src && <img src={src} loading="lazy" decoding="async" alt={`${book.title} စာအုပ်အဖုံး`} onError={() => setImageIndex((index) => index + 1)} />}
+    <div className="audiobook-cover-placeholder" aria-hidden={Boolean(src)}><span aria-hidden="true">♫</span><strong>{book.title}</strong><small>{book.author || "အသံစာအုပ်"}</small></div>
   </div>;
 }
 
@@ -112,39 +122,6 @@ export function AudiobookShelf({ books, onPlay }: { books: Audiobook[]; onPlay: 
 
 function audiobookRecordKey(book: Audiobook): string {
   return String(book.slug ?? book.id);
-}
-
-export function playPreparedAudiobook(book: Audiobook): boolean {
-  const widget = preparedWidgets.get(audiobookRecordKey(book));
-  if (!widget) return false;
-  widget.play();
-  return true;
-}
-
-function PreparedAudiobookWidget({ book }: { book: Audiobook }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const url = normalizeSoundCloudUrl(book.soundcloud_url);
-
-  useEffect(() => {
-    if (!url || !iframeRef.current) return;
-    let disposed = false;
-    void loadWidgetApi().then(() => {
-      if (disposed || !iframeRef.current || !window.SC?.Widget) return;
-      const widget = window.SC.Widget(iframeRef.current);
-      widget.bind(window.SC.Widget.Events.READY, () => {
-        if (disposed) return;
-        preparedWidgets.set(audiobookRecordKey(book), widget);
-        window.dispatchEvent(new Event("thuthayatethar:audio-widget-ready"));
-      });
-    });
-    return () => {
-      disposed = true;
-      preparedWidgets.delete(audiobookRecordKey(book));
-    };
-  }, [book, url]);
-
-  if (!url) return null;
-  return <iframe ref={iframeRef} className="audiobook-preloader" title="" width="1" height="1" scrolling="no" frameBorder="0" allow="autoplay; encrypted-media" aria-hidden="true" tabIndex={-1} src={`https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}&auto_play=false&hide_related=true&show_comments=false&visual=false&show_user=false&show_reposts=false&show_teaser=false&show_artwork=false`} />;
 }
 
 function audiobookOptionLabel(title: string): string {
@@ -168,7 +145,7 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
   }, [group.books, selectedKey]);
 
   return <article className="audiobook-card" key={group.key}>
-    <AudiobookCover book={book} />
+    <AudiobookCover book={book} coverImage={group.books.find((item) => item.coverImage)?.coverImage} />
     <div className="audiobook-card-copy"><small>{book.category || "အသံစာအုပ်"}</small><strong>{group.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
     <div className="audiobook-track-picker">
       {group.books.length > 1
@@ -179,7 +156,7 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
   </article>;
 }
 
-export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { book: Audiobook | null; onClose: () => void; preloadBooks?: Audiobook[] }) {
+export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | null; onClose: () => void }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<Widget | null>(null);
   const positionRef = useRef(0);
@@ -191,9 +168,7 @@ export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { 
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const resumeAfterVisibilityRef = useRef(false);
-  const [preparedRevision, setPreparedRevision] = useState(0);
   const normalizedUrl = useMemo(() => normalizeSoundCloudUrl(book?.soundcloud_url), [book?.soundcloud_url]);
-  const preparedWidget = book ? preparedWidgets.get(audiobookRecordKey(book)) : null;
   const playerSrc = useMemo(() => normalizedUrl
     ? `https://w.soundcloud.com/player/?url=${encodeURIComponent(normalizedUrl)}&auto_play=true&hide_related=true&show_comments=false&visual=false&show_user=false&show_reposts=false&show_teaser=false&show_artwork=false`
     : "", [normalizedUrl]);
@@ -224,12 +199,6 @@ export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { 
   }, [book, normalizedUrl]);
 
   useEffect(() => {
-    const refreshPreparedWidgets = () => setPreparedRevision((revision) => revision + 1);
-    window.addEventListener("thuthayatethar:audio-widget-ready", refreshPreparedWidgets);
-    return () => window.removeEventListener("thuthayatethar:audio-widget-ready", refreshPreparedWidgets);
-  }, []);
-
-  useEffect(() => {
     if (!book || !normalizedUrl || !("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
     const session = navigator.mediaSession;
     session.metadata = new MediaMetadata({ title: book.title, artist: book.author || "သုတရိပ်သာ", album: "သုတရိပ်သာ · အသံစာအုပ်" });
@@ -256,13 +225,13 @@ export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { 
   }, [book?.slug, book?.id, book?.title, book?.author, normalizedUrl]);
 
   useEffect(() => {
-    if (!book || !normalizedUrl || widgetApiState !== "ready" || (!preparedWidget && (!iframeRef.current || !window.SC?.Widget))) return;
+    if (!book || !normalizedUrl || widgetApiState !== "ready" || !iframeRef.current || !window.SC?.Widget) return;
     let disposed = false;
     let lastUiUpdate = 0;
     let lastProgressSave = 0;
     const soundCloud = window.SC;
-    if (!preparedWidget && !soundCloud?.Widget) return;
-    const widget = preparedWidget ?? soundCloud!.Widget(iframeRef.current!);
+    if (!soundCloud?.Widget) return;
+    const widget = soundCloud.Widget(iframeRef.current);
     widgetRef.current = widget;
     const events = soundCloud?.Widget.Events ?? window.SC!.Widget.Events;
     const saved = readAudioProgress(book, window.localStorage);
@@ -309,10 +278,6 @@ export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { 
       });
     };
     widget.bind(events.READY, initializePlayer);
-    // A preloaded widget may have emitted READY before the Listen tap. In that
-    // case initialize it immediately rather than waiting for an event that has
-    // already happened.
-    if (preparedWidget) initializePlayer();
 
     widget.bind(events.PLAY, () => {
       if (disposed) return;
@@ -389,9 +354,9 @@ export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { 
       if (widgetRef.current === widget) widgetRef.current = null;
       // The iframe is discarded on track changes; this guard prevents stale updates.
     };
-  }, [book, normalizedUrl, playerSrc, widgetApiState, preparedRevision]);
+  }, [book, normalizedUrl, playerSrc, widgetApiState]);
 
-  if (!book || !normalizedUrl || !playerSrc) return <>{preloadBooks.map((item) => <PreparedAudiobookWidget key={audiobookRecordKey(item)} book={item} />)}</>;
+  if (!book || !normalizedUrl || !playerSrc) return null;
 
   const togglePlayback = () => {
     const widget = widgetRef.current;
@@ -430,7 +395,6 @@ export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { 
     {widgetApiState !== "ready" || !playerReady || playerError
       ? <p className="audiobook-player-status" role="status">{widgetApiState === "error" || playerError ? "အသံစာအုပ်ကို ဖွင့်မရပါ။ SoundCloud မူရင်းကို စမ်းဖွင့်ပါ။" : "အသံဖွင့်စက်ကို ပြင်ဆင်နေသည်…"}</p>
       : null}
-    {preloadBooks.map((item) => <PreparedAudiobookWidget key={audiobookRecordKey(item)} book={item} />)}
-    {widgetApiState === "ready" && !preparedWidget && <iframe key={`${book.slug ?? book.id}:${normalizedUrl}`} ref={iframeRef} className="audiobook-engine" title={`${book.title} — SoundCloud အသံရင်းမြစ်`} width="1" height="1" loading="eager" scrolling="no" frameBorder="0" allow="autoplay; encrypted-media" aria-hidden="true" tabIndex={-1} src={playerSrc} />}
+    {widgetApiState === "ready" && <iframe key={`${book.slug ?? book.id}:${normalizedUrl}`} ref={iframeRef} className="audiobook-engine" title={`${book.title} — SoundCloud အသံရင်းမြစ်`} width="1" height="1" loading="eager" scrolling="no" frameBorder="0" allow="autoplay; encrypted-media" aria-hidden="true" tabIndex={-1} src={playerSrc} />}
   </aside>;
 }
