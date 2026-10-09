@@ -328,10 +328,6 @@ export default function HomePage() {
   const [theme, setTheme] = useState<Theme>(() => { if (typeof window === "undefined") return "paper"; const saved = readLocalValue("thuthayatethar:reader-theme"); return saved === "sepia" || saved === "night" ? saved : "paper"; });
   const [fontScale, setFontScale] = useState(1);
   const [lineHeight, setLineHeight] = useState(1.8);
-  const [offlinePackState, setOfflinePackState] = useState<"idle" | "saving" | "done" | "error">("idle");
-  const [offlinePackProgress, setOfflinePackProgress] = useState(0);
-  const [offlinePickerOpen, setOfflinePickerOpen] = useState(false);
-  const [selectedOfflineBooks, setSelectedOfflineBooks] = useState<string[]>([]);
   const [storageOpen, setStorageOpen] = useState(false);
   const [offlineStatuses, setOfflineStatuses] = useState<Record<string, "saved" | "saving" | "error">>({});
   const [storageInfo, setStorageInfo] = useState({ usage: 0, quota: 0, bookCacheBytes: 0 });
@@ -424,26 +420,9 @@ export default function HomePage() {
   }, [catalogBooks]);
 
   const availableBooks = catalogBooks ?? [];
-  const downloadableBooks = availableBooks.filter((book) => book.rights === "full" && Boolean(book.pdfUrl));
   const recentReadings = useMemo(() => getRecentReadings(availableBooks), [availableBooks, progressRevision]);
 
   const offlineBookKey = (book: Book) => book.slug ?? String(book.id);
-  async function cacheBookOffline(book: Book) {
-    if (!book.pdfUrl || !("caches" in window)) throw new Error("offline_unavailable");
-    const response = await fetch(book.pdfUrl, { cache: "no-store" });
-    if (!response.ok) throw new Error("offline_pdf_failed");
-    const cache = await caches.open("thuthayatethar-books");
-    await cache.put(book.pdfUrl, response.clone());
-    const proxyUrl = bookPdfProxyUrl(book);
-    if (proxyUrl && proxyUrl !== book.pdfUrl) await cache.put(proxyUrl, response.clone());
-    if (book.coverImage && !(await cache.match(book.coverImage))) {
-      try {
-        const coverResponse = await fetch(book.coverImage, { cache: "no-store" });
-        if (coverResponse.ok) await cache.put(book.coverImage, coverResponse.clone());
-      } catch { /* Cover artwork is optional; the PDF is the offline requirement. */ }
-    }
-    writeLocalValue(`thuthayatethar:offline:${offlineBookKey(book)}`, "1");
-  }
   async function refreshOfflineStorage() {
     if (!("caches" in window)) return;
     try {
@@ -471,26 +450,12 @@ export default function HomePage() {
   }
   useEffect(() => {
     if (availableBooks.length) void refreshOfflineStorage();
-  }, [catalogBooks, offlinePackState]);
+  }, [catalogBooks]);
   useEffect(() => {
     const refresh = () => { void refreshOfflineStorage(); };
     window.addEventListener("thuthayatethar:offline-cache", refresh);
     return () => window.removeEventListener("thuthayatethar:offline-cache", refresh);
   }, [catalogBooks]);
-  async function downloadGroupFromCard(group: BookGroup) {
-    for (const book of group.chapters.filter((chapter) => chapter.pdfUrl)) {
-      const key = offlineBookKey(book);
-      if (offlineStatuses[key] === "saved") continue;
-      setOfflineStatuses((current) => ({ ...current, [key]: "saving" }));
-      try {
-        await cacheBookOffline(book);
-        setOfflineStatuses((current) => ({ ...current, [key]: "saved" }));
-      } catch {
-        setOfflineStatuses((current) => ({ ...current, [key]: "error" }));
-      }
-    }
-    await refreshOfflineStorage();
-  }
   async function deleteOfflineBook(book: Book) {
     if (!("caches" in window)) return;
     try {
@@ -507,40 +472,6 @@ export default function HomePage() {
     }
   }
 
-  async function saveOfflinePack() {
-    if (!("caches" in window) || !downloadableBooks.length) return;
-    setOfflinePackState("saving");
-    setOfflinePackProgress(0);
-    let failed = false;
-    try {
-      if ("serviceWorker" in navigator) await navigator.serviceWorker.ready;
-      const shell = await caches.open("thuthayatethar-shell-v4");
-      await shell.addAll(["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js", "/covers/tian-guan-ci-fu.webp"]);
-      for (let index = 0; index < downloadableBooks.length; index += 1) {
-        const book = downloadableBooks[index];
-        try {
-          await cacheBookOffline(book);
-        } catch { failed = true; }
-        setOfflinePackProgress(index + 1);
-      }
-      setOfflinePackState(failed ? "error" : "done");
-    } catch {
-      setOfflinePackState("error");
-    }
-  }
-  async function saveSelectedOfflineBooks() {
-    const selected = downloadableBooks.filter((book) => selectedOfflineBooks.includes(offlineBookKey(book)));
-    if (!selected.length) return;
-    setOfflinePackState("saving");
-    setOfflinePackProgress(0);
-    let failed = false;
-    for (let index = 0; index < selected.length; index += 1) {
-      try { await cacheBookOffline(selected[index]); } catch { failed = true; }
-      setOfflinePackProgress(index + 1);
-    }
-    setOfflinePackState(failed ? "error" : "done");
-  }
-
   const filteredBooks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return availableBooks.filter((book) => {
@@ -551,7 +482,7 @@ export default function HomePage() {
     });
   }, [availableBooks, category, query, time]);
   const filteredGroups = useMemo(() => groupBooks(filteredBooks), [filteredBooks]);
-  const savedOfflineBooks = downloadableBooks.filter((book) => offlineStatuses[offlineBookKey(book)] === "saved");
+  const savedOfflineBooks = availableBooks.filter((book) => book.pdfUrl && offlineStatuses[offlineBookKey(book)] === "saved");
   const storageRatio = storageInfo.quota > 0 ? storageInfo.usage / storageInfo.quota : 0;
 
   useEffect(() => {
@@ -609,53 +540,53 @@ export default function HomePage() {
       </header>
 
       <section className="catalog-section" id="catalog">
-        <div className="section-heading"><div><p className="eyebrow">စာကြည့်တိုက်</p></div><div className="catalog-actions"><span className="result-count">{filteredGroups.length} အုပ် ရှာတွေ့သည်</span><button type="button" className="offline-pack-button" onClick={saveOfflinePack} disabled={offlinePackState === "saving" || !downloadableBooks.length}>{offlinePackState === "saving" ? `Offline သိမ်းနေသည် ${offlinePackProgress}/${downloadableBooks.length}` : offlinePackState === "done" ? "✓ Offline အသင့်" : "Offline အားလုံးသိမ်းမည်"}</button><button type="button" className="offline-select-button" onClick={() => setOfflinePickerOpen((open) => !open)} disabled={!downloadableBooks.length}>{offlinePickerOpen ? "ရွေးချယ်မှု ပိတ်မည်" : "စာအုပ်ရွေးသိမ်းမည်"}</button>{offlinePackState === "error" && <small className="offline-pack-error">အချို့စာအုပ်များ မသိမ်းနိုင်ပါ။ Internet ကို စစ်ပါ။</small>}</div></div>
-        {offlinePickerOpen && <section className="offline-picker" aria-label="Offline သိမ်းရန် စာအုပ်ရွေးချယ်ရန်"><div className="offline-picker-head"><strong>Offline သိမ်းမည့်စာအုပ်များ ရွေးပါ</strong><span>{selectedOfflineBooks.length} အုပ် ရွေးထားသည်</span></div><div className="offline-picker-list">{downloadableBooks.map((book) => { const key = offlineBookKey(book); return <label className="offline-picker-item" key={key}><input type="checkbox" checked={selectedOfflineBooks.includes(key)} onChange={() => setSelectedOfflineBooks((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key])} /><span><strong>{book.title}</strong><small>{book.author}{book.slug ? ` · ${book.slug}` : ""}</small></span></label>; })}</div><button type="button" className="offline-save-selected" onClick={saveSelectedOfflineBooks} disabled={offlinePackState === "saving" || !selectedOfflineBooks.length}>{offlinePackState === "saving" ? `ရွေးထားသည်များ သိမ်းနေသည် ${offlinePackProgress}/${selectedOfflineBooks.length}` : "ရွေးထားသည်များ Offline သိမ်းမည်"}</button></section>}
-        {recentReadings.length > 0 && <section className="continue-reading" aria-labelledby="continue-reading-title">
-          <div className="continue-heading"><div><p className="eyebrow">ဖတ်လက်စ</p><h3 id="continue-reading-title">ဆက်လက်ဖတ်ရှုရန်</h3></div><span>ဒီစက်တွင် သိမ်းထားသော ဖတ်ရှုနေရာ</span></div>
-          <div className="continue-grid">{recentReadings.map((item) => {
-            const progress = item.totalPages > 0 ? Math.min(100, Math.round(((item.page + 1) / item.totalPages) * 100)) : 0;
-            return <article className="continue-card" key={item.book.slug ?? item.book.id}>
-              <div className="continue-book-mark" style={{ "--book-color": item.book.color, "--book-accent": item.book.accent } as CSSProperties} aria-hidden="true"><span /></div>
-              <div className="continue-info">
-                <p className="continue-book-title">{groupTitle(item.group)}</p>
-                <h4>{item.group.chapters.length > 1 ? chapterLabel(item.book) : "စာအုပ်တစ်အုပ်လုံး"}</h4>
-                <div className="continue-position"><span>{item.totalPages > 0 ? `စာမျက်နှာ ${item.page + 1} / ${item.totalPages}` : `စာမျက်နှာ ${item.page + 1}`}</span>{item.totalPages > 0 && <span>{progress}%</span>}</div>
-                {item.totalPages > 0 && <div className="continue-progress" role="progressbar" aria-label={`${groupTitle(item.group)} ဖတ်ရှုမှု`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></div>}
-                <button type="button" className="continue-resume" onClick={() => openReader(item.book)} aria-label={`${groupTitle(item.group)} ကို ဆက်ဖတ်မည်`}>ဆက်ဖတ်မည် →</button>
-              </div>
-            </article>;
-          })}</div>
-        </section>}
-        <section className="offline-storage" aria-label="Offline storage manager">
-          <button type="button" className="offline-storage-toggle" onClick={() => { setStorageOpen((open) => !open); if (!storageOpen) void refreshOfflineStorage(); }} aria-expanded={storageOpen}>
-            <span><strong>Offline သိမ်းထားသောစာအုပ်များ</strong><small>{savedOfflineBooks.length} အုပ် · စာအုပ် cache {formatBytes(storageInfo.bookCacheBytes)}</small></span>
-            <span>{storageOpen ? "ပိတ်မည် −" : "Storage စီမံရန် +"}</span>
-          </button>
-          {storageOpen && <div className="offline-storage-panel">
-            <div className="offline-storage-usage"><span>ဤ website ၏ storage သုံးစွဲမှု</span><strong>{storageInfo.quota ? `${formatBytes(storageInfo.usage)} / ${formatBytes(storageInfo.quota)}` : formatBytes(storageInfo.bookCacheBytes)}</strong></div>
-            {storageRatio >= 0.9 && <p className="storage-warning" role="status">သိုလှောင်မှု ပြည့်ခါနီးပါပြီ။ မလိုသော offline စာအုပ်များကို ဖျက်ပြီး နေရာလွတ်လုပ်ပါ။</p>}
-            <div className="offline-storage-list">{savedOfflineBooks.length ? savedOfflineBooks.map((book) => <article className="offline-storage-item" key={offlineBookKey(book)}><span><strong>{book.title}</strong><small>{book.author}</small></span><button type="button" className="offline-delete-button" onClick={() => void deleteOfflineBook(book)}>ဖျက်မည်</button></article>) : <p className="offline-storage-empty">Offline သိမ်းထားသောစာအုပ် မရှိသေးပါ။</p>}</div>
-          </div>}
-        </section>
-        {storageRatio >= 0.9 && !storageOpen && <p className="storage-warning storage-warning-inline" role="status">သိုလှောင်မှု ပြည့်ခါနီးပါပြီ။ Offline storage ကိုစီမံပြီး မလိုသောစာအုပ်များကို ဖျက်ပါ။</p>}
+        <div className="section-heading">
+          <div><p className="eyebrow">စာကြည့်တိုက်</p><h2>စာအုပ်များ</h2></div>
+          <span className="result-count">{filteredGroups.length} အုပ်</span>
+        </div>
+        {recentReadings[0] && (() => {
+          const item = recentReadings[0];
+          const progress = item.totalPages > 0 ? Math.min(100, Math.round(((item.page + 1) / item.totalPages) * 100)) : 0;
+          const title = groupTitle(item.group);
+          return <section className="continue-reading" aria-label="ဖတ်လက်စစာအုပ်">
+            <span className="continue-label">ဖတ်လက်စ</span>
+            <button type="button" className="continue-compact" onClick={() => openReader(item.book)} aria-label={`${title} ကို စာမျက်နှာ ${item.page + 1} မှ ဆက်ဖတ်မည်`}>
+              <span className="continue-summary-text"><strong>{title}</strong><small>{item.totalPages > 0 ? `စာမျက်နှာ ${item.page + 1} / ${item.totalPages}` : `စာမျက်နှာ ${item.page + 1}`}</small></span>
+              <span className="continue-action">ဆက်ဖတ်မည် →</span>
+              {item.totalPages > 0 && <span className="continue-progress" role="progressbar" aria-label={`${title} ဖတ်ရှုမှု`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }} /></span>}
+            </button>
+          </section>;
+        })()}
         <div className="catalog-layout">
           <aside className="filters" aria-label="စာအုပ်စစ်ထုတ်မှုများ">
-            <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="စာအုပ်ရှာရန်..." aria-label="စာအုပ်ရှာရန်" /><kbd>⌘ K</kbd></label>
-            <div className="filter-block"><p>အမျိုးအစား</p>{categories.map((item) => <button type="button" key={item} className={category === item ? "filter-pill selected" : "filter-pill"} onClick={() => setCategory(item)}>{item}<span>{item === "အားလုံး" ? availableBooks.length : availableBooks.filter((book) => book.category === item).length}</span></button>)}</div>
-            <div className="filter-block"><p>ဖတ်ရှုချိန်</p>{times.map((item) => <button type="button" key={item} className={time === item ? "filter-pill selected" : "filter-pill"} onClick={() => setTime(item)}>{item}</button>)}</div>
-            {(query || category !== "အားလုံး" || time !== "အားလုံး") && <button type="button" className="reset-button" onClick={resetFilters}>စစ်ထုတ်မှုများ ရှင်းမည် ↺</button>}
+            <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="စာအုပ်ရှာရန်..." aria-label="စာအုပ်ရှာရန်" /><kbd>⌘ K</kbd></label>
+            <div className="filter-controls">
+              <label className="filter-select"><span>အမျိုးအစား</span><select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="စာအုပ်အမျိုးအစားရွေးရန်">{categories.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+              <label className="filter-select"><span>ဖတ်ရှုချိန်</span><select value={time} onChange={(event) => setTime(event.target.value)} aria-label="ဖတ်ရှုချိန်ရွေးရန်">{times.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+            </div>
+            {(query || category !== "အားလုံး" || time !== "အားလုံး") && <button type="button" className="reset-button" onClick={resetFilters}>စစ်ထုတ်မှု ရှင်းမည်</button>}
           </aside>
           <div className="book-grid" aria-live="polite">
             {catalogLoading && <div className="empty-state"><span>…</span><h3>စာအုပ်များကို ရယူနေသည်</h3><p>နောက်ဆုံး catalog ကို ခဏစောင့်ပေးပါ။</p></div>}
-            {!catalogLoading && filteredGroups.map((group, index) => {
-              const states = group.chapters.filter((book) => book.pdfUrl).map((book) => offlineStatuses[offlineBookKey(book)]);
-              const offlineStatus = states.every((status) => status === "saved") ? "saved" : states.some((status) => status === "saving") ? "saving" : states.some((status) => status === "error") ? "error" : states.some((status) => status === "saved") ? "partial" : "unsaved";
-              return <BookCard key={group.book.id} group={group} index={index} offlineStatus={offlineStatus} onDownload={() => void downloadGroupFromCard(group)} onOpen={(book) => book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)} />;
-            })}
+            {!catalogLoading && filteredGroups.map((group, index) => <BookCard
+              key={group.book.id}
+              group={group}
+              index={index}
+              onOpen={(book) => book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)}
+            />)}
             {!catalogLoading && !filteredGroups.length && <div className="empty-state"><span>⌁</span><h3>ဒီလိုစာအုပ် မတွေ့သေးပါ</h3><p>လက်ရှိ Website catalog ထဲမှာ ထုတ်ဝေထားသောစာအုပ် မရှိသေးပါ။</p><button className="primary-button" type="button" onClick={resetFilters}>အားလုံးပြန်ကြည့်မည်</button></div>}
           </div>
         </div>
+        <section className="offline-storage" aria-label="Offline storage manager">
+          <button type="button" className="offline-storage-toggle" onClick={() => { setStorageOpen((open) => !open); if (!storageOpen) void refreshOfflineStorage(); }} aria-expanded={storageOpen}>
+            <span><strong>Offline သိမ်းထားသော {savedOfflineBooks.length} အုပ်</strong><small>{formatBytes(storageInfo.bookCacheBytes)} · ဤစက်တွင်သာ</small></span>
+            <span>{storageOpen ? "ပိတ်မည် −" : "စီမံရန် +"}</span>
+          </button>
+          {storageOpen && <div className="offline-storage-panel">
+            {storageRatio >= 0.9 && <p className="storage-warning" role="status">သိုလှောင်မှု ပြည့်ခါနီးပါပြီ။ မလိုသောစာအုပ်များကို ဖျက်ပြီး နေရာလွတ်လုပ်ပါ။</p>}
+            <div className="offline-storage-list">{savedOfflineBooks.length ? savedOfflineBooks.map((book) => <article className="offline-storage-item" key={offlineBookKey(book)}><span><strong>{book.title}</strong><small>{book.author}</small></span><button type="button" className="offline-delete-button" onClick={() => void deleteOfflineBook(book)}>ဖျက်မည်</button></article>) : <p className="offline-storage-empty">Offline သိမ်းထားသောစာအုပ် မရှိသေးပါ။</p>}</div>
+          </div>}
+        </section>
       </section>
 
       <footer className="footer"><div className="footer-brand"><span className="brand-mark"><span></span><span></span></span><strong>သုတရိပ်သာ</strong></div><p>မြန်မာစာပေကို အေးဆေးစွာ ဖတ်ရှုရန်။</p><span className="footer-right">© ၂၀၂၅ · Read only library</span></footer>
@@ -666,7 +597,7 @@ export default function HomePage() {
   );
 }
 
-function BookCard({ group, index, offlineStatus, onDownload, onOpen }: { group: BookGroup; index: number; offlineStatus: "saved" | "saving" | "error" | "partial" | "unsaved"; onDownload: () => void; onOpen: (book: Book) => void }) {
+function BookCard({ group, index, onOpen }: { group: BookGroup; index: number; onOpen: (book: Book) => void }) {
   const { book, chapters } = group;
   const [selectedChapterId, setSelectedChapterId] = useState<number>(chapters[0]?.id ?? 0);
   const selectedChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0];
@@ -678,7 +609,7 @@ function BookCard({ group, index, offlineStatus, onDownload, onOpen }: { group: 
     <div className="book-meta"><div><p className="book-category">{book.category} <span>·</span> {book.year}</p><h3>{groupTitle(group)}</h3><p className="book-author">{book.author}</p>{book.externalUrl && <small className="external-source-label">Wattpad မူရင်းစာမျက်နှာမှ ဖတ်ရှုရန်</small>}</div><button className="round-arrow" type="button" onClick={() => onOpen(book)} aria-label="အသေးစိတ်ကြည့်ရန်">↗</button></div>
     {chapters.length > 1 && <div className="chapter-list" aria-label={`${groupTitle(group)} အခန်းများ`}><span className="chapter-list-label">အခန်း {chapters.length} ခန်း · ဖတ်လိုသည့်အခန်း</span><div className="chapter-picker"><div className="chapter-select-wrap"><select id={`chapter-picker-${book.id}`} value={selectedChapterId} onChange={(event) => setSelectedChapterId(Number(event.target.value))} aria-label={`${groupTitle(group)} အခန်းရွေးရန်`}>{chapters.map((chapter) => <option key={chapter.id} value={chapter.id}>{chapterLabel(chapter)}</option>)}</select></div><button type="button" className="chapter-open-button" onClick={() => selectedChapter && onOpen(selectedChapter)}>ဖတ်မည် →</button></div></div>}
     <div className="book-stats"><span>{chapters.length > 1 ? `◷ ${chapters.length} ခန်း` : book.externalUrl ? "Wattpad မူရင်း link" : `◷ ${book.readingTime} မိနစ်`}</span><span className={book.externalUrl ? "rights-summary" : book.rights === "full" ? "rights-full" : "rights-summary"}>{book.externalUrl ? "မူရင်းမှာဖတ်မည်" : book.rights === "full" ? "ဖတ်ရှုနိုင်သည်" : "အကျဉ်းချုပ်"}</span></div>
-    {book.rights === "full" && !book.externalUrl && chapters.some((chapter) => chapter.pdfUrl) && <div className={`book-offline-status ${offlineStatus}`}><span aria-live="polite">{offlineStatus === "saved" ? "✓ Offline သိမ်းပြီး" : offlineStatus === "saving" ? "↓ သိမ်းနေသည်…" : offlineStatus === "error" ? (typeof navigator !== "undefined" && !navigator.onLine ? "Internet မရှိပါ · Online ပြန်ရမှ retry လုပ်ပါ" : "သိမ်းမအောင်မြင်ပါ · ပြန်စမ်းပါ") : offlineStatus === "partial" ? "အချို့အခန်းများ Offline သိမ်းပြီး" : "မသိမ်းရသေး"}</span>{offlineStatus !== "saved" && <button type="button" onClick={onDownload} disabled={offlineStatus === "saving"}>{offlineStatus === "saving" ? "သိမ်းနေသည်" : offlineStatus === "error" ? "ပြန်စမ်းမည်" : "Offline သိမ်းမည်"}</button>}</div>}
+
     </article>;
   }
 
