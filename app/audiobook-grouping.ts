@@ -39,14 +39,14 @@ function numberedChapter(title: string): NumberedChapter | null {
     return Number.isSafeInteger(number) && baseTitle ? { baseTitle, number } : null;
   }
 
-  // Some long-running chapter series carry only a trailing number (for example
-  // chapters 20–88). Short numbered audio parts such as "... 6" and "... 7"
-  // remain distinct recordings rather than becoming one selector.
+  // Some audiobook series carry only a trailing number (for example
+  // "မင်းလူ ... ၅", "... ၆"). Treat the shared title before that number as
+  // the book identity so these parts can be selected from one card.
   const trailing = normalized.match(/(?:^|[\s._-])(\d+)\s*$/);
   if (!trailing) return null;
   const number = Number(trailing[1]);
   const baseTitle = normalized.slice(0, trailing.index).replace(/[\s._-]+$/g, "").replace(/[\s._-]+/g, " ").trim();
-  return Number.isSafeInteger(number) && number >= 20 && baseTitle ? { baseTitle, number } : null;
+  return Number.isSafeInteger(number) && baseTitle ? { baseTitle, number } : null;
 }
 
 function normalizedIdentity(value: string): string {

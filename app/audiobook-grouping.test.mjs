@@ -25,14 +25,15 @@ test("explicit Burmese chapter numbers are grouped and sorted numerically", () =
   assert.deepEqual(groups[0].books.map(({ id }) => id), [2, 1]);
 });
 
-test("numbered audiobook parts 6 and 7 stay separate even when they reuse one cover", () => {
+test("trailing-numbered audiobook parts share one selector when the book title matches", () => {
   const title = "မင်းလူ - အချစ်သည်သက်တော်ရာကျော်ရှည်ပါစေသတည်း";
   const groups = groupAudiobooks([
-    book(1, `${title} ၇`, "/covers/shared.jpg", { author: "မင်းလူ" }),
-    book(2, `${title} ၆`, "/covers/shared.jpg", { author: "မင်းလူ" }),
+    book(1, `${title} ၇`, "/covers/shared.jpg", { author: "Rodney Sann Lwin" }),
+    book(2, `${title} ၆`, "/covers/shared.jpg", { author: "Rodney Sann Lwin" }),
+    book(3, `${title} ၅`, "/covers/shared.jpg", { author: "Rodney Sann Lwin" }),
   ]);
-  assert.equal(groups.length, 2);
-  assert.deepEqual(groups.map((group) => group.books[0].id), [1, 2]);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0].books.map(({ id }) => id), [3, 2, 1]);
 });
 
 test("chapter, part, and episode labels for one audiobook share one selector", () => {

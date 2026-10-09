@@ -113,6 +113,15 @@ function audiobookRecordKey(book: Audiobook): string {
   return String(book.slug ?? book.id);
 }
 
+function audiobookOptionLabel(title: string): string {
+  const normalized = title.normalize("NFKC").replace(/[၀-၉]/g, (digit) => String(digit.charCodeAt(0) - 0x1040));
+  const marked = normalized.match(/\b(?:chapter|part|episode)\s*[-_:()]?\s*(\d+)\b/i)
+    ?? normalized.match(/(?:အခန်း|အပိုင်း)\s*[-_:()]?\s*(\d+)/);
+  if (marked) return `အပိုင်း ${marked[1]}`;
+  const trailing = normalized.match(/(?:^|[\s._-])(\d+)\s*$/);
+  return trailing ? `အပိုင်း ${trailing[1]}` : title;
+}
+
 function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audiobook>; onPlay: (book: Audiobook) => void }) {
   const [selectedKey, setSelectedKey] = useState(() => audiobookRecordKey(group.books[0]));
   const selectedBook = group.books.find((book) => audiobookRecordKey(book) === selectedKey) ?? group.books[0];
@@ -129,7 +138,7 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
     <div className="audiobook-card-copy"><small>{book.category || "အသံစာအုပ်"}</small><strong>{group.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
     <div className="audiobook-track-picker">
       {group.books.length > 1
-        ? <label className="audiobook-track-select"><span>အခန်း / ခေါင်းစဉ်ရွေးပါ</span><select value={audiobookRecordKey(selectedBook)} onChange={(event) => setSelectedKey(event.target.value)} aria-label={`${group.title} အခန်း သို့မဟုတ် ခေါင်းစဉ်ရွေးရန်`}>{group.books.map((item) => <option key={audiobookRecordKey(item)} value={audiobookRecordKey(item)}>{item.title}</option>)}</select></label>
+        ? <label className="audiobook-track-select"><span>အပိုင်း / ခေါင်းစဉ်ရွေးပါ</span><select value={audiobookRecordKey(selectedBook)} onChange={(event) => setSelectedKey(event.target.value)} aria-label={`${group.title} အပိုင်း သို့မဟုတ် ခေါင်းစဉ်ရွေးရန်`}>{group.books.map((item) => <option key={audiobookRecordKey(item)} value={audiobookRecordKey(item)}>{audiobookOptionLabel(item.title)}</option>)}</select></label>
         : <span className="audiobook-single-track">{selectedBook.title}</span>}
       <button type="button" className="audiobook-listen" onClick={() => onPlay(selectedBook)} aria-label={`${selectedBook.title} ကို နားထောင်မည်`}><span aria-hidden="true">▶</span> နားထောင်မည်</button>
     </div>
