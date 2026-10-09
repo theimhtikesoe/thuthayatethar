@@ -56,6 +56,24 @@ test("Tian Guan Ci Fu audio chapters stay together when author metadata differs"
   assert.deepEqual(groups[0].books.map(({ id }) => id), [1, 2]);
 });
 
+test("Shwe U Daung Ratanar Thike uploads with variant titles share one selector", () => {
+  const groups = groupAudiobooks([
+    book(1, "ရွှေဥဒေါင်း - ရတနာသိုက် အပိုင်း(၁) ဝတ္ထု အသံစာအုပ်.m4a", "/covers/one.jpg", { author: "khaing" }),
+    book(2, "ရွှေဥဒါင်း -သိုက်အရစွန့်စားသူ(အပိုင်း၂) ဇာတ်သိမ်းပိုင်း.m4a", "/covers/two.jpg", { author: "khaing" }),
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].books.length, 2);
+});
+
+test("future numbered Make It Come True by Phay Myint uploads share one selector", () => {
+  const groups = groupAudiobooks([
+    book(1, "make it come true - ဖေမြင့် ၁", "/covers/one.jpg", { author: "Aye Pwint Phyu-AP" }),
+    book(2, "make it come true - ဖေမြင့် ၂", "/covers/two.jpg", { author: "Aye Pwint Phyu-AP" }),
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].books.length, 2);
+});
+
 test("identical covers do not merge unrelated or unnumbered recordings", () => {
   const groups = groupAudiobooks([
     book(1, "First audiobook", "/covers/shared.jpg"),

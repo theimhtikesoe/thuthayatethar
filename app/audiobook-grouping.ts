@@ -53,6 +53,18 @@ function normalizedIdentity(value: string): string {
   return normalizeTitleDigits(value).normalize("NFKC").replace(/[’]/g, "'").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function seriesIdentity(baseTitle: string): string {
+  const identity = normalizedIdentity(baseTitle);
+  // These uploads use two title spellings for the same numbered audiobook.
+  if (/^ရွှေဥ(?:ဒေါင်း|ဒါင်း)(?:\s|$)/.test(identity) && /(?:ရတနာသိုက်|သိုက်အရ)/.test(identity)) {
+    return "ရွှေဥဒေါင်း ရတနာသိုက်";
+  }
+  // Keep future numbered uploads of this known ဖေမြင့် title together even
+  // when the uploader appends the part number after the author name.
+  if (/make it come true/.test(identity) && /ဖေမြင့်|ဖေမြင့်/.test(identity)) return "make it come true ဖေမြင့်";
+  return identity;
+}
+
 export function groupAudiobooks<T extends AudiobookShelfBook>(books: T[]): AudiobookCoverGroup<T>[] {
   type ChapterEntry = { book: T; index: number; number: number };
   const chapterGroups = new Map<string, ChapterEntry[]>();
@@ -70,7 +82,7 @@ export function groupAudiobooks<T extends AudiobookShelfBook>(books: T[]): Audio
       return;
     }
     const author = normalizedIdentity(book.author ?? "");
-    const baseTitle = normalizedIdentity(chapter.baseTitle);
+    const baseTitle = seriesIdentity(chapter.baseTitle);
     const isTianGuanCiFu = /^tian\s+guan\s+ci\s+fu(?:\s|$)/i.test(baseTitle);
     // Metadata authors are inconsistent across uploads of the same Tian Guan
     // Ci Fu series, so title identity must win for this known series.

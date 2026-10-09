@@ -258,6 +258,10 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
         if (disposed) return;
         setIsPlaying(!paused);
         setMediaSessionPlaybackState(paused ? "paused" : "playing");
+        // Opening the player is already initiated by the user's Listen click.
+        // Explicitly start the widget after READY so mobile browsers do not
+        // leave the first track waiting for a second tap on the dock button.
+        if (paused) widget.play();
       });
     });
 
