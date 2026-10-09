@@ -390,6 +390,27 @@ async function approveAndPublish(request: Request, env: RuntimeEnv, slug: string
   return json({ ok: true, status: "published", rightsStatus: "approved", slug });
 }
 
+async function approve(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
+  if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+  if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+  const book = await env.DB.prepare("SELECT b.id, b.intake_id, b.publication_status, i.status AS intake_status, i.storage_key FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? LIMIT 1").bind(slug).first<{ id: string; intake_id: string; publication_status: string; intake_status: string; storage_key: string | null }>();
+  if (!book) return json({ ok: false, error: "book_not_found" }, 404);
+  if (!book.storage_key || book.intake_status !== "draft") return json({ ok: false, error: "private_draft_not_ready" }, 409);
+  if (book.publication_status === "published") return json({ ok: true, status: "published", rightsStatus: "approved", slug });
+  let body: JsonRecord = {};
+  try { body = await request.json() as JsonRecord; } catch {}
+  const evidenceNote = typeof body.evidenceNote === "string" ? body.evidenceNote.slice(0, 500) : "Admin dashboard confirmation";
+  const rightsHolder = typeof body.rightsHolder === "string" ? body.rightsHolder.slice(0, 180) : null;
+  const allowedUses = typeof body.allowedUses === "string" ? body.allowedUses.slice(0, 180) : "Website catalog reading";
+  const now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare("INSERT OR IGNORE INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), book.intake_id, now, now),
+    env.DB.prepare("UPDATE rights_records SET rights_status = 'approved', rights_holder = ?, evidence_note = ?, allowed_uses = ?, reviewer = 'admin', reviewed_at = ?, updated_at = ? WHERE intake_id = ?").bind(rightsHolder, evidenceNote, allowedUses, now, now, book.intake_id),
+    env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'rights_approved', ?, ?)").bind(book.intake_id, JSON.stringify({ reviewer: "admin" }), now),
+  ]);
+  return json({ ok: true, status: "approved", rightsStatus: "approved", slug });
+}
+
 async function updateBook(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
   if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
   let body: JsonRecord;
@@ -520,6 +541,7 @@ export default {
     if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv);
     if (url.pathname === "/admin/drafts") return adminDrafts(request, runtimeEnv);
     if (url.pathname.startsWith("/admin/retry/")) return retryIntake(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/retry/".length)));
+    if (url.pathname.startsWith("/admin/approve/")) return approve(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/approve/".length)));
     if (request.method === "POST" && url.pathname.startsWith("/admin/approve-publish/")) return approveAndPublish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/approve-publish/".length)));
     if (request.method === "PUT" && url.pathname.startsWith("/admin/update/")) return updateBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/update/".length)));
     if (request.method === "DELETE" && url.pathname.startsWith("/admin/delete/")) return deleteBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/delete/".length)));
