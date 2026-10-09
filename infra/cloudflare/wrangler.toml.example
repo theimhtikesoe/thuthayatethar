@@ -23,6 +23,10 @@ binding = "TELEGRAM_BOT_TOKEN_STORE"
 store_id = "67d3d264273044adb2b26f1b81d9cfed"
 secret_name = "TELEGRAM_BOT_TOKEN"
 
+[triggers]
+# Drain one D1-backed intake at a time; large transfers outlive waitUntil's 30-second window.
+crons = ["* * * * *"]
+
 # Add this binding after ADMIN_TOKEN is created in the same Secrets Store.
 # [[secrets_store_secrets]]
 # binding = "ADMIN_TOKEN_STORE"

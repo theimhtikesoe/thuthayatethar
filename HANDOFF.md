@@ -6,20 +6,25 @@
 
 ## Current topology
 
-- The public website is hosted by Vercel project `thuthayatethar`; `https://thuthayatethar.rz99systems.com/` is a verified project domain. Cloudflare DNS has an unproxied A record to Vercel (`76.76.21.21`) and the `rz99systems.com` zone has no Worker routes. The website is therefore not served through the legacy Cloudflare proxy Worker. Do not repoint DNS or attach that proxy without a separate reason; its old origin is not used by this domain.
-- The ingestion backend is a separate production Cloudflare Worker: `thuthayatethar-telegram-ingestion` at `https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev`. It is bound to D1 `thuthayatethar-ingestion` (`e6631b37-bcbb-4550-b4c7-3acebb961484`) and the private R2 bucket `thuthayatethar-private-ingestion`.
-- Worker bindings include an admin token, D1/R2, Telegram/relay configuration and secret-store references. Secret values were not read or printed. The catalog served through the Vercel API and the Worker catalog matched exactly at 75 records during this check.
-- The latest 135 MB Telegram PDF reached D1 but ended with `status=failed`; it has no storage key or book draft. The recorded R2 error was that the readable stream had no known length. The cause was wrapping Cloudflare's `FixedLengthStream` in `pipeThrough`, which removed the native known-length marker before `R2Bucket.put` received the stream.
+- The public site is hosted by the Vercel project `thuthayatethar`. Its custom domain points directly to Vercel through an unproxied Cloudflare DNS record; no Cloudflare Worker route serves the site root. Do not repoint DNS or attach the legacy proxy without a separate reason.
+- Telegram intake is handled by the separate production Worker `thuthayatethar-telegram-ingestion` at `https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev`, using D1 `thuthayatethar-ingestion` and the private R2 bucket `thuthayatethar-private-ingestion`.
+- The current Worker bindings include the admin token, D1/R2, Telegram/relay configuration and Secret Store references. Secret values were not read or printed. The live Vercel and Worker catalogs matched at 75 published records during verification.
 
-## Recovery and safety
+## Diagnosed intake failures
 
-- PR #14 fixes the R2 stream handoff, lists failed PDF intakes and their error messages in the authenticated `/admin` screen, and adds a one-shot admin retry endpoint.
-- Retry reuses the stored Telegram file ID and saves the file to private R2 as a draft. It does **not** approve rights or publish the book. Rights evidence still needs human review before publication. If retry fails, the item remains failed with a diagnostic message.
-- Regression tests cover the native `FixedLengthStream.readable` path and retry-to-private-draft behavior. Production retry of the recorded 135 MB intake must be verified after the Worker code and admin UI are deployed.
-- No Telegram `setWebhook` call was made in this work. D1 shows the file reached the Worker intake path, but the Bot API's current `getWebhookInfo` response was not queried; do not claim or change the remote webhook URL based on this handoff alone.
+- The latest Telegram PDFs had D1 intake records but no R2 storage key or private book draft. The first confirmed failure was passing a derived stream without Cloudflare's native known-length marker to `R2Bucket.put`.
+- PR #14 corrected the R2 streaming handoff and added authenticated admin retry. The two retries returned to `received` but remained pending after several minutes.
+- Cloudflare's official runtime documentation explains the second issue: `ctx.waitUntil()` work is cancelled after 30 seconds once the HTTP response is complete. The Worker must not use it for long PDF transfer.
+
+## Durable recovery change
+
+- The follow-up change drains D1 `received` intakes through a one-minute native Worker Cron. A conditional D1 update claims one `downloading` item at a time; a download left `downloading` for 20 minutes is eligible for recovery. Cron invocations can run for up to 15 minutes.
+- Admin retry only changes a failed PDF to `received` and records a retry event; it does not publish. On success, the PDF remains private in R2 and the D1/book draft status becomes `draft`. Human rights review remains a separate step before publication.
+- After deployment, verify that the Worker's Cron schedule is `* * * * *`, then inspect D1 `status`, `storage_key`, and `byte_size` for the two pending records. Do not read the PDF payload to verify storage.
+- Regression tests cover large streaming, retry-to-private-draft, active-claim exclusion and recovery of stale downloads. The real production retry is not complete until D1 shows `draft` with a storage key.
 
 ## Security and operations
 
-- Keep bot/admin/webhook/Cloudflare/relay secrets out of Git, logs, and chat. Never ask the user to paste them into chat.
-- Keep R2 private. The retry path creates a private draft only; publishing remains a separate admin action gated by rights review.
-- For a new release, merge the tested GitHub PR to `main` for Vercel. Deploy Worker **content only** through the Cloudflare script-content API so existing config/bindings remain unchanged; verify `/health`, `/catalog`, then inspect the D1 status and storage metadata of the retried intake without reading the PDF contents.
+- No Telegram `setWebhook` call was made. D1 proves that Telegram documents reached the intake path, but the Bot API's current `getWebhookInfo` was not queried; do not claim or change the remote webhook URL based on this handoff alone.
+- Keep bot/admin/webhook/Cloudflare/relay secrets out of Git, logs and chat. Never ask the user to paste them into chat.
+- The root website deploys through GitHub `main` → Vercel. Cloudflare Worker content deployments must preserve existing bindings and secrets. Verify `/health`, `/catalog`, Cron schedules and intake state after a release.

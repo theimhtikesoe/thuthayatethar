@@ -48,10 +48,12 @@
 - `app.config.ts` — project logo metadata.
 - `app/api/telegram/webhook/route.ts` — Telegram upload group မှ document/photo candidate update လက်ခံသည့် route; webhook secret နှင့် group allowlist ကိုစစ်ဆေးမည်။
 - `.env.example` — secret တန်ဖိုးမပါသော runtime key အမည်များ။
-- `docs/telegram-ingestion.md` — webhook လုပ်ဆောင်ပုံ၊ configuration နှင့် နောက်အဆင့် pipeline မှတ်စုများ။
+- `infra/cloudflare/src/index.ts` — Telegram webhook intake, D1-backed scheduled processing, private R2 storage နှင့် authenticated admin API များ။
+- `infra/cloudflare/schema.sql` — intake, rights review, draft နှင့် event အတွက် Cloudflare D1 schema။
+- `docs/telegram-ingestion.md` — production topology, configuration, retry နှင့် scheduled processing runbook။
 - `docs/zawgyi-unicode-accuracy-and-test-cases.md` — conversion မပါသည့် reader ဆုံးဖြတ်ချက်၊ future note နှင့် navigation/UI test cases များ။
 - `TODO.md` — approved deliverables and acceptance clauses.
 
 ## Telegram webhook phase
 
-Production intake သည် Vercel site မှသီးခြား Cloudflare Worker `POST /telegram/webhook` ကိုအသုံးပြုသည်။ Worker သည် configured webhook secret/group allowlist ကိုစစ်ပြီး D1 တွင် idempotent intake မှတ်တမ်းတင်ကာ PDF များကို private R2 ထဲသို့သာသိမ်းပြီး admin draft ဖန်တီးသည်။ R2 streaming တွင် native `FixedLengthStream.readable` ကိုတိုက်ရိုက်ပေးရမည်; failed PDF များကို `/admin` တွင် error နှင့်ပြသပြီး authenticated retry ဖြင့် private draft သို့ပြန်သိမ်းနိုင်သည်။ Retry သည် rights approval သို့မဟုတ် publish မလုပ်ပါ။ Current path တွင် automated OCR/malware verdict မရှိသေးသောကြောင့် rights evidence၊ content quality နှင့် safety ကိုလူကစစ်ဆေးပြီးမှ publish လုပ်မည်။ Root website သည် Vercel ပေါ်တွင်ရှိပြီး domain ကို Cloudflare Worker proxy ဖြင့်မဖြတ်သန်းပါ။ Public channel များကို source အဖြစ်မသုံးပါ။
+Production intake သည် Vercel site မှသီးခြား Cloudflare Worker `POST /telegram/webhook` ကိုအသုံးပြုသည်။ Worker သည် configured webhook secret/group allowlist ကိုစစ်ပြီး D1 တွင် idempotent `received` intake မှတ်တမ်းတင်သည်။ တစ်မိနစ်လျှင် Worker Cron က pending intake တစ်ခုကို conditional update ဖြင့် `downloading` အဖြစ် claim လုပ်ပြီး အစဉ်လိုက်ဆောင်ရွက်သည်; `downloading` state သည် 20 မိနစ်ကျော် အဟောင်းဖြစ်ပါက recovery လုပ်နိုင်သည်။ ဤနည်းသည် PDF transfer ကြာချိန်ရှည်သည့်အခါ HTTP response ပြီးနောက် 30 စက္ကန့်သာအသက်ရှင်သော `waitUntil` ထဲတွင် မထားစေရန်ဖြစ်သည်။ R2 streaming တွင် native `FixedLengthStream.readable` ကိုတိုက်ရိုက်ပေးပြီး ဖိုင်များကို private R2 ထဲသိမ်းကာ private admin draft ဖန်တီးသည်။ Failed PDF များကို `/admin` တွင် error နှင့်ပြသပြီး authenticated retry လုပ်လျှင် Cron queue ထဲသို့သာပြန်ထည့်သည်; retry သည် rights approval သို့မဟုတ် publish မလုပ်ပါ။ Automated OCR/malware verdict မရှိသေးသောကြောင့် rights evidence၊ content quality နှင့် safety ကိုလူကစစ်ဆေးပြီးမှ publish လုပ်မည်။ Root website သည် Vercel ပေါ်တွင်ရှိပြီး domain ကို Cloudflare Worker proxy ဖြင့်မဖြတ်သန်းပါ။ Public channel များကို source အဖြစ်မသုံးပါ။

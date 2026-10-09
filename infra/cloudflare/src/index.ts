@@ -266,7 +266,26 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
   }
 }
 
-async function receive(request: Request, env: RuntimeEnv, ctx?: ExecutionContext): Promise<Response> {
+async function processNextQueuedIntake(env: RuntimeEnv): Promise<boolean> {
+  if (!env.BUCKET || !env.TELEGRAM_BOT_TOKEN) return false;
+  const staleBefore = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+  const candidate = await env.DB.prepare(`SELECT id FROM intake_items
+    WHERE (status = 'received' OR (status = 'downloading' AND updated_at < ?))
+      AND NOT EXISTS (SELECT 1 FROM intake_items WHERE status = 'downloading' AND updated_at >= ?)
+    ORDER BY created_at ASC LIMIT 1`).bind(staleBefore, staleBefore).first<{ id: string }>();
+  if (!candidate?.id) return false;
+
+  const claimedAt = new Date().toISOString();
+  const claimed = await env.DB.prepare(`UPDATE intake_items SET status = 'downloading', updated_at = ?
+    WHERE id = ? AND (status = 'received' OR (status = 'downloading' AND updated_at < ?))`).bind(claimedAt, candidate.id, staleBefore).run();
+  if (claimed.meta.changes !== 1) return false;
+
+  await env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'processing_started', ?, ?)").bind(candidate.id, JSON.stringify({ source: "cron" }), claimedAt).run();
+  await processIntake(candidate.id, env);
+  return true;
+}
+
+async function receive(request: Request, env: RuntimeEnv): Promise<Response> {
   const expectedSecret = env.TELEGRAM_WEBHOOK_SECRET;
   if (!expectedSecret) return json({ ok: false, error: "webhook_not_configured" }, 503);
   if (!constantTimeEqual(request.headers.get("x-telegram-bot-api-secret-token"), expectedSecret)) return json({ ok: false, error: "unauthorized" }, 401);
@@ -313,7 +332,6 @@ async function receive(request: Request, env: RuntimeEnv, ctx?: ExecutionContext
     env.DB.prepare("INSERT OR IGNORE INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), persistedIntake.id, now, now),
     env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) SELECT ?, 'received', '{}', ? WHERE NOT EXISTS (SELECT 1 FROM ingestion_events WHERE intake_id = ? AND event_type = 'received')").bind(persistedIntake.id, now, persistedIntake.id),
   ]);
-  if (isNew && ctx && env.BUCKET && env.TELEGRAM_BOT_TOKEN) ctx.waitUntil(processIntake(persistedIntake.id, env));
   return json({ ok: true, status: isNew ? "accepted" : "duplicate", updateId: parsed.update_id, intakeId: persistedIntake.id });
 }
 
@@ -335,7 +353,7 @@ async function adminDrafts(request: Request, env: RuntimeEnv): Promise<Response>
   return json({ ok: true, drafts: result.results });
 }
 
-async function retryIntake(request: Request, env: RuntimeEnv, intakeId: string, ctx?: ExecutionContext): Promise<Response> {
+async function retryIntake(request: Request, env: RuntimeEnv, intakeId: string): Promise<Response> {
   if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
   if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
   if (!/^[0-9a-f-]{36}$/i.test(intakeId)) return json({ ok: false, error: "invalid_intake_id" }, 400);
@@ -349,9 +367,6 @@ async function retryIntake(request: Request, env: RuntimeEnv, intakeId: string, 
   const queued = await env.DB.prepare("UPDATE intake_items SET status = 'received', failure_code = NULL, failure_message = NULL, updated_at = ? WHERE id = ? AND status = 'failed'").bind(now, intakeId).run();
   if (queued.meta.changes === 0) return json({ ok: false, error: "intake_not_failed" }, 409);
   await env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'retry_queued', '{}', ?)").bind(intakeId, now).run();
-  const task = processIntake(intakeId, env);
-  if (ctx) ctx.waitUntil(task);
-  else await task;
   return json({ ok: true, status: "retrying", intakeId }, 202);
 }
 
@@ -496,15 +511,15 @@ async function publish(request: Request, env: RuntimeEnv, slug: string): Promise
 }
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const runtimeEnv = await resolveSecrets(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "telegram-ingestion", storage: Boolean(runtimeEnv.BUCKET), processor: Boolean(runtimeEnv.TELEGRAM_BOT_TOKEN) });
     if (request.method === "OPTIONS" && url.pathname.startsWith("/book/") && (url.pathname.endsWith("/pdf") || url.pathname.endsWith("/cover"))) return publicAssetPreflight(runtimeEnv);
     if (url.pathname === "/catalog") return catalog(request, runtimeEnv);
-    if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv, ctx);
+    if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv);
     if (url.pathname === "/admin/drafts") return adminDrafts(request, runtimeEnv);
-    if (url.pathname.startsWith("/admin/retry/")) return retryIntake(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/retry/".length)), ctx);
+    if (url.pathname.startsWith("/admin/retry/")) return retryIntake(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/retry/".length)));
     if (request.method === "POST" && url.pathname.startsWith("/admin/approve-publish/")) return approveAndPublish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/approve-publish/".length)));
     if (request.method === "PUT" && url.pathname.startsWith("/admin/update/")) return updateBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/update/".length)));
     if (request.method === "DELETE" && url.pathname.startsWith("/admin/delete/")) return deleteBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/delete/".length)));
@@ -512,5 +527,9 @@ export default {
     if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/book/") && url.pathname.endsWith("/cover")) return bookCover(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -6)));
     if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/book/") && url.pathname.endsWith("/pdf")) return bookPdf(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -4)));
     return json({ ok: false, error: "not_found" }, 404);
+  },
+  async scheduled(_controller: { cron: string; scheduledTime: number }, env: Env): Promise<void> {
+    const runtimeEnv = await resolveSecrets(env);
+    await processNextQueuedIntake(runtimeEnv);
   },
 };

@@ -1,34 +1,43 @@
 # Cloudflare Telegram ingestion infrastructure
 
-This directory contains the Worker source, D1 schema, and test harness for the Telegram PDF ingestion pipeline.
+This directory contains the production Worker source, D1 schema, Wrangler example, and regression tests for Telegram PDF intake.
 
 ## Production resources
 
 - Worker: `thuthayatethar-telegram-ingestion` at `https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev`.
 - D1: `thuthayatethar-ingestion` (`e6631b37-bcbb-4550-b4c7-3acebb961484`).
 - R2: `thuthayatethar-private-ingestion` (private by default; no public `r2.dev` or custom-domain exposure).
-- The public website domain is a verified Vercel project domain. Its DNS is unproxied and there is no Cloudflare Worker route for the site root; Cloudflare is used here for ingestion and private storage, not as the site's reverse proxy.
-- The Worker receives Telegram/API and relay credentials through secret bindings/Secret Store. Never print, commit, or request those values in chat.
+- The website domain is a verified Vercel project domain. Its DNS is unproxied and there is no Cloudflare Worker route for the site root; Cloudflare is used here for intake and private storage, not as the site's reverse proxy.
+- Telegram/API and relay credentials are provided through secret bindings/Secret Store. Never print, commit, or request secret values in chat.
 
-## Storage and security
+## D1-backed scheduled processing
 
-The bucket lifecycle is configured to abort incomplete multipart uploads after 1 day, delete `tmp/` after 2 days, `ocr-temp/` after 7 days, `quarantine-expiring/` after 14 days, and `failed/` after 30 days. Approved originals, published assets, and rights evidence must use separate prefixes and are not covered by those deletion rules.
+Telegram intake and admin retries first persist a D1 `received` record and return promptly. They must not start long PDF transfers through `ctx.waitUntil()`: Cloudflare cancels HTTP-triggered `waitUntil` work 30 seconds after the response/client disconnect.
 
-Keep originals private. A successful retry creates a D1 book draft and private R2 object only; it does not approve rights or publish the book. Rights evidence and a human admin approval remain prerequisites for publication. The Worker currently does not provide automated OCR or a malware verdict.
+The Worker has a one-minute Cron Trigger (`* * * * *`). Each scheduled invocation:
+
+1. Selects the oldest `received` intake, or a `downloading` item whose `updated_at` is older than 20 minutes.
+2. Uses a conditional D1 update to claim it as `downloading`. A second invocation cannot claim an active download; only one file is processed at a time.
+3. Downloads and validates the Telegram file, streams it to private R2, then records a private D1 book draft. A failure marks the intake `failed` with a bounded diagnostic code; the next admin retry returns it to `received`.
+
+Cron invocations have a 15-minute wall-time limit. The 20-minute stale threshold gives a failed/terminated invocation time to finish or be cancelled before another attempt. Cron changes can take up to 15 minutes to propagate. After deployment, verify the active schedule using the Cloudflare Worker schedules endpoint.
+
+A retry success creates a private draft only. It does not approve rights or publish a book. Rights evidence and human admin approval remain prerequisites. The Worker does not currently provide automated OCR or a malware verdict.
 
 ## Large-file stream requirement
 
-R2 must receive the native `readable` half of `FixedLengthStream` so Cloudflare retains the known-length metadata required for streaming. Do not pass a derived result from `source.pipeThrough(new FixedLengthStream(size))` to `R2Bucket.put`; that can fail with `Provided readable stream must have a known length` for large PDFs.
+R2 must receive the native `readable` half of `FixedLengthStream` so Cloudflare retains the known-length metadata required for streaming. Do not pass a derived stream from `source.pipeThrough(new FixedLengthStream(size))` to `R2Bucket.put`; that can fail with `Provided readable stream must have a known length` for large PDFs.
 
 The intake processor builds `new FixedLengthStream(expectedBytes)`, sends `fixedLengthStream.readable` directly to `BUCKET.put`, and pipes the incoming counted stream into `fixedLengthStream.writable`. The stream is aborted on upload/pipe errors, and the intake stays failed rather than publishing partial content.
 
 ## Admin recovery
 
-The authenticated `/admin` list includes failed intake rows and their error messages. `POST /admin/retry/:intakeId` requires the existing admin token, accepts only a failed PDF intake, prevents duplicate concurrent retries by changing its status conditionally, and schedules private reprocessing. On success, check the resulting D1 `storage_key`, `byte_size`, and `draft` state. Do not read the PDF payload to verify storage.
+The authenticated `/admin` list includes failed intake rows and their error messages. `POST /admin/retry/:intakeId` requires the existing admin token and accepts only a failed PDF intake. It conditionally changes the status to `received`, records `retry_queued`, and returns `202`; the scheduled processor handles it. The UI monitors `received`/`downloading` and reports success only after the D1 row reaches `draft`. Verify `storage_key`, `byte_size`, and status; do not read PDF contents for diagnostics.
 
 ## Validation and deployments
 
-- `pnpm test:ingestion` runs Worker webhook, large-stream, private-draft retry, and PDF range-request tests.
+- `pnpm test:ingestion` covers webhook intake, duplicate delivery, large known-length stream, private-draft retry, stale-claim recovery, size-limit failures, and PDF range requests.
 - `pnpm typecheck` and `pnpm build` validate the Next.js admin proxy/UI.
-- Cloudflare's script-content update API changes Worker code **without touching config or metadata**; use this code-only endpoint so live D1/R2 and secret bindings are preserved. Verify `/health` and `/catalog` after deployment.
+- Cloudflare's script-content API changes Worker code without replacing bindings/settings. Use the dedicated schedules endpoint to set Cron triggers; preserve existing schedules and Worker configuration when editing them.
+- Verify `/health`, `/catalog`, active Cron schedule, then inspect D1 state and storage metadata after production retry.
 - The website UI deploys through GitHub `main` → Vercel. Do not point the site domain at the ingestion Worker or legacy proxy.
