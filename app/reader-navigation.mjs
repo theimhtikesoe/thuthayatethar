@@ -14,3 +14,10 @@ export function adjacentPage(page, total, single, direction) {
   if (direction > 0) return Math.min(total - 1, visible[visible.length - 1]);
   return Math.max(0, visible[0] - 1 - (single ? 1 : 2));
 }
+
+/** PageFlip uses a rightward horizontal drag to request the previous page. */
+export function isPreviousPageSwipe(startX, startY, endX, endY, minDistance = 30) {
+  const dx = endX - startX;
+  const dy = Math.abs(endY - startY);
+  return dx > minDistance && dy < minDistance * 2;
+}

@@ -2,7 +2,7 @@
 
 import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import HTMLFlipBook from "react-pageflip";
-import { adjacentPage, visiblePages } from "./reader-navigation.mjs";
+import { adjacentPage, isPreviousPageSwipe, visiblePages } from "./reader-navigation.mjs";
 import { whiteMarginBounds } from "./reader-margins.mjs";
 
 type PdfDoc = { numPages: number; getPage: (n: number) => Promise<any> };
@@ -58,6 +58,8 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ dist: number; zoom: number; x: number; y: number; px: number; py: number } | null>(null);
   const lastTap = useRef(0);
+  const previousTouch = useRef<{ pointerId: number; x: number; y: number; page: number } | null>(null);
+  const previousSwipeTimer = useRef<number | null>(null);
   const searchRequest = useRef(0);
   const [searchTerm, setSearchTerm] = useState("");
   const [searchMatches, setSearchMatches] = useState<number[]>([]);
@@ -404,6 +406,14 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     if ((e.target as HTMLElement).closest("button,input")) return;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const pts = Array.from(pointers.current.values());
+    if (previousSwipeTimer.current !== null) {
+      window.clearTimeout(previousSwipeTimer.current);
+      previousSwipeTimer.current = null;
+    }
+    if (e.pointerType === "touch" && !zoomed && pts.length === 1) {
+      const page = book.current?.pageFlip()?.getCurrentPageIndex();
+      previousTouch.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, page: typeof page === "number" ? page : current };
+    } else previousTouch.current = null;
     if (pts.length === 2) {
       const mid = localPoint({ clientX: (pts[0].x + pts[1].x) / 2, clientY: (pts[0].y + pts[1].y) / 2 });
       gesture.current = { dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), zoom, x: pan.x, y: pan.y, px: mid.x, py: mid.y };
@@ -441,11 +451,34 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
   const onPointerUp = (e: React.PointerEvent) => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
     pointers.current.delete(e.pointerId);
+    const touch = previousTouch.current;
+    if (touch?.pointerId === e.pointerId) {
+      previousTouch.current = null;
+      if (e.type !== "pointercancel" && zoom <= 1.05 && touch.page > 0 && isPreviousPageSwipe(touch.x, touch.y, e.clientX, e.clientY)) {
+        const previousPage = adjacentPage(touch.page, total, size.single, -1);
+        if (previousPage !== touch.page) {
+          // PageFlip stops recognizing a swipe 250ms after touch start. If its own back-turn
+          // leaves the page unchanged, recover once the built-in flip animation has settled.
+          previousSwipeTimer.current = window.setTimeout(() => {
+            previousSwipeTimer.current = null;
+            const controller = book.current?.pageFlip();
+            if (!controller || controller.getCurrentPageIndex() !== touch.page) return;
+            controller.turnToPage(previousPage);
+            setCurrent(previousPage);
+            setPan({ x: 0, y: 0 });
+          }, 420);
+        }
+      }
+    }
     if (pointers.current.size === 0) {
       gesture.current = null;
       if (zoom < 1.05) setZoomTo(1);
     }
   };
+
+  useEffect(() => () => {
+    if (previousSwipeTimer.current !== null) window.clearTimeout(previousSwipeTimer.current);
+  }, []);
 
   return <div className={`flipbook-wrap${zoomed ? " is-zoomed" : ""}${hideMargins ? " hides-white-margins" : ""}`}>
     <div
@@ -500,30 +533,37 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
         <div className="flip-zoom-hint">ဆွဲ၍ ရွှေ့ကြည့်ပါ · နှစ်ချက်နှိပ်လျှင် ပြန်ချုံ့မည်</div>
       </div>}
     </div>
-    {doc && <footer className="flip-nav">
-      <button type="button" className="flip-nav-btn" onClick={goPrevious} disabled={current === 0} aria-label="အရင်စာမျက်နှာ">‹<span> အရင်သို့</span></button>
-      <form className="flip-search" onSubmit={(event) => { event.preventDefault(); void runSearch(); }}>
-        <input value={searchTerm} onChange={(event) => { searchRequest.current += 1; setSearching(false); setSearchTerm(event.target.value); setSearchMatches([]); setSearchIndex(0); setHasSearched(false); setSearchError(""); }} placeholder="စာအုပ်ထဲ ရှာရန်…" aria-label="PDF ထဲတွင် ရှာရန်" />
-        <button type="submit" disabled={searching}>{searching ? "…" : "ရှာ"}</button>
-        {searchMatches.length > 0 && <button type="button" className="flip-search-result" onClick={() => { const next = (searchIndex + 1) % searchMatches.length; setSearchIndex(next); goTo(searchMatches[next]); }} aria-label="နောက်ရှာတွေ့သည့်စာမျက်နှာသို့သွားမည်">{searchIndex + 1}/{searchMatches.length}</button>}
-        {hasSearched && !searching && searchMatches.length === 0 && <span className="flip-search-empty">{searchError || "မတွေ့ပါ"}</span>}
-      </form>
-      <div className="flip-progress">
-        <button type="button" className="flip-skip-btn" onClick={() => goTo(0)} disabled={current === 0} aria-label="ပထမစာမျက်နှာသို့ သွားမည်" title="ပထမစာမျက်နှာ">«</button>
-        <input type="range" min={1} max={total} value={current + 1} onChange={(e) => goTo(Number(e.target.value) - 1)} aria-label="စာမျက်နှာ ရွေးရန်" />
-        <span className="flip-count" aria-live="polite">{visible.join("–")}<small> / {total}</small></span>
-        <button type="button" className="flip-skip-btn" onClick={() => goTo(total - 1)} disabled={atEnd} aria-label="နောက်ဆုံးစာမျက်နှာသို့ သွားမည်" title="နောက်ဆုံးစာမျက်နှာ">»</button>
+    {doc && <footer className="flip-nav" aria-label="စာဖတ်ထိန်းချုပ်မှု">
+      <div className="flip-primary-controls">
+        <button type="button" className="flip-nav-btn" onClick={goPrevious} disabled={current === 0} aria-label="အရင်စာမျက်နှာ">‹</button>
+        <div className="flip-progress">
+          <span className="flip-count" aria-live="polite">{visible.join("–")}<small> / {total}</small></span>
+          <input type="range" min={1} max={total} value={current + 1} onChange={(event) => goTo(Number(event.target.value) - 1)} aria-label="စာမျက်နှာ ရွေးရန်" />
+        </div>
+        <button type="button" className="flip-nav-btn" onClick={goNext} disabled={atEnd} aria-label="နောက်စာမျက်နှာ">›</button>
       </div>
-      <div className="flip-zoom" role="group" aria-label="ချဲ့/ချုံ့">
-        <button type="button" onClick={() => setZoomTo(zoom - ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label="ချုံ့မည်">−</button>
-        <button type="button" className="flip-zoom-value" onClick={() => setZoomTo(zoomed ? 1 : 2)} aria-label="ချဲ့မှုပြန်ညှိမည်">{Math.round(zoom * 100)}%</button>
-        <button type="button" onClick={() => setZoomTo(zoom + ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label="ချဲ့မည်">+</button>
+      <div className="flip-secondary-controls">
+        <div className="flip-zoom" role="group" aria-label="ချဲ့/ချုံ့">
+          <button type="button" onClick={() => setZoomTo(zoom - ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label="ချုံ့မည်">−</button>
+          <button type="button" className="flip-zoom-value" onClick={() => setZoomTo(zoomed ? 1 : 2)} aria-label="ချэймийг хэвийн болгох">{Math.round(zoom * 100)}%</button>
+          <button type="button" onClick={() => setZoomTo(zoom + ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label="ချဲ့မည်">+</button>
+        </div>
+        <button type="button" className={`flip-bookmark${bookmarks.includes(current) ? " active" : ""}`} onClick={toggleBookmark} aria-pressed={bookmarks.includes(current)} aria-label="စာမျက်နှာ bookmark လုပ်မည်" title="Bookmark">{bookmarks.includes(current) ? "★" : "☆"}</button>
+        <details className="flip-more-tools">
+          <summary aria-label="အခြားဖတ်ရှုကိရိယာများ"><span aria-hidden="true">···</span><span>ကိရိယာများ</span></summary>
+          <div className="flip-more-panel">
+            <form className="flip-search" onSubmit={(event) => { event.preventDefault(); void runSearch(); }}>
+              <input value={searchTerm} onChange={(event) => { searchRequest.current += 1; setSearching(false); setSearchTerm(event.target.value); setSearchMatches([]); setSearchIndex(0); setHasSearched(false); setSearchError(""); }} placeholder="စာအုပ်ထဲ ရှာရန်…" aria-label="PDF ထဲတွင် ရှာရန်" />
+              <button type="submit" disabled={searching}>{searching ? "…" : "ရှာ"}</button>
+              {searchMatches.length > 0 && <button type="button" className="flip-search-result" onClick={() => { const next = (searchIndex + 1) % searchMatches.length; setSearchIndex(next); goTo(searchMatches[next]); }} aria-label="နောက်ရှာတွေ့သည့်စာမျက်နှာသို့သွားမည်">{searchIndex + 1}/{searchMatches.length}</button>}
+              {hasSearched && !searching && searchMatches.length === 0 && <span className="flip-search-empty">{searchError || "မတွေ့ပါ"}</span>}
+            </form>
+            {bookmarks.length > 0 && <label className="flip-bookmark-picker"><span>မှတ်သားထားသည်</span><select className="flip-bookmark-list" value="" onChange={(event) => { if (event.target.value) goTo(Number(event.target.value)); }} aria-label="Bookmark စာမျက်နှာများ"><option value="">စာမျက်နှာရွေးရန်</option>{bookmarks.map((page) => <option key={page} value={page}>{page + 1} / {total}</option>)}</select></label>}
+            <label className="flip-note-label"><span>စာမျက်နှာမှတ်စု</span><input className="flip-note" value={notes[current] ?? ""} onChange={(event) => updateNote(event.target.value)} placeholder="မှတ်စုရေးရန်…" aria-label="လက်ရှိစာမျက်နှာ မှတ်စု" /></label>
+            <button type="button" className="flip-margin-toggle" onClick={() => setHideMargins((value) => !value)} aria-pressed={hideMargins} aria-label="အဖြူအစွန်း ဖျောက်/ဖော်">{hideMargins ? "အဖြူအစွန်း ပြန်ဖော်မည်" : "အဖြူအစွန်း ဖျောက်မည်"}</button>
+          </div>
+        </details>
       </div>
-      <button type="button" className={`flip-bookmark${bookmarks.includes(current) ? " active" : ""}`} onClick={toggleBookmark} aria-pressed={bookmarks.includes(current)} aria-label="စာမျက်နှာ bookmark လုပ်မည်" title="Bookmark">{bookmarks.includes(current) ? "★" : "☆"}</button>
-      {bookmarks.length > 0 && <select className="flip-bookmark-list" value="" onChange={(event) => { if (event.target.value) goTo(Number(event.target.value)); }} aria-label="Bookmark စာမျက်နှာများ"><option value="">မှတ်သားထားသည် ({bookmarks.length})</option>{bookmarks.map((page) => <option key={page} value={page}>{page + 1} / {total}</option>)}</select>}
-      <input className="flip-note" value={notes[current] ?? ""} onChange={(event) => updateNote(event.target.value)} placeholder="မှတ်စု…" aria-label="လက်ရှိစာမျက်နှာ မှတ်စု" />
-      <button type="button" className="flip-margin-toggle" onClick={() => setHideMargins((value) => !value)} aria-pressed={hideMargins} aria-label="အဖြူအစွန်း ဖျောက်/ဖော်" title={hideMargins ? "အဖြူအစွန်း ပြန်ဖော်မည်" : "အဖြူအစွန်း ဖျောက်မည်"}>↥↧</button>
-      <button type="button" className="flip-nav-btn" onClick={goNext} disabled={atEnd} aria-label="နောက်စာမျက်နှာ"><span>နောက်သို့ </span>›</button>
     </footer>}
   </div>;
 }

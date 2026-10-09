@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { adjacentPage, visiblePages } from "./reader-navigation.mjs";
+import { adjacentPage, isPreviousPageSwipe, visiblePages } from "./reader-navigation.mjs";
 
 test("desktop navigation goes cover, complete spreads, then back without skipping", () => {
   assert.deepEqual(visiblePages(0, 6, false), [1]);
@@ -27,4 +27,11 @@ test("single-page and empty books have no out-of-range target", () => {
   assert.equal(adjacentPage(0, 1, false, 1), 0);
   assert.deepEqual(visiblePages(0, 0, false), []);
   assert.equal(adjacentPage(0, 0, false, 1), 0);
+});
+
+test("mobile previous-page recovery accepts only a long-enough horizontal right swipe", () => {
+  assert.equal(isPreviousPageSwipe(100, 100, 131, 120), true);
+  assert.equal(isPreviousPageSwipe(100, 100, 130, 100), false);
+  assert.equal(isPreviousPageSwipe(100, 100, 160, 161), false);
+  assert.equal(isPreviousPageSwipe(100, 100, 40, 100), false);
 });
