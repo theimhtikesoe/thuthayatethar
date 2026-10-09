@@ -131,18 +131,28 @@ function wattpadUrlFor(message: JsonRecord): string | null {
     const entities = message[key];
     if (Array.isArray(entities)) for (const entity of entities) if (isRecord(entity) && typeof entity.url === "string") values.push(entity.url);
   }
-  const match = values.join(" ").match(/https?:\/\/(?:www\.)?wattpad\.com\/story\/\d+(?:[^\s<>]*)?/i);
+  const match = values.join(" ").match(/https?:\/\/(?:www\.)?wattpad\.com\/(?:story\/)?\d+(?:[^\s<>]*)?/i);
   if (!match) return null;
   try {
-    const url = new URL(match[0]);
+    const url = new URL(match[0].replace(/[),.!?;:\]]+$/g, ""));
     return `https://www.wattpad.com${url.pathname}`;
   } catch { return null; }
 }
 
-function wattpadMetadata(message: JsonRecord): { title: string; author: string | null } {
+function wattpadMetadata(message: JsonRecord, wattpadUrl: string): { title: string; author: string | null } {
   const text = [message.text, message.caption].find((value) => typeof value === "string") as string | undefined;
   const match = text?.match(/["“](.+?)["”]\s+by\s+\*?([^*\n]+?)(?:\s+on\s+Wattpad|\s+https?:\/\/|$)/i);
-  return { title: match?.[1]?.trim().slice(0, 180) || "Wattpad စာအုပ်", author: match?.[2]?.trim().slice(0, 180) || null };
+  let linkedTitle = "";
+  try {
+    const parts = new URL(wattpadUrl).pathname.split("/").filter(Boolean);
+    const chapterPath = parts.length === 1 ? parts[0] : "";
+    const storyPath = parts[0] === "story" ? parts[1] ?? "" : "";
+    const identifierAndSlug = chapterPath || storyPath;
+    const slug = identifierAndSlug.replace(/^\d+-?/, "");
+    const part = slug.match(/^part[-_ ]?(\d+)$/i);
+    linkedTitle = part ? `Wattpad အပိုင်း ${part[1]}` : decodeURIComponent(slug).replace(/[-_]+/g, " ").trim();
+  } catch { /* Keep a generic title when the external URL cannot be decoded. */ }
+  return { title: match?.[1]?.trim().slice(0, 180) || linkedTitle.slice(0, 180) || "Wattpad စာအုပ်", author: match?.[2]?.trim().slice(0, 180) || null };
 }
 
 function normalizeSoundCloudUrl(value: unknown): string | null {
@@ -611,7 +621,7 @@ async function receive(request: Request, env: RuntimeEnv): Promise<Response> {
     }
     const saved: { intakeId: string; created: boolean; sourceType: "wattpad_link" | "soundcloud_link" }[] = [];
     if (wattpadUrl) {
-      const metadata = wattpadMetadata(message);
+      const metadata = wattpadMetadata(message, wattpadUrl);
       const result = await saveLinkIntake(env, {
         sourceType: "wattpad_link", eventType: "wattpad_link_received", url: wattpadUrl, linkKey: `wattpad:${wattpadUrl}`,
         updateId: parsed.update_id as number, chatId, messageId: messageId as number, title: metadata.title, author: metadata.author,
@@ -793,7 +803,8 @@ async function approve(request: Request, env: RuntimeEnv, slug: string): Promise
   if (!book) return json({ ok: false, error: "book_not_found" }, 404);
   // An auto-published Telegram PDF has intake status 'published'. It may still receive a rights record afterwards; approve never changes its publication status.
   const alreadyPublished = book.publication_status === "published" && book.intake_status === "published";
-  if ((!book.storage_key && !(book.source_type === "soundcloud_link" && book.soundcloud_url)) || (book.intake_status !== "draft" && !alreadyPublished)) return json({ ok: false, error: "private_draft_not_ready" }, 409);
+  const externalLinkWithoutFile = book.source_type === "wattpad_link" || (book.source_type === "soundcloud_link" && book.soundcloud_url);
+  if ((!book.storage_key && !externalLinkWithoutFile) || (book.intake_status !== "draft" && !alreadyPublished)) return json({ ok: false, error: "private_draft_not_ready" }, 409);
   if (book.publication_status === "published" && book.rights_status === "approved") return json({ ok: true, status: "published", rightsStatus: "approved", slug });
   let body: JsonRecord = {};
   try { body = await request.json() as JsonRecord; } catch {}

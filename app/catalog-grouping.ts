@@ -17,23 +17,30 @@ function normalizedTitle(title: string): string {
   return normalizeDigits(title.normalize("NFKC")).toLowerCase().trim();
 }
 
-export function chapterNumberFromTitle(title: string): number | null {
+function chapterRangeFromTitle(title: string): { start: number; end: number } | null {
   const normalized = normalizedTitle(title);
-  const match = normalized.match(/\b(?:chapter|episode|part)\s*[-_:]?\s*(\d+)\b/i)
-    ?? normalized.match(/(?:အခန်း|အပိုင်း)\s*[-_:]?\s*(\d+)/)
-    ?? normalized.match(/(?:^|[\s._-])(\d+)\s*$/);
+  const match = normalized.match(/\b(?:chapter|episode|part)\s*[-_:]?\s*(\d+)(?:\s*[-–—]\s*(\d+))?/i)
+    ?? normalized.match(/(?:အခန်း|အပိုင်း)\s*[-_:]?\s*(\d+)(?:\s*[-–—]\s*(\d+))?/)
+    ?? normalized.match(/(?:^|[\s._-])(\d+)(?:\s*[-–—]\s*(\d+))?\s*$/);
   if (!match) return null;
-  const value = Number(match[1]);
-  return Number.isSafeInteger(value) ? value : null;
+  const start = Number(match[1]);
+  const end = Number(match[2] ?? match[1]);
+  return Number.isSafeInteger(start) && Number.isSafeInteger(end) ? { start, end } : null;
 }
 
+export function chapterNumberFromTitle(title: string): number | null {
+  return chapterRangeFromTitle(title)?.start ?? null;
+}
 function stripChapterNumber(title: string): string {
   return normalizeDigits(title.normalize("NFKC"))
-    .replace(/\b(?:chapter|episode|part)\s*[-_:]?\s*\d+\b/gi, " ")
-    .replace(/(?:အခန်း|အပိုင်း)\s*[-_:]?\s*\d+/g, " ")
-    .replace(/[\s._-]*\d+\s*$/, "")
+    .replace(/\b(?:chapter|episode|part)\s*[-_:]?\s*\d+(?:\s*[-–—]\s*\d+)?\b/gi, " ")
+    .replace(/(?:အခန်း|အပိုင်း)\s*[-_:]?\s*\d+(?:\s*[-–—]\s*\d+)?/g, " ")
+    .replace(/[\s._-]*\d+(?:\s*[-–—]\s*\d+)?\s*$/, "")
     .replace(/[\s._-]+/g, " ")
     .trim();
+}
+export function chapterSeriesTitle(title: string): string {
+  return stripChapterNumber(title) || title;
 }
 
 function chapterGroupKey(title: string): string {
@@ -45,13 +52,13 @@ function isKnownSeriesWithoutChapterNumber(title: string): boolean {
 }
 
 export function chapterLabel(book: ChapterBook, fallbackNumber?: number): string {
-  const chapter = chapterNumberFromTitle(book.title);
-  return chapter === null ? (fallbackNumber ? `အခန်း ${fallbackNumber}` : book.title) : `အခန်း ${chapter}`;
+  const range = chapterRangeFromTitle(book.title);
+  if (!range) return fallbackNumber ? `အခန်း ${fallbackNumber}` : book.title;
+  return range.start === range.end ? `အခန်း ${range.start}` : `အခန်း ${range.start}–${range.end}`;
 }
-
 export function groupTitle<T extends ChapterBook>(group: ChapterGroup<T>): string {
   if (group.chapters.length < 2) return group.book.title;
-  return stripChapterNumber(group.book.title) || group.book.title;
+  return chapterSeriesTitle(group.book.title);
 }
 
 export function groupBooks<T extends ChapterBook>(books: T[]): ChapterGroup<T>[] {

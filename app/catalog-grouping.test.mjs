@@ -36,6 +36,19 @@ test("distinct numbered chapters group and sort without colliding with other aut
   assert.equal(groupTitle(groupBooks([book(4, "The Long Road Chapter 1"), book(5, "The Long Road Chapter 2")])[0]), "The Long Road");
 });
 
+test("chapter ranges group with single chapters and keep their full range label", () => {
+  const books = [
+    book(1, "Tian guan ci fu chapter 26"),
+    book(2, "Tian guan ci fu chapter 20"),
+    book(3, "Tian guan ci fu chapter ၂၁-၈၈"),
+  ];
+  const groups = groupBooks(books);
+  assert.equal(groups.length, 1);
+  assert.equal(groupTitle(groups[0]), "Tian guan ci fu");
+  assert.deepEqual(groups[0].chapters.map(({ id }) => id), [2, 3, 1]);
+  assert.deepEqual(groups[0].chapters.map((chapter, index) => chapterLabel(chapter, index + 1)), ["အခန်း 20", "အခန်း 21–88", "အခန်း 26"]);
+});
+
 test("Myanmar chapter numerals are recognized and sorted numerically", () => {
   assert.equal(chapterNumberFromTitle("ဇာတ်လမ်း အခန်း ၁၂"), 12);
   const groups = groupBooks([
