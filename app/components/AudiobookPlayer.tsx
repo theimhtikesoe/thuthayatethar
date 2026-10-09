@@ -147,6 +147,7 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
+  const resumeAfterVisibilityRef = useRef(false);
   const normalizedUrl = useMemo(() => normalizeSoundCloudUrl(book?.soundcloud_url), [book?.soundcloud_url]);
   const playerSrc = useMemo(() => normalizedUrl
     ? `https://w.soundcloud.com/player/?url=${encodeURIComponent(normalizedUrl)}&auto_play=true&hide_related=true&show_comments=false&visual=false&show_user=false&show_reposts=false&show_teaser=false&show_artwork=false`
@@ -161,6 +162,7 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
     durationRef.current = 0;
     setPositionMs(0);
     setDurationMs(0);
+    resumeAfterVisibilityRef.current = false;
     if (!book || !normalizedUrl) return;
     let disposed = false;
     void loadWidgetApi().then(() => {
@@ -184,7 +186,10 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
       try { session.setActionHandler(action, handler); } catch { /* This browser does not support the action. */ }
     };
     register("play", () => widgetRef.current?.play());
-    register("pause", () => widgetRef.current?.pause());
+    register("pause", () => {
+      resumeAfterVisibilityRef.current = false;
+      widgetRef.current?.pause();
+    });
     register("seekto", (details) => {
       if (typeof details.seekTime === "number") widgetRef.current?.seekTo(details.seekTime * 1000);
     });
@@ -259,6 +264,31 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
       setMediaSessionPlaybackState("paused");
       widget.getPosition((position) => { if (!disposed) persistPosition(position); });
     });
+
+    // Mobile browsers may suspend a third-party iframe while the PWA is
+    // backgrounded or the screen is locked. Remember whether it was playing
+    // before that lifecycle transition and wake it when the app is visible
+    // again. This does not force playback while hidden, which browsers may
+    // reject, but prevents a silent player after returning to the PWA.
+    const rememberPlaybackBeforeBackground = () => {
+      widget.isPaused((paused) => {
+        if (!disposed) resumeAfterVisibilityRef.current = !paused;
+      });
+    };
+    const resumeAfterBackground = () => {
+      if (disposed || !resumeAfterVisibilityRef.current) return;
+      widget.isPaused((paused) => {
+        if (disposed || !paused) return;
+        widget.play();
+      });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") rememberPlaybackBeforeBackground();
+      else resumeAfterBackground();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", rememberPlaybackBeforeBackground);
+    window.addEventListener("pageshow", resumeAfterBackground);
     widget.bind(events.PLAY_PROGRESS, (event) => {
       if (disposed || typeof event?.currentPosition !== "number" || !Number.isFinite(event.currentPosition)) return;
       const now = Date.now();
@@ -275,6 +305,7 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
     });
     widget.bind(events.FINISH, () => {
       if (disposed) return;
+      resumeAfterVisibilityRef.current = false;
       setIsPlaying(false);
       setMediaSessionPlaybackState("none");
       clearAudioProgress(book, window.localStorage);
@@ -290,6 +321,9 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
 
     return () => {
       disposed = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", rememberPlaybackBeforeBackground);
+      window.removeEventListener("pageshow", resumeAfterBackground);
       if (widgetRef.current === widget) widgetRef.current = null;
       // The iframe is discarded on track changes; this guard prevents stale updates.
     };
@@ -300,7 +334,10 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
   const togglePlayback = () => {
     const widget = widgetRef.current;
     if (!widget || !playerReady) return;
-    if (isPlaying) widget.pause();
+    if (isPlaying) {
+      resumeAfterVisibilityRef.current = false;
+      widget.pause();
+    }
     else widget.play();
   };
 
@@ -331,6 +368,6 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
     {widgetApiState !== "ready" || !playerReady || playerError
       ? <p className="audiobook-player-status" role="status">{widgetApiState === "error" || playerError ? "အသံစာအုပ်ကို ဖွင့်မရပါ။ SoundCloud မူရင်းကို စမ်းဖွင့်ပါ။" : "အသံဖွင့်စက်ကို ပြင်ဆင်နေသည်…"}</p>
       : null}
-    {widgetApiState === "ready" && <iframe key={`${book.slug ?? book.id}:${normalizedUrl}`} ref={iframeRef} className="audiobook-engine" title={`${book.title} — SoundCloud အသံရင်းမြစ်`} width="1" height="1" scrolling="no" frameBorder="0" allow="autoplay" aria-hidden="true" tabIndex={-1} src={playerSrc} />}
+    {widgetApiState === "ready" && <iframe key={`${book.slug ?? book.id}:${normalizedUrl}`} ref={iframeRef} className="audiobook-engine" title={`${book.title} — SoundCloud အသံရင်းမြစ်`} width="1" height="1" loading="eager" scrolling="no" frameBorder="0" allow="autoplay; encrypted-media" aria-hidden="true" tabIndex={-1} src={playerSrc} />}
   </aside>;
 }
