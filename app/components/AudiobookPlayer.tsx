@@ -64,6 +64,11 @@ function loadWidgetApi(): Promise<void> {
   return apiPromise;
 }
 
+function setMediaSessionPlaybackState(state: "none" | "paused" | "playing") {
+  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+  try { navigator.mediaSession.playbackState = state; } catch { /* Ignore unsupported Media Session state updates. */ }
+}
+
 export function normalizeSoundCloudUrl(value?: string | null): string | null {
   if (!value?.trim()) return null;
   try {
@@ -162,6 +167,7 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
     return () => {
       try {
         session.metadata = null;
+        session.playbackState = "none";
         session.setActionHandler("play", null);
         session.setActionHandler("pause", null);
         session.setActionHandler("seekto", null);
@@ -210,17 +216,23 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
         }
       });
       if (saved?.positionMs) widget.seekTo(saved.positionMs);
-      widget.isPaused((paused) => { if (!disposed) setIsPlaying(!paused); });
+      widget.isPaused((paused) => {
+        if (disposed) return;
+        setIsPlaying(!paused);
+        setMediaSessionPlaybackState(paused ? "paused" : "playing");
+      });
     });
 
     widget.bind(events.PLAY, () => {
       if (disposed) return;
       setIsPlaying(true);
+      setMediaSessionPlaybackState("playing");
       persistPosition(positionRef.current);
     });
     widget.bind(events.PAUSE, () => {
       if (disposed) return;
       setIsPlaying(false);
+      setMediaSessionPlaybackState("paused");
       widget.getPosition((position) => { if (!disposed) persistPosition(position); });
     });
     widget.bind(events.PLAY_PROGRESS, (event) => {
@@ -240,12 +252,17 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
     widget.bind(events.FINISH, () => {
       if (disposed) return;
       setIsPlaying(false);
+      setMediaSessionPlaybackState("none");
       clearAudioProgress(book, window.localStorage);
       positionRef.current = 0;
       setPositionMs(0);
       emitProgressChange();
     });
-    widget.bind(events.ERROR, () => { if (!disposed) setPlayerError(true); });
+    widget.bind(events.ERROR, () => {
+      if (disposed) return;
+      setPlayerError(true);
+      setMediaSessionPlaybackState("none");
+    });
 
     return () => {
       disposed = true;
