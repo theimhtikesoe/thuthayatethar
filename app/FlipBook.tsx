@@ -2,7 +2,7 @@
 
 import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import HTMLFlipBook from "react-pageflip";
-import { adjacentPage, visiblePages } from "./reader-navigation.mjs";
+import { adjacentPage, isPreviousPageSwipe, visiblePages } from "./reader-navigation.mjs";
 import { whiteMarginBounds } from "./reader-margins.mjs";
 
 type PdfDoc = { numPages: number; getPage: (n: number) => Promise<any> };
@@ -58,6 +58,8 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ dist: number; zoom: number; x: number; y: number; px: number; py: number } | null>(null);
   const lastTap = useRef(0);
+  const previousTouch = useRef<{ pointerId: number; x: number; y: number; page: number } | null>(null);
+  const previousSwipeTimer = useRef<number | null>(null);
   const searchRequest = useRef(0);
   const [searchTerm, setSearchTerm] = useState("");
   const [searchMatches, setSearchMatches] = useState<number[]>([]);
@@ -404,6 +406,14 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     if ((e.target as HTMLElement).closest("button,input")) return;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const pts = Array.from(pointers.current.values());
+    if (previousSwipeTimer.current !== null) {
+      window.clearTimeout(previousSwipeTimer.current);
+      previousSwipeTimer.current = null;
+    }
+    if (e.pointerType === "touch" && !zoomed && pts.length === 1) {
+      const page = book.current?.pageFlip()?.getCurrentPageIndex();
+      previousTouch.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, page: typeof page === "number" ? page : current };
+    } else previousTouch.current = null;
     if (pts.length === 2) {
       const mid = localPoint({ clientX: (pts[0].x + pts[1].x) / 2, clientY: (pts[0].y + pts[1].y) / 2 });
       gesture.current = { dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y), zoom, x: pan.x, y: pan.y, px: mid.x, py: mid.y };
@@ -441,11 +451,34 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
   const onPointerUp = (e: React.PointerEvent) => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
     pointers.current.delete(e.pointerId);
+    const touch = previousTouch.current;
+    if (touch?.pointerId === e.pointerId) {
+      previousTouch.current = null;
+      if (e.type !== "pointercancel" && zoom <= 1.05 && touch.page > 0 && isPreviousPageSwipe(touch.x, touch.y, e.clientX, e.clientY)) {
+        const previousPage = adjacentPage(touch.page, total, size.single, -1);
+        if (previousPage !== touch.page) {
+          // PageFlip stops recognizing a swipe 250ms after touch start. If its own back-turn
+          // leaves the page unchanged, recover once the built-in flip animation has settled.
+          previousSwipeTimer.current = window.setTimeout(() => {
+            previousSwipeTimer.current = null;
+            const controller = book.current?.pageFlip();
+            if (!controller || controller.getCurrentPageIndex() !== touch.page) return;
+            controller.turnToPage(previousPage);
+            setCurrent(previousPage);
+            setPan({ x: 0, y: 0 });
+          }, 420);
+        }
+      }
+    }
     if (pointers.current.size === 0) {
       gesture.current = null;
       if (zoom < 1.05) setZoomTo(1);
     }
   };
+
+  useEffect(() => () => {
+    if (previousSwipeTimer.current !== null) window.clearTimeout(previousSwipeTimer.current);
+  }, []);
 
   return <div className={`flipbook-wrap${zoomed ? " is-zoomed" : ""}${hideMargins ? " hides-white-margins" : ""}`}>
     <div

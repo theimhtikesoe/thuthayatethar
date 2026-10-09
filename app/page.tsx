@@ -654,13 +654,12 @@ export default function HomePage() {
           {offlineBatchMessage && <p className="offline-picker-message" role="status">{offlineBatchMessage}</p>}
         </section>}
         <div className="catalog-layout">
-          <aside className="filters" aria-label="စာအုပ်စစ်ထုတ်မှုများ">
-            <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="စာအုပ်ရှာရန်..." aria-label="စာအုပ်ရှာရန်" /><kbd>⌘ K</kbd></label>
-            <div className="filter-controls">
+          <aside className="filters" aria-label="စာအုပ်ရှာဖွေမှု">
+            <div className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="စာအုပ်ရှာရန်..." aria-label="စာအုပ်ရှာရန်" />{query ? <button type="button" className="search-clear" onClick={() => setQuery("")} aria-label="ရှာဖွေမှု ရှင်းရန်">×</button> : <kbd>⌘ K</kbd>}</div>
+            <div className="filter-controls" hidden>
               <label className="filter-select"><span>အမျိုးအစား</span><select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="စာအုပ်အမျိုးအစားရွေးရန်">{categories.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
               <label className="filter-select"><span>ဖတ်ရှုချိန်</span><select value={time} onChange={(event) => setTime(event.target.value)} aria-label="ဖတ်ရှုချိန်ရွေးရန်">{times.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
             </div>
-            {(query || category !== "အားလုံး" || time !== "အားလုံး") && <button type="button" className="reset-button" onClick={resetFilters}>စစ်ထုတ်မှု ရှင်းမည်</button>}
           </aside>
           <div className="book-grid" aria-live="polite">
             {catalogLoading && <div className="empty-state"><span>…</span><h3>စာအုပ်များကို ရယူနေသည်</h3><p>နောက်ဆုံး catalog ကို ခဏစောင့်ပေးပါ။</p></div>}
