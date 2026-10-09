@@ -126,6 +126,50 @@ function makeEnv(DB) {
   };
 }
 
+function makeSoundCloudDb() {
+  const state = { items: new Map(), updateIds: new Set(), rights: new Set(), books: new Map(), events: new Set(), batches: 0 };
+  return {
+    state,
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...args) { values = args; return this; },
+        async run() {
+          if (sql.includes("INSERT OR IGNORE INTO intake_items")) {
+            const [id, updateId, fileKey, sourceUrl, chatId, messageId, title, createdAt, updatedAt] = values;
+            if (state.items.has(fileKey) || state.updateIds.has(updateId)) return { meta: { changes: 0 } };
+            state.items.set(fileKey, { id, updateId, fileKey, sourceUrl, chatId, messageId, title, createdAt, updatedAt });
+            state.updateIds.add(updateId);
+            return { meta: { changes: 1 } };
+          }
+          throw new Error(`Unexpected SoundCloud D1 run query: ${sql}`);
+        },
+        async first() {
+          if (sql.includes("WHERE telegram_file_id = ?")) {
+            const item = state.items.get(values[0]);
+            return item ? { id: item.id } : null;
+          }
+          throw new Error(`Unexpected SoundCloud D1 first query: ${sql}`);
+        },
+        get sql() { return sql; },
+        get values() { return values; },
+      };
+    },
+    async batch(statements) {
+      state.batches += 1;
+      for (const statement of statements) {
+        if (statement.sql.includes("INSERT OR IGNORE INTO rights_records")) state.rights.add(statement.values[1]);
+        else if (statement.sql.includes("INSERT OR IGNORE INTO book_drafts")) {
+          const [id, intakeId, title, slug, author, summary, soundcloudUrl, metadataJson] = statement.values;
+          if (!state.books.has(intakeId)) state.books.set(intakeId, { id, intakeId, title, slug, author, category: "အသံစာအုပ်", summary, soundcloudUrl, metadataJson });
+        } else if (statement.sql.includes("INSERT INTO ingestion_events")) state.events.add(statement.values[0]);
+        else throw new Error(`Unexpected SoundCloud D1 batch query: ${statement.sql}`);
+      }
+      return [];
+    },
+  };
+}
+
 function makeRequest(fileSize = 4096, { fileName = "book.pdf", mimeType = "application/pdf", caption = "" } = {}) {
   return new Request("https://worker.test/telegram/webhook", {
     method: "POST",
@@ -301,6 +345,62 @@ test("retains a SoundCloud URL sent with a PDF until draft creation", async () =
   const response = await worker.fetch(makeRequest(4096, { caption: "https://soundcloud.com/artist/audiobook" }), makeEnv(DB));
   assert.equal(response.status, 200);
   assert.equal(DB.state.intakeItem.source_url, "https://soundcloud.com/artist/audiobook");
+});
+
+test("expands a SoundCloud popular-tracks page into separate idempotent review drafts", async () => {
+  const channelUrl = "https://soundcloud.com/myanmar-audio-books/popular-tracks";
+  const page = `<!doctype html><html><body>
+    <article class="audible" itemprop="track"><h2 itemprop="name"><a itemprop="url" href="/myanmar-audio-books/track-one">ပထမ အသံစာအုပ် &amp; အပို</a> by <a href="/myanmar-audio-books">Myanmar Audio Books</a></h2></article>
+    <article class="audible" itemprop="track"><h2 itemprop="name"><a itemprop="url" href="/myanmar-audio-books/track-two">ဒုတိယ အသံစာအုပ်</a> by <a href="/myanmar-audio-books">Myanmar Audio Books</a></h2></article>
+    <article class="audible" itemprop="track"><h2 itemprop="name"><a itemprop="url" href="/myanmar-audio-books/track-one">ထပ်နေသော track</a> by <a href="/myanmar-audio-books">Myanmar Audio Books</a></h2></article>
+  </body></html>`;
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async (input) => {
+    fetchCalls += 1;
+    assert.equal(String(input), channelUrl);
+    return new Response(page, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  };
+  const DB = makeSoundCloudDb();
+  const env = makeEnv(DB);
+  const request = () => new Request("https://worker.test/telegram/webhook", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": "test-secret" },
+    body: JSON.stringify({
+      update_id: 72,
+      message: {
+        message_id: 18,
+        chat: { id: -12345, type: "supergroup" },
+        text: channelUrl,
+      },
+    }),
+  });
+  try {
+    const response = await worker.fetch(request(), env);
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.deepEqual(payload, { ok: true, status: "accepted", sourceType: "soundcloud_channel", trackCount: 2, created: 2, duplicates: 0 });
+    assert.equal(fetchCalls, 1);
+    assert.equal(DB.state.items.size, 2);
+    assert.equal(DB.state.books.size, 2);
+    assert.equal(DB.state.rights.size, 2);
+    assert.equal(DB.state.events.size, 2);
+    const books = [...DB.state.books.values()];
+    assert.deepEqual(books.map((book) => book.soundcloudUrl).sort(), [
+      "https://soundcloud.com/myanmar-audio-books/track-one",
+      "https://soundcloud.com/myanmar-audio-books/track-two",
+    ]);
+    assert.equal(books.find((book) => book.soundcloudUrl.endsWith("track-one")).title, "ပထမ အသံစာအုပ် & အပို");
+    assert.ok(books.every((book) => book.category === "အသံစာအုပ်"));
+
+    const replay = await worker.fetch(request(), env);
+    assert.deepEqual(await replay.json(), { ok: true, status: "duplicate", sourceType: "soundcloud_channel", trackCount: 2, created: 0, duplicates: 2 });
+    assert.equal(DB.state.items.size, 2);
+    assert.equal(DB.state.books.size, 2);
+    assert.equal(fetchCalls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("repairs rights and received-event rows after an interrupted D1 batch", async () => {

@@ -53,6 +53,9 @@ type MediaType = "document" | "photo";
 const MAX_UPDATE_BYTES = 256 * 1024;
 const DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024;
 const AUTO_PUBLISH_CUTOFF = new Date().toISOString();
+const MAX_SOUNDCLOUD_PAGE_BYTES = 1024 * 1024;
+const MAX_SOUNDCLOUD_CHANNEL_TRACKS = 50;
+const SOUNDCLOUD_FETCH_TIMEOUT_MS = 8_000;
 
 async function secretValue(value: string | SecretStoreBinding | undefined): Promise<string | undefined> {
   return typeof value === "string" ? value : value ? await value.get() : undefined;
@@ -145,6 +148,8 @@ function normalizeSoundCloudUrl(value: unknown): string | null {
     const url = new URL(value.trim());
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
     if (url.protocol !== "https:" || (host !== "soundcloud.com" && host !== "on.soundcloud.com")) return null;
+    url.pathname = url.pathname.replace(/\/+$/, "") || "/";
+    url.search = "";
     url.hash = "";
     return url.toString();
   } catch { return null; }
@@ -176,6 +181,171 @@ function soundcloudMetadata(message: JsonRecord, soundcloudUrl: string): { title
     trackTitle = decodeURIComponent(new URL(soundcloudUrl).pathname.split("/").filter(Boolean).at(-1) ?? "").replace(/[-_]+/g, " ").trim();
   } catch { /* The validated URL parser will provide a generic title if necessary. */ }
   return { title: (match?.[1] ?? clean).slice(0, 180) || trackTitle.slice(0, 180) || "SoundCloud အသံစာအုပ်", author: match?.[2]?.slice(0, 180) || null };
+}
+
+type SoundCloudTrack = { url: string; title: string; author: string | null };
+
+function isSoundCloudChannelUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.hostname.toLowerCase().replace(/^www\./, "") !== "soundcloud.com") return false;
+    const parts = url.pathname.split("/").filter(Boolean).map((part) => part.toLowerCase());
+    return parts.length === 1 || (parts.length === 2 && ["popular-tracks", "tracks"].includes(parts[1]));
+  } catch { return false; }
+}
+
+function htmlAttribute(tag: string, name: string): string | null {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = tag.match(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+  return match ? (match[1] ?? match[2] ?? match[3] ?? null) : null;
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp|mdash|ndash|rsquo|lsquo|rdquo|ldquo|hellip);/gi, (whole, raw: string) => {
+    const entity = raw.toLowerCase();
+    if (entity.startsWith("#")) {
+      const codePoint = entity.startsWith("#x") ? Number.parseInt(entity.slice(2), 16) : Number.parseInt(entity.slice(1), 10);
+      try { return Number.isFinite(codePoint) && codePoint > 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : whole; }
+      catch { return whole; }
+    }
+    const named: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " ", mdash: "—", ndash: "–", rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", hellip: "…" };
+    return named[entity] ?? whole;
+  });
+}
+
+function soundCloudTracksFromPage(html: string, pageUrl: string, maxTracks = MAX_SOUNDCLOUD_CHANNEL_TRACKS): SoundCloudTrack[] {
+  const page = new URL(pageUrl);
+  const channelSlug = page.pathname.split("/").filter(Boolean)[0]?.toLowerCase();
+  if (!channelSlug) return [];
+  const tracks: SoundCloudTrack[] = [];
+  const seen = new Set<string>();
+  const articlePattern = /<article\b(?=[^>]*\bitemprop\s*=\s*["']track["'])[^>]*>([\s\S]*?)<\/article>/gi;
+  let article: RegExpExecArray | null;
+  while ((article = articlePattern.exec(html)) !== null) {
+    const block = article[1];
+    const anchors = block.match(/<a\b[^>]*>[\s\S]*?<\/a>/gi) ?? [];
+    let track: SoundCloudTrack | null = null;
+    let pageAuthor: string | null = null;
+    for (const anchor of anchors) {
+      const openingTag = anchor.match(/^<a\b[^>]*>/i)?.[0];
+      if (!openingTag) continue;
+      const href = htmlAttribute(openingTag, "href");
+      if (!href) continue;
+      const text = decodeHtmlEntities(anchor.replace(/^<a\b[^>]*>/i, "").replace(/<\/a>$/i, "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim());
+      if (htmlAttribute(openingTag, "itemprop")?.toLowerCase() === "url") {
+        try {
+          const target = new URL(decodeHtmlEntities(href), page.origin);
+          const parts = target.pathname.split("/").filter(Boolean);
+          const canonical = normalizeSoundCloudUrl(target.href);
+          if (canonical && target.hostname.toLowerCase().replace(/^www\./, "") === "soundcloud.com" && parts.length === 2 && parts.every(Boolean)) {
+            target.search = "";
+            target.hash = "";
+            const url = `${target.origin}${target.pathname}`;
+            if (url !== page.href.replace(/\/$/, "") && !seen.has(url)) track = { url, title: text.slice(0, 180) || "SoundCloud အသံစာအုပ်", author: null };
+          }
+        } catch { /* Ignore malformed track permalinks. */ }
+      } else {
+        try {
+          const target = new URL(decodeHtmlEntities(href), page.origin);
+          const parts = target.pathname.split("/").filter(Boolean);
+          if (target.hostname.toLowerCase().replace(/^www\./, "") === "soundcloud.com" && parts.length === 1 && parts[0].toLowerCase() === channelSlug && text) pageAuthor = text.slice(0, 180);
+        } catch { /* Ignore malformed artist links. */ }
+      }
+    }
+    if (track && !seen.has(track.url)) {
+      track.author = pageAuthor;
+      seen.add(track.url);
+      tracks.push(track);
+      if (tracks.length >= maxTracks) break;
+    }
+  }
+  return tracks;
+}
+
+async function readSoundCloudHtml(response: Response): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("soundcloud_page_body_missing");
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  while (true) {
+    const result = await reader.read();
+    if (result.done) break;
+    byteLength += result.value.byteLength;
+    if (byteLength > MAX_SOUNDCLOUD_PAGE_BYTES) {
+      await reader.cancel("soundcloud_page_too_large");
+      throw new Error("soundcloud_page_too_large");
+    }
+    chunks.push(result.value);
+  }
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(bytes);
+}
+
+async function fetchSoundCloudChannelTracks(channelUrl: string): Promise<SoundCloudTrack[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort("soundcloud_fetch_timeout"), SOUNDCLOUD_FETCH_TIMEOUT_MS);
+  try {
+    let currentUrl = new URL(channelUrl);
+    let response: Response | null = null;
+    for (let redirects = 0; redirects <= 3; redirects += 1) {
+      response = await fetch(currentUrl.toString(), { headers: { Accept: "text/html" }, redirect: "manual", signal: controller.signal });
+      if (response.status < 300 || response.status >= 400) break;
+      const location = response.headers.get("location");
+      if (!location || redirects === 3) throw new Error("soundcloud_page_redirect_rejected");
+      const nextUrl = new URL(location, currentUrl);
+      if (nextUrl.protocol !== "https:" || nextUrl.hostname.toLowerCase().replace(/^www\./, "") !== "soundcloud.com") throw new Error("soundcloud_page_redirect_rejected");
+      currentUrl = nextUrl;
+    }
+    if (!response) throw new Error("soundcloud_page_fetch_failed");
+    if (!response.ok) throw new Error(`soundcloud_page_http_${response.status}`);
+    const finalUrl = response.url ? new URL(response.url) : new URL(channelUrl);
+    if (finalUrl.protocol !== "https:" || finalUrl.hostname.toLowerCase().replace(/^www\./, "") !== "soundcloud.com") throw new Error("soundcloud_page_redirect_rejected");
+    if (!response.headers.get("content-type")?.toLowerCase().includes("text/html")) throw new Error("soundcloud_page_not_html");
+    const html = await readSoundCloudHtml(response);
+    return soundCloudTracksFromPage(html, currentUrl.toString());
+  } finally { clearTimeout(timeout); }
+}
+
+function soundCloudTrackUpdateId(trackUrl: string): number {
+  let first = 2166136261;
+  let second = 2246822519;
+  const key = `soundcloud:${trackUrl}`;
+  for (let index = 0; index < key.length; index += 1) {
+    const code = key.charCodeAt(index);
+    first = Math.imul(first ^ code, 16777619) >>> 0;
+    second = Math.imul(second ^ code, 3266489917) >>> 0;
+  }
+  const safeHash = first * 2097152 + (second >>> 11);
+  return -(safeHash || 1);
+}
+
+async function saveSoundCloudChannelTracks(
+  tracks: SoundCloudTrack[], channelUrl: string, updateId: number, chatId: string, messageId: number, env: RuntimeEnv,
+): Promise<{ created: number; duplicates: number }> {
+  let created = 0;
+  let duplicates = 0;
+  for (const track of tracks) {
+    const now = new Date().toISOString();
+    const intakeId = crypto.randomUUID();
+    const linkKey = `soundcloud:${track.url}`;
+    const syntheticUpdateId = await soundCloudTrackUpdateId(track.url);
+    const insert = await env.DB.prepare("INSERT OR IGNORE INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_type, source_url, source_chat_id, source_message_id, status, original_filename, mime_type, created_at, updated_at) VALUES (?, ?, ?, 'document', 'soundcloud_link', ?, ?, ?, 'draft', ?, 'text/uri-list', ?, ?)").bind(intakeId, syntheticUpdateId, linkKey, track.url, chatId, messageId, track.title, now, now).run();
+    const persisted = await env.DB.prepare("SELECT id FROM intake_items WHERE telegram_file_id = ? LIMIT 1").bind(linkKey).first<{ id: string }>();
+    if (!persisted?.id) throw new Error("soundcloud_track_intake_conflict");
+    const slugBase = track.title.toLowerCase().replace(/[^a-z0-9\u1000-\u109f]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "soundcloud-track";
+    const slug = `${slugBase}-${persisted.id.slice(0, 8)}`;
+    const metadata = JSON.stringify({ source: "telegram", sourceType: "soundcloud_track", sourceUrl: track.url, channelUrl, telegramUpdateId: updateId, public: { sourceType: "soundcloud" } });
+    await env.DB.batch([
+      env.DB.prepare("INSERT OR IGNORE INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), persisted.id, now, now),
+      env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, author, category, summary, soundcloud_url, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'အသံစာအုပ်', ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), persisted.id, track.title, slug, track.author, "SoundCloud channel မှ တစ်ပုဒ်ချင်း ခွဲသိမ်းထားသော အသံစာအုပ် track ဖြစ်သည်။", track.url, metadata, now, now),
+      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) SELECT ?, 'soundcloud_track_received', ?, ? WHERE NOT EXISTS (SELECT 1 FROM ingestion_events WHERE intake_id = ? AND event_type = 'soundcloud_track_received')").bind(persisted.id, JSON.stringify({ channelUrl, trackUrl: track.url }), now, persisted.id),
+    ]);
+    if (insert.meta.changes > 0) created += 1;
+    else duplicates += 1;
+  }
+  return { created, duplicates };
 }
 
 function safeFileName(name: string | null, type: MediaType): string {
@@ -394,6 +564,21 @@ async function receive(request: Request, env: RuntimeEnv): Promise<Response> {
   }
   const media = mediaFor(message);
   if (soundcloudUrl && !media && Number.isSafeInteger(messageId)) {
+    if (isSoundCloudChannelUrl(soundcloudUrl)) {
+      try {
+        const tracks = await fetchSoundCloudChannelTracks(soundcloudUrl);
+        if (!tracks.length) {
+          logWorkerEvent("soundcloud_channel_no_tracks", { channelUrl: soundcloudUrl });
+          return json({ ok: false, error: "soundcloud_channel_tracks_not_found" }, 502);
+        }
+        const saved = await saveSoundCloudChannelTracks(tracks, soundcloudUrl, parsed.update_id as number, chatId, messageId as number, env);
+        logWorkerEvent("soundcloud_channel_imported", { channelUrl: soundcloudUrl, trackCount: tracks.length, created: saved.created, duplicates: saved.duplicates });
+        return json({ ok: true, status: saved.created ? "accepted" : "duplicate", sourceType: "soundcloud_channel", trackCount: tracks.length, ...saved });
+      } catch (error) {
+        logWorkerEvent("soundcloud_channel_import_failed", { channelUrl: soundcloudUrl, error: error instanceof Error ? error.message.slice(0, 120) : "unknown_error" });
+        return json({ ok: false, error: "soundcloud_channel_import_failed" }, 502);
+      }
+    }
     const now = new Date().toISOString();
     const intakeId = crypto.randomUUID();
     const metadata = soundcloudMetadata(message, soundcloudUrl);
