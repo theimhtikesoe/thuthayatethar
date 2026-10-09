@@ -587,3 +587,77 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 @media (max-width: 640px) {
   .reader-controls-reveal { top: calc(8px + env(safe-area-inset-top)); right: 9px; width: 34px; height: 34px; }
 }
+
+/* Mobile PDF reading: keep controls readable while giving the book the whole stage. */
+@media (max-width: 640px) {
+  .pdf-reader-shell .pdf-reader-workspace,
+  .pdf-reader-shell .flipbook-stage {
+    background: transparent;
+  }
+  .pdf-reader-shell .flipbook-stage { padding: 0; }
+  .pdf-reader-shell .flipbook,
+  .pdf-reader-shell .flip-zoom-spread { filter: none; box-shadow: none; }
+  .pdf-reader-shell .flip-page,
+  .pdf-reader-shell .flip-zoom-page { border: 0; box-shadow: none; }
+  .pdf-reader-shell .flip-page.--left .flip-page-inner::after,
+  .pdf-reader-shell .flip-page.--right .flip-page-inner::after { display: none; }
+  .pdf-reader-shell .flip-nav {
+    background: rgba(255, 253, 249, .98);
+    border-top-color: rgba(81, 73, 60, .28);
+    color: #17212b;
+  }
+  .pdf-reader-shell .flip-nav button {
+    border-color: rgba(81, 73, 60, .38);
+    background: #fffdf9 !important;
+    color: #17212b !important;
+  }
+  .pdf-reader-shell .flip-nav button:disabled { opacity: .42; }
+  .pdf-reader-shell .flip-zoom { border-color: rgba(81, 73, 60, .38); }
+  .pdf-reader-shell .flip-zoom .flip-zoom-value {
+    border-left-color: rgba(81, 73, 60, .25);
+    border-right-color: rgba(81, 73, 60, .25);
+  }
+  .pdf-reader-shell .reader-back,
+  .pdf-reader-shell .reader-offline,
+  .pdf-reader-shell .reader-fullscreen {
+    background: rgba(255, 253, 249, .98);
+    border-color: rgba(81, 73, 60, .34);
+  }
+  .theme-sepia.pdf-reader-shell .flip-nav {
+    background: rgba(241, 229, 204, .98);
+    color: #4b4035;
+  }
+  .theme-sepia.pdf-reader-shell .flip-nav button {
+    border-color: rgba(120, 94, 57, .42);
+    background: #f8ecd5 !important;
+    color: #4b4035 !important;
+  }
+  .theme-sepia.pdf-reader-shell .reader-back,
+  .theme-sepia.pdf-reader-shell .reader-offline,
+  .theme-sepia.pdf-reader-shell .reader-fullscreen {
+    background: rgba(241, 229, 204, .98);
+    border-color: rgba(120, 94, 57, .42);
+  }
+  .theme-night.pdf-reader-shell .flip-nav {
+    background: rgba(16, 23, 26, .98);
+    border-top-color: rgba(232, 225, 213, .3);
+    color: #e8e1d5;
+  }
+  .theme-night.pdf-reader-shell .flip-nav button {
+    border-color: rgba(232, 225, 213, .38);
+    background: #253237 !important;
+    color: #f3ede3 !important;
+  }
+  .theme-night.pdf-reader-shell .flip-zoom { border-color: rgba(232, 225, 213, .38); }
+  .theme-night.pdf-reader-shell .flip-zoom .flip-zoom-value {
+    border-left-color: rgba(232, 225, 213, .24);
+    border-right-color: rgba(232, 225, 213, .24);
+  }
+  .theme-night.pdf-reader-shell .reader-back,
+  .theme-night.pdf-reader-shell .reader-offline,
+  .theme-night.pdf-reader-shell .reader-fullscreen {
+    background: rgba(37, 50, 55, .98);
+    border-color: rgba(232, 225, 213, .38);
+    color: #f3ede3;
+  }
+}
