@@ -2,7 +2,7 @@
 
 import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import HTMLFlipBook from "react-pageflip";
-import { adjacentPage, isPreviousPageSwipe, visiblePages } from "./reader-navigation.mjs";
+import { adjacentPage, visiblePages } from "./reader-navigation.mjs";
 import { whiteMarginBounds } from "./reader-margins.mjs";
 
 type PdfDoc = { numPages: number; getPage: (n: number) => Promise<any> };
@@ -454,17 +454,23 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
     const touch = previousTouch.current;
     if (touch?.pointerId === e.pointerId) {
       previousTouch.current = null;
-      if (e.type !== "pointercancel" && zoom <= 1.05 && touch.page > 0 && isPreviousPageSwipe(touch.x, touch.y, e.clientX, e.clientY)) {
-        const previousPage = adjacentPage(touch.page, total, size.single, -1);
-        if (previousPage !== touch.page) {
-          // PageFlip stops recognizing a swipe 250ms after touch start. If its own back-turn
-          // leaves the page unchanged, recover once the built-in flip animation has settled.
+      const dx = e.clientX - touch.x;
+      const dy = Math.abs(e.clientY - touch.y);
+      // A deliberate horizontal swipe in either direction. Vertical scrolling
+      // and small taps never trigger a page turn.
+      const swiped = Math.abs(dx) >= 28 && dy < 56;
+      if (e.type !== "pointercancel" && zoom <= 1.05 && swiped) {
+        const direction = dx > 0 ? -1 : 1;
+        const target = adjacentPage(touch.page, total, size.single, direction);
+        if (target !== touch.page) {
+          // PageFlip stops recognizing a swipe 250ms after touch start. If its own
+          // turn leaves the page unchanged, recover once the flip animation settled.
           previousSwipeTimer.current = window.setTimeout(() => {
             previousSwipeTimer.current = null;
             const controller = book.current?.pageFlip();
             if (!controller || controller.getCurrentPageIndex() !== touch.page) return;
-            controller.turnToPage(previousPage);
-            setCurrent(previousPage);
+            controller.turnToPage(target);
+            setCurrent(target);
             setPan({ x: 0, y: 0 });
           }, 420);
         }
