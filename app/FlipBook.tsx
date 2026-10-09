@@ -580,7 +580,7 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
       <div className="flip-secondary-controls">
         <div className="flip-zoom" role="group" aria-label="ချဲ့/ချုံ့">
           <button type="button" onClick={() => setZoomTo(zoom - ZOOM_STEP)} disabled={zoom <= MIN_ZOOM} aria-label="ချုံ့မည်">−</button>
-          <button type="button" className="flip-zoom-value" onClick={() => setZoomTo(zoomed ? 1 : 2)} aria-label="ချэймийг хэвийн болгох">{Math.round(zoom * 100)}%</button>
+          <button type="button" className="flip-zoom-value" onClick={() => setZoomTo(zoomed ? 1 : 2)} aria-label="ပုံမှန်အရွယ်သို့ ပြန်ပြောင်းမည်">{Math.round(zoom * 100)}%</button>
           <button type="button" onClick={() => setZoomTo(zoom + ZOOM_STEP)} disabled={zoom >= MAX_ZOOM} aria-label="ချဲ့မည်">+</button>
         </div>
         <button type="button" className={`flip-bookmark${bookmarks.includes(current) ? " active" : ""}`} onClick={toggleBookmark} aria-pressed={bookmarks.includes(current)} aria-label="စာမျက်နှာ bookmark လုပ်မည်" title="Bookmark">{bookmarks.includes(current) ? "★" : "☆"}</button>

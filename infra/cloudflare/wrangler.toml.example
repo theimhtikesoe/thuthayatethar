@@ -37,6 +37,8 @@ crons = ["* * * * *"]
 TELEGRAM_ALLOWED_CHAT_IDS = "-1004314141664"
 TELEGRAM_API_BASE_URL = "https://pdf-relay.rz99systems.com"
 MAX_FILE_BYTES = "167772160"
+# Telegram PDFs received at/after this instant are auto-published; earlier ones stay drafts.
+AUTO_PUBLISH_FROM = "2026-10-09T08:06:29.995077Z"
 CATALOG_ORIGIN = "https://thuthayatethar.rz99systems.com"
 
 [observability.logs]

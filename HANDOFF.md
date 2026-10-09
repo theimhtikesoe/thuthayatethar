@@ -1,6 +1,6 @@
 # Telegram PDF ingestion — handoff
 
-**Updated:** 2026-10-09 (UTC+7)
+**Updated:** 2026-10-10 (UTC+7)
 
 **Repository:** `theimhtikesoe/thuthayatethar`
 
@@ -19,9 +19,9 @@
 ## Durable recovery change
 
 - The follow-up change drains D1 `received` intakes through a one-minute native Worker Cron. A conditional D1 update claims one `downloading` item at a time; a download left `downloading` for 20 minutes is eligible for recovery. Cron invocations can run for up to 15 minutes.
-- Admin retry only changes a failed PDF to `received` and records a retry event; it does not publish. On success, the PDF remains private in R2 and the D1/book draft status becomes `draft`. Human rights review remains a separate step before publication.
+- Admin retry only changes a failed PDF to `received` and records a retry event; it does not approve rights. On success, a Telegram document PDF received at or after the `AUTO_PUBLISH_FROM` Worker var is auto-published (intake and book draft become `published`; the RightsRecord stays `missing` with `evidence_note = 'auto_publish_unreviewed'`). An older item becomes a private `draft`. Policy decision (2026-10-10): auto-publish stays. An admin can record rights afterwards from `/admin` ("Rights အတည်ပြုမည်"), which does not change the publication status.
 - After deployment, verify that the Worker's Cron schedule is `* * * * *`, then inspect D1 `status`, `storage_key`, and `byte_size` for the two pending records. Do not read the PDF payload to verify storage.
-- Regression tests cover large streaming, retry-to-private-draft, active-claim exclusion and recovery of stale downloads. The real production retry is not complete until D1 shows `draft` with a storage key.
+- Regression tests cover large streaming, retry with the auto-publish cutoff, active-claim exclusion and recovery of stale downloads. The real production retry is not complete until D1 shows `published` (or `draft` for an item received before `AUTO_PUBLISH_FROM`) with a storage key.
 
 ## Security and operations
 
