@@ -7,6 +7,7 @@ import AudiobookPlayer, { AudiobookShelf } from "./components/AudiobookPlayer";
 import { chapterLabel, groupBooks, groupTitle, type ChapterGroup } from "./catalog-grouping";
 import { formatAudioTime, mostRecentListening } from "./audio-progress";
 import { correctedCatalogTitle } from "./burmese-text";
+import { readOfflineSelection, writeOfflineSelection } from "./offline-storage";
 
 const FlipBook = dynamic(() => import("./FlipBook"), { ssr: false });
 
@@ -291,13 +292,19 @@ export default function HomePage() {
   const [lineHeight, setLineHeight] = useState(1.8);
   const [storageOpen, setStorageOpen] = useState(false);
   const [offlinePickerOpen, setOfflinePickerOpen] = useState(false);
-  const [offlineSelection, setOfflineSelection] = useState<string[]>([]);
+  const [offlineSelection, setOfflineSelection] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try { return readOfflineSelection(window.localStorage); } catch { return []; }
+  });
   const [offlineBatchRunning, setOfflineBatchRunning] = useState(false);
   const [offlineBatchMessage, setOfflineBatchMessage] = useState("");
   const [offlineStatuses, setOfflineStatuses] = useState<Record<string, "saved" | "saving" | "error">>({});
   const [storageInfo, setStorageInfo] = useState({ usage: 0, quota: 0, bookCacheBytes: 0 });
   const [progressRevision, setProgressRevision] = useState(0);
   useEffect(() => { writeLocalValue("thuthayatethar:reader-theme", theme); }, [theme]);
+  useEffect(() => {
+    try { writeOfflineSelection(window.localStorage, offlineSelection); } catch { /* Storage may be disabled. */ }
+  }, [offlineSelection]);
   useEffect(() => {
     const syncHashTab = () => {
       if (window.location.hash === "#audiobooks") {
@@ -494,6 +501,7 @@ export default function HomePage() {
         if (urls.includes(request.url)) await cache.delete(request);
       }
       try { localStorage.removeItem(`thuthayatethar:offline:${offlineBookKey(book)}`); } catch { /* Storage may be unavailable. */ }
+      setOfflineSelection((current) => current.filter((key) => key !== offlineBookKey(book)));
       setOfflineStatuses((current) => { const next = { ...current }; delete next[offlineBookKey(book)]; return next; });
       await refreshOfflineStorage();
     } catch {

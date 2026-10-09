@@ -7,7 +7,9 @@
 3. The same catalog and full PDF can then be opened without internet. Reading progress and reader theme are stored locally.
 4. PDF pages that contain an embedded text layer are checked locally with the bundled `myanmar-tools` Zawgyi detector. Detected Zawgyi text is converted to Unicode and shown as a readable overlay; no network request is needed.
 
-Audiobook catalog metadata and covers are cached with the catalog/book assets, and the last SoundCloud playback position is stored locally per book. SoundCloud audio itself remains a third-party stream and is not downloaded or cached, so listening requires an internet connection.
+Audiobook catalog metadata and covers are cached with the catalog/book assets, and the last SoundCloud playback position is stored locally per book. The pending offline-book selection is also stored locally, and the app requests persistent browser storage so saved books are less likely to be evicted. Browsers may deny persistence, and users can still clear site data or storage may be evicted under device constraints.
+
+**Audio is not currently available offline.** Catalog audio items contain SoundCloud page URLs and are played in SoundCloud's embedded player; the app does not possess the audio file bytes or an authorized direct-download URL. The service worker intentionally does not cache SoundCloud streams. Offline playback requires an audio file supplied by the rights holder and stored in the app's own storage (or a direct URL explicitly licensed and authorized for download); a SoundCloud page link alone cannot provide that file.
 
 ## Important limitation
 
