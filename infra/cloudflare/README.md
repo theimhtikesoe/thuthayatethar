@@ -18,11 +18,11 @@ The Worker has a one-minute Cron Trigger (`* * * * *`). Each scheduled invocatio
 
 1. Selects the oldest `received` intake, or a `downloading` item whose `updated_at` is older than 20 minutes.
 2. Uses a conditional D1 update to claim it as `downloading`. A second invocation cannot claim an active download; only one file is processed at a time.
-3. Downloads and validates the Telegram file, streams it to private R2, then records a private D1 book draft. A failure marks the intake `failed` with a bounded diagnostic code; the next admin retry returns it to `received`.
+3. Downloads and validates the Telegram file, streams it to private R2, then marks an eligible Telegram document PDF `published` in D1 after storage succeeds. The private R2 object remains private; the published Worker routes serve it to the site. Other media remains a draft. A failure marks the intake `failed` with a bounded diagnostic code; the next admin retry returns it to `received`.
 
 Cron invocations have a 15-minute wall-time limit. The 20-minute stale threshold gives a failed/terminated invocation time to finish or be cancelled before another attempt. Cron changes can take up to 15 minutes to propagate. After deployment, verify the active schedule using the Cloudflare Worker schedules endpoint.
 
-A retry success creates a private draft only. It does not approve rights or publish a book. Rights evidence and human admin approval remain prerequisites. The Worker does not currently provide automated OCR or a malware verdict.
+Successful Telegram PDF ingestion/retry auto-publishes per the owner's instruction. This intentionally does not perform rights review: the RightsRecord remains `missing`. It is not a copyright clearance, OCR, or malware verdict. Only send PDFs authorized for public publication. The configured file-size ceiling remains 160 MiB by default; over-limit or failed uploads are never published.
 
 ## Large-file stream requirement
 

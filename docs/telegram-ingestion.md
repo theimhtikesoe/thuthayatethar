@@ -9,13 +9,15 @@
 - **Secrets:** Bot token နှင့် webhook secret ကို Cloudflare Worker Secret Store binding များတွင်ထားသည်။ Admin token နှင့် relay Access credentials များကိုလည်း secret binding များဖြင့်သာထားပါ။ တန်ဖိုးကို source, log သို့မဟုတ် chat ထဲမထည့်ပါနှင့်။
 - `@sarpaymyr` နှင့် `@RO_Bookshelf` တို့သည် ယခု workflow ၏ source မဟုတ်ပါ။ Bot သည် ၎င်းတို့ထံမှ file မယူရ။
 
-## Intake → private draft → human review
+## Intake → automatic public PDF publication
 
 1. Telegram Worker `POST /telegram/webhook` သည် configured secret-token header နှင့် allowlisted upload group ကိုစစ်ပြီး intake metadata/event ကို D1 တွင် မှတ်တမ်းတင်သည်။ `accepted` ဆိုသည်မှာ file storage ပြီးစီးကြောင်း မဆိုလိုပါ။
 2. PDF အလုပ်များသည် D1 queue state ကို အသုံးပြုသည်။ Worker Cron သည် တစ်မိနစ်လျှင် pending intake တစ်ခုကိုရွေးကာ conditional update ဖြင့် `downloading` ဟု claim လုပ်ပြီး တစ်ကြိမ်တွင် ဖိုင်တစ်ခုသာ ဆောင်ရွက်သည်။ `downloading` အခြေအနေ 20 မိနစ်ကျော် အဟောင်းဖြစ်နေပါက ပြန်လည်စမ်းသပ်ရန် အကျုံးဝင်သည်။ Long transfer ကို HTTP response ပြီးနောက် 30 စက္ကန့်သာအသက်ရှင်သော `ctx.waitUntil()` ထဲတွင် မထားရ။
 3. Worker သည် Telegram file ကို configured API/Access relay မှရယူပြီး PDF type/header နှင့် configured size limit ကိုစစ်ဆေးသည်။ 20 MB ထက်ကြီးသော file များအတွက် Local Bot API relay ကိုအသုံးပြုသည်။ R2 streaming တွင် native `FixedLengthStream.readable` ကို တိုက်ရိုက်အသုံးပြုရမည်။
-4. File အောင်မြင်စွာရရှိပါက private R2 bucket တွင်သိမ်းပြီး D1 မှတ်တမ်းနှင့် private book draft ဖန်တီးသည်။ Telegram file URL ကို public မလုပ်ပါ။ လက်ရှိ flow သည် OCR သို့မဟုတ် malware verdict ကို အလိုအလျောက်မလုပ်သေးသောကြောင့် metadata၊ content quality နှင့် အခွင့်အရေးအထောက်အထားများကို လူက review လုပ်ရန်လိုသည်။
-5. RightsRecord ထဲရှိ အခွင့်အရေးပိုင်ရှင်၊ evidence နှင့် ခွင့်ပြုထားသည့်အသုံးပြုမှုကို လူကစစ်ဆေးပြီး admin မှ သီးခြား approve လုပ်ပြီးမှ publish လုပ်ရမည်။ Group ထဲ file တင်ထားခြင်း၊ bot ကို admin လုပ်ထားခြင်း သို့မဟုတ် credit ပေးထားခြင်းတစ်ခုတည်းကို publication approval အဖြစ် အလိုအလျောက်မသတ်မှတ်ရ။
+4. Telegram group-оос ирсэн PDF-г бүрэн татаж, validation хийгээд private R2-д амжилттай хадгалсны дараа D1 `intake_items` болон `book_drafts`-ийг `published` болгоно. Нийтлэлт болон storage event-ийг нэг D1 batch-аар бичнэ; Telegram file URL биш, published Worker route-ууд public-д үйлчилнэ. Cover object private R2-д хэвээр.
+5. Auto-publish нь repository эзэмшигчийн хүсэлтээр идэвхтэй: эдгээр шинэ PDF-д хүний эрхийн review **хийхгүй**. RightsRecord `missing` хэвээр үлдэнэ; энэ нь OCR, malware scan эсвэл copyright clearance биш. Нийтлэх эрхгүй материал автоматаар public болж болзошгүй тул зөвшөөрөлтэй файлуудыг л group руу явуул. Энэ нь Telegram group document PDF-д хамаарна; Wattpad link, зураг болон direct admin upload нь энэ auto-publish дүрмээр нийтлэгдэхгүй. Хуучин intake-ууд retroactive-ээр нийтлэгдэхгүй.
+6. `MAX_FILE_BYTES` хязгаараас хэтэрсэн, таталт/validation/R2 хадгалалт амжилтгүй болсон файл public болохгүй; `failed` хэвээр үлдэж admin retry хийх шаардлагатай. Example/default limit нь 160 MiB; энэ нь хязгааргүй хэмжээний файл гэсэн үг биш.
+7. Worker structured logs: `telegram_file_received`, `queue_candidate_found`, `queue_claimed`, `file_processing_started`, `telegram_pdf_published`, `file_processing_failed`, `cron_tick_started`/`cron_tick_finished`. Log-д token, Telegram file ID эсвэл filename бичихгүй.
 
 ## Admin recovery
 

@@ -98,7 +98,8 @@ function makeDb({ failFirstBatch = false } = {}) {
         sql: statement.sql,
         values: statement.values,
       })));
-      if (state.intakeItem && statements.some((statement) => statement.sql.includes("UPDATE intake_items SET status = 'draft'"))) state.intakeItem.status = "draft";
+      const intakeStatusUpdate = statements.find((statement) => statement.sql.includes("UPDATE intake_items SET status = ?"));
+      if (state.intakeItem && intakeStatusUpdate) state.intakeItem.status = intakeStatusUpdate.values[0];
       return [];
     },
   };
@@ -148,6 +149,12 @@ function streamOfSize(totalBytes, chunkSize = 1024 * 1024) {
       sent += nextSize;
     },
   });
+}
+
+function pdfBytes(size) {
+  const bytes = new Uint8Array(size);
+  bytes.set(new TextEncoder().encode("%PDF-"));
+  return bytes;
 }
 
 const fixedLengthStreamCalls = [];
@@ -224,7 +231,7 @@ test("repairs rights and received-event rows after an interrupted D1 batch", asy
   assert.equal(DB.state.statements.filter((statement) => statement.sql.includes("ingestion_events")).length, 1);
 });
 
-test("streams files larger than 20 MiB into private R2 and records their size", async () => {
+test("streams large Telegram PDFs to R2 and automatically publishes them after successful storage", async () => {
   const fileSize = 129 * 1024 * 1024;
   fixedLengthStreamCalls.length = 0;
   const DB = makeDb();
@@ -284,17 +291,21 @@ test("streams files larger than 20 MiB into private R2 and records their size", 
   assert.equal(uploads[0].size, fileSize);
   assert.deepEqual(fixedLengthStreamCalls, [fileSize]);
   assert.equal(uploads[0].options.customMetadata.sha256, undefined);
-  const stored = DB.state.statements.find((statement) => statement.sql.includes("UPDATE intake_items SET status = 'draft'"));
+  const stored = DB.state.statements.find((statement) => statement.sql.includes("UPDATE intake_items SET status = ?"));
   assert.ok(stored);
-  assert.equal(stored.values[1], null);
-  assert.equal(stored.values[2], fileSize);
-  assert.ok(DB.state.statements.some((statement) => statement.sql.includes("publication_status, created_at, updated_at") && statement.sql.includes("'draft'")));
+  assert.equal(stored.values[0], "published");
+  assert.equal(stored.values[2], null);
+  assert.equal(stored.values[3], fileSize);
+  const publishedBook = DB.state.statements.find((statement) => statement.sql.includes("INSERT OR IGNORE INTO book_drafts"));
+  assert.ok(publishedBook);
+  assert.equal(publishedBook.values[6], "published");
+  assert.ok(DB.state.statements.some((statement) => statement.sql.includes("INSERT INTO ingestion_events") && statement.sql.includes("'published'")));
   const rights = DB.state.statements.find((statement) => statement.sql.includes("INSERT OR IGNORE INTO rights_records"));
-  assert.ok(rights);
+  assert.ok(rights, "rights record remains present for later review");
   assert.equal(rights.values.length, 4);
 });
 
-test("admin can retry a failed Telegram PDF and restore it as a private draft", async () => {
+test("admin retry processes a failed Telegram PDF and automatically publishes it after storage", async () => {
   const DB = makeDb();
   const uploads = [];
   const env = {
@@ -320,7 +331,7 @@ test("admin can retry a failed Telegram PDF and restore it as a private draft", 
         headers: { "content-type": "application/json" },
       });
     }
-    return new Response(new Uint8Array(1024), { headers: { "content-length": "1024" } });
+    return new Response(pdfBytes(1024), { headers: { "content-length": "1024" } });
   };
 
   try {
@@ -336,8 +347,30 @@ test("admin can retry a failed Telegram PDF and restore it as a private draft", 
   }
 
   assert.equal(uploads.length, 1);
-  assert.equal(DB.state.intakeItem.status, "draft");
-  assert.ok(DB.state.statements.some((statement) => statement.sql.includes("INSERT OR IGNORE INTO book_drafts") && statement.sql.includes("'draft'")));
+  assert.equal(DB.state.intakeItem.status, "published");
+  assert.ok(DB.state.statements.some((statement) => statement.sql.includes("INSERT OR IGNORE INTO book_drafts") && statement.values[6] === "published"));
+});
+
+test("does not publish a Telegram document with a PDF filename but invalid PDF bytes", async () => {
+  const DB = makeDb();
+  const env = {
+    ...makeEnv(DB),
+    TELEGRAM_BOT_TOKEN: "test-token",
+    BUCKET: { async put() { assert.fail("invalid PDF must not reach R2"); }, async get() { return null; } },
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => String(input).includes("getFile?")
+    ? new Response(JSON.stringify({ ok: true, result: { file_path: "/documents/not-really-a-pdf.pdf" } }), { headers: { "content-type": "application/json" } })
+    : new Response(new Uint8Array(32), { headers: { "content-length": "32" } });
+  try {
+    await worker.fetch(makeRequest(32), env);
+    await worker.scheduled({ cron: "* * * * *", scheduledTime: Date.now() }, env);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(DB.state.intakeItem.status, "failed");
+  assert.equal(DB.state.failureValues[0], "invalid_pdf_header");
+  assert.ok(!DB.state.statements.some((statement) => statement.values[6] === "published"));
 });
 
 test("scheduled processor skips a live download and recovers a stale one", async () => {
@@ -363,7 +396,7 @@ test("scheduled processor skips a live download and recovers a stale one", async
         headers: { "content-type": "application/json" },
       });
     }
-    return new Response(new Uint8Array(1024), { headers: { "content-length": "1024" } });
+    return new Response(pdfBytes(1024), { headers: { "content-length": "1024" } });
   };
 
   try {
@@ -379,7 +412,7 @@ test("scheduled processor skips a live download and recovers a stale one", async
   }
 
   assert.equal(uploads.length, 1);
-  assert.equal(DB.state.intakeItem.status, "draft");
+  assert.equal(DB.state.intakeItem.status, "published");
 });
 
 test("does not send a streamed upload to R2 when the total file size is unknown", async () => {

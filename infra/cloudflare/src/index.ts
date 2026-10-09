@@ -161,8 +161,8 @@ function maxFileBytes(env: Env): number {
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_FILE_BYTES;
 }
 
-function logCronEvent(event: string, fields: Record<string, unknown> = {}): void {
-  console.log(JSON.stringify({ component: "telegram-intake-cron", event, ...fields }));
+function logWorkerEvent(event: string, fields: Record<string, unknown> = {}): void {
+  console.log(JSON.stringify({ component: "telegram-ingestion", event, ...fields }));
 }
 
 async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
@@ -171,6 +171,10 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
   if (!item || typeof item.telegram_file_id !== "string") return;
   if (item.source_type === "wattpad_link") return;
   const maxBytes = maxFileBytes(env);
+  const isTelegramPdf = item.source_type === "telegram_media" && item.media_type === "document" &&
+    ((typeof item.mime_type === "string" && item.mime_type.toLowerCase() === "application/pdf") ||
+      (typeof item.original_filename === "string" && item.original_filename.toLowerCase().endsWith(".pdf")));
+  logWorkerEvent("file_processing_started", { intakeId, mediaType: item.media_type, announcedBytes: typeof item.byte_size === "number" ? item.byte_size : null, autoPublish: isTelegramPdf });
   try {
     if (typeof item.byte_size === "number" && item.byte_size > maxBytes) throw new Error("file_too_large");
     const base = (env.TELEGRAM_API_BASE_URL ?? "https://api.telegram.org").replace(/\/$/, "");
@@ -199,6 +203,7 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
       const bytes = await fileResponse.arrayBuffer();
       if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) throw new Error("file_too_large");
       if (expectedBytes > 0 && bytes.byteLength !== expectedBytes) throw new Error("telegram_file_size_mismatch");
+      if (isTelegramPdf && new TextDecoder().decode(new Uint8Array(bytes, 0, Math.min(5, bytes.byteLength))) !== "%PDF-") throw new Error("invalid_pdf_header");
       checksum = await sha256(bytes);
       const stored = await env.BUCKET.put(key, bytes, { httpMetadata, customMetadata: { intakeId, sha256: checksum, visibility: "private" } });
       if (!stored || stored.size !== bytes.byteLength) throw new Error("r2_storage_failed");
@@ -210,15 +215,18 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
         throw new Error("file_size_unknown");
       }
       const progress = { bytes: 0 };
+      const signature: number[] = [];
       const countedBody = fileResponse.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, controller) {
           progress.bytes += chunk.byteLength;
           if (progress.bytes > maxBytes) throw new Error("file_too_large");
+          if (signature.length < 5) signature.push(...Array.from(chunk.slice(0, 5 - signature.length)));
           controller.enqueue(chunk);
         },
         flush() {
           if (progress.bytes === 0) throw new Error("empty_file");
           if (expectedBytes > 0 && progress.bytes !== expectedBytes) throw new Error("telegram_file_size_mismatch");
+          if (isTelegramPdf && String.fromCharCode(...signature) !== "%PDF-") throw new Error("invalid_pdf_header");
         },
       }));
       // Pass FixedLengthStream's native readable half directly to R2. Wrapping it
@@ -257,22 +265,26 @@ async function processIntake(intakeId: string, env: RuntimeEnv): Promise<void> {
     const now = new Date().toISOString();
     const title = titleFromFile(typeof item.original_filename === "string" ? item.original_filename : "book.pdf");
     const slug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "book"}-${intakeId.slice(0, 8)}`;
+    const publicationStatus = isTelegramPdf ? "published" : "draft";
     await env.DB.batch([
-      env.DB.prepare("UPDATE intake_items SET status = 'draft', storage_key = ?, sha256 = ?, byte_size = ?, updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(key, checksum, byteSize, now, intakeId),
-      env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, summary, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, "မူကြမ်းအဖြစ် စစ်ဆေးရန် စာအုပ်ဖိုင်ကို လက်ခံထားသည်။", JSON.stringify({ source: "telegram", assetKey: key, rightsStatus: "missing", ...(coverKey ? { public: { coverImage: `/book/${slug}/cover` } } : {}) }), now, now),
+      env.DB.prepare("UPDATE intake_items SET status = ?, storage_key = ?, sha256 = ?, byte_size = ?, updated_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?").bind(publicationStatus, key, checksum, byteSize, now, intakeId),
+      env.DB.prepare("INSERT OR IGNORE INTO book_drafts (id, intake_id, title, slug, summary, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, "Telegram-аас ирсэн PDF.", JSON.stringify({ source: "telegram", assetKey: key, rightsStatus: "missing", ...(coverKey ? { public: { coverImage: `/book/${slug}/cover` } } : {}) }), publicationStatus, now, now),
       env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'stored_in_r2', ?, ?)").bind(intakeId, JSON.stringify({ storageKey: key, byteSize, checksumComputed: Boolean(checksum) }), now),
+      ...(isTelegramPdf ? [env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'published', ?, ?)").bind(intakeId, JSON.stringify({ source: "telegram_auto_publish", rightsReview: "not_performed" }), now)] : []),
     ]);
+    logWorkerEvent(isTelegramPdf ? "telegram_pdf_published" : "file_saved_as_draft", { intakeId, slug, byteSize, rightsReview: isTelegramPdf ? "not_performed" : "required" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "processing_failed";
     const now = new Date().toISOString();
     await env.DB.prepare("UPDATE intake_items SET status = 'failed', failure_code = ?, failure_message = ?, retry_count = retry_count + 1, updated_at = ? WHERE id = ?").bind(message, message, now, intakeId).run();
     await env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'processing_failed', ?, ?)").bind(intakeId, JSON.stringify({ code: message }), now).run();
+    logWorkerEvent("file_processing_failed", { intakeId, errorCode: message });
   }
 }
 
 async function processNextQueuedIntake(env: RuntimeEnv): Promise<boolean> {
   if (!env.BUCKET || !env.TELEGRAM_BOT_TOKEN) {
-    logCronEvent("queue_skipped_missing_binding", { storageAvailable: Boolean(env.BUCKET), processorAvailable: Boolean(env.TELEGRAM_BOT_TOKEN) });
+    logWorkerEvent("queue_skipped_missing_binding", { storageAvailable: Boolean(env.BUCKET), processorAvailable: Boolean(env.TELEGRAM_BOT_TOKEN) });
     return false;
   }
   const staleBefore = new Date(Date.now() - 20 * 60 * 1000).toISOString();
@@ -281,25 +293,25 @@ async function processNextQueuedIntake(env: RuntimeEnv): Promise<boolean> {
       AND NOT EXISTS (SELECT 1 FROM intake_items WHERE status = 'downloading' AND updated_at >= ?)
     ORDER BY created_at ASC LIMIT 1`).bind(staleBefore, staleBefore).first<{ id: string }>();
   if (!candidate?.id) {
-    logCronEvent("queue_no_eligible_candidate");
+    logWorkerEvent("queue_no_eligible_candidate");
     return false;
   }
 
   const claimedAt = new Date().toISOString();
-  logCronEvent("queue_candidate_found", { intakeId: candidate.id });
+  logWorkerEvent("queue_candidate_found", { intakeId: candidate.id });
   const claimed = await env.DB.prepare(`UPDATE intake_items SET status = 'downloading', updated_at = ?
     WHERE id = ? AND (status = 'received' OR (status = 'downloading' AND updated_at < ?))`).bind(claimedAt, candidate.id, staleBefore).run();
   if (claimed.meta.changes !== 1) {
-    logCronEvent("queue_claim_lost", { intakeId: candidate.id });
+    logWorkerEvent("queue_claim_lost", { intakeId: candidate.id });
     return false;
   }
 
-  logCronEvent("queue_claimed", { intakeId: candidate.id, claimedAt });
+  logWorkerEvent("queue_claimed", { intakeId: candidate.id, claimedAt });
   await env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'processing_started', ?, ?)").bind(candidate.id, JSON.stringify({ source: "cron" }), claimedAt).run();
-  logCronEvent("intake_processing_started", { intakeId: candidate.id });
+  logWorkerEvent("intake_processing_started", { intakeId: candidate.id });
   await processIntake(candidate.id, env);
   const finalState = await env.DB.prepare("SELECT status FROM intake_items WHERE id = ? LIMIT 1").bind(candidate.id).first<{ status?: string }>();
-  logCronEvent("intake_processing_finished", { intakeId: candidate.id, status: finalState?.status ?? "unknown" });
+  logWorkerEvent("intake_processing_finished", { intakeId: candidate.id, status: finalState?.status ?? "unknown" });
   return true;
 }
 
@@ -644,13 +656,13 @@ export default {
   },
   async scheduled(controller: { cron: string; scheduledTime: number }, env: Env): Promise<void> {
     const startedAt = Date.now();
-    logCronEvent("cron_tick_started", { cron: controller.cron, scheduledTime: controller.scheduledTime });
+    logWorkerEvent("cron_tick_started", { cron: controller.cron, scheduledTime: controller.scheduledTime });
     try {
       const runtimeEnv = await resolveSecrets(env);
       const processed = await processNextQueuedIntake(runtimeEnv);
-      logCronEvent("cron_tick_finished", { cron: controller.cron, processed, durationMs: Date.now() - startedAt });
+      logWorkerEvent("cron_tick_finished", { cron: controller.cron, processed, durationMs: Date.now() - startedAt });
     } catch (error) {
-      logCronEvent("cron_tick_failed", { cron: controller.cron, durationMs: Date.now() - startedAt, errorType: error instanceof Error ? error.name : "unknown" });
+      logWorkerEvent("cron_tick_failed", { cron: controller.cron, durationMs: Date.now() - startedAt, errorType: error instanceof Error ? error.name : "unknown" });
       throw error;
     }
   },
