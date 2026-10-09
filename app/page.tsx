@@ -346,6 +346,24 @@ export default function HomePage() {
   const [progressRevision, setProgressRevision] = useState(0);
   useEffect(() => { writeLocalValue("thuthayatethar:reader-theme", theme); }, [theme]);
   useEffect(() => {
+    const syncHashTab = () => {
+      if (window.location.hash === "#audiobooks") {
+        setFormat("အသံစာအုပ်");
+        setQuery("");
+        setCategory("အားလုံး");
+        setTime("အားလုံး");
+      } else if (window.location.hash === "#catalog") {
+        setFormat("စာအုပ်");
+        setQuery("");
+        setCategory("အားလုံး");
+        setTime("အားလုံး");
+      }
+    };
+    syncHashTab();
+    window.addEventListener("hashchange", syncHashTab);
+    return () => window.removeEventListener("hashchange", syncHashTab);
+  }, []);
+  useEffect(() => {
     const refreshProgress = () => setProgressRevision((revision) => revision + 1);
     window.addEventListener("thuthayatethar:progress", refreshProgress);
     window.addEventListener("storage", refreshProgress);
