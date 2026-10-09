@@ -1,7 +1,7 @@
 // Keep user-downloaded books independent from deploy-specific app-shell caches.
 // A new Vercel build may replace the shell, but must not make users download
 // every saved PDF again.
-const SHELL_CACHE = "thuthayatethar-shell-v5";
+const SHELL_CACHE = "thuthayatethar-shell-v6";
 const BOOK_CACHE = "thuthayatethar-books";
 const CATALOG_CACHE = "thuthayatethar-catalog";
 const BOOK_WORKER_ORIGIN = "https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev";

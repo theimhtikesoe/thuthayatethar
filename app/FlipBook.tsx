@@ -27,7 +27,7 @@ const Page = forwardRef<HTMLDivElement, { number: number; total: number; title: 
   </div>;
 });
 
-export default function FlipBook({ url, offlineUrl, title, progressKey }: { url: string; offlineUrl?: string; title: string; progressKey: string }) {
+export default function FlipBook({ url, offlineUrl, standaloneUrl, title, progressKey }: { url: string; offlineUrl?: string; standaloneUrl?: string; title: string; progressKey: string }) {
   const [doc, setDoc] = useState<PdfDoc | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -93,7 +93,7 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
       try {
         const pdfjs: any = await import("pdfjs-dist");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.js";
-        loadingTask = pdfjs.getDocument({ url, withCredentials: false, disableAutoFetch: true, disableStream: false, rangeChunkSize: 1048576 });
+        loadingTask = pdfjs.getDocument({ url, password: "tgcf", withCredentials: false, disableAutoFetch: true, disableStream: false, rangeChunkSize: 1048576 });
         loadingTask.onPassword = (updatePassword: (password: string) => void, reason: number) => {
           if (!fallbackTried) {
             fallbackTried = true;
@@ -524,7 +524,7 @@ export default function FlipBook({ url, offlineUrl, title, progressKey }: { url:
       onPointerUpCapture={onPointerUp}
       onPointerCancelCapture={onPointerUp}
     >
-      {error && <div className="flip-status"><span>{isOnline ? error : "Internet မရှိပါ။ ဒီစာအုပ်ကို Offline သိမ်းထားပါက စာကြည့်တိုက်မှ ပြန်ဖွင့်ပါ။ မသိမ်းထားပါက Internet ပြန်ရမှ ဖွင့်နိုင်ပါမည်။"}</span><div className="flip-recovery-actions"><button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>ပြန်စမ်းမည်</button><a href={offlineUrl ?? url} target="_blank" rel="noreferrer">သီးခြားဖွင့်မည် ↗</a></div></div>}
+      {error && <div className="flip-status"><span>{isOnline ? error : "Internet မရှိပါ။ ဒီစာအုပ်ကို Offline သိမ်းထားပါက စာကြည့်တိုက်မှ ပြန်ဖွင့်ပါ။ မသိမ်းထားပါက Internet ပြန်ရမှ ဖွင့်နိုင်ပါမည်။"}</span><div className="flip-recovery-actions"><button type="button" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>ပြန်စမ်းမည်</button><a href={standaloneUrl ?? offlineUrl ?? url} target="_blank" rel="noreferrer">သီးခြားဖွင့်မည် ↗</a></div></div>}
       {passwordPrompt && <form className="pdf-password-prompt" onSubmit={(event) => { event.preventDefault(); passwordUpdater.current?.(passwordValue); setPasswordPrompt(false); }}>
         <span className="password-lock" aria-hidden="true">▣</span>
         <strong>စကားဝှက်ဖြင့် ဖတ်ရှုရန်</strong>
