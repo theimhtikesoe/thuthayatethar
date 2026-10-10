@@ -96,7 +96,7 @@ def process(job_id: str) -> None:
     set_job(job_id, "running")
     output = DOWNLOAD_DIR / f"{job_id}.mp3"
     try:
-        command = ["yt-dlp", "--js-runtimes", "node", "--remote-components", "ejs:github", "--no-playlist", "--format", "bestaudio/best", "--restrict-filenames", "--extract-audio", "--audio-format", "mp3", "--audio-quality", "128K", "--max-filesize", str(MAX_BYTES), "--output", str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")]
+        command = ["yt-dlp", "--js-runtimes", "node", "--remote-components", "ejs:github", "--no-playlist", "--format", "bestaudio[abr<=96]/bestaudio[abr<=128]/bestaudio", "--restrict-filenames", "--extract-audio", "--audio-format", "mp3", "--audio-quality", "64K", "--max-filesize", str(MAX_BYTES), "--output", str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")]
         if COOKIES_FILE and Path(COOKIES_FILE).is_file():
             command.extend(["--cookies", COOKIES_FILE])
         command.append(row["source_url"])
