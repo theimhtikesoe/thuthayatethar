@@ -187,6 +187,16 @@ function youtubeMetadata(message: JsonRecord, url: string): { title: string; aut
   return { title: clean.slice(0, 180) || `YouTube အသံစာအုပ် ${new URL(url).searchParams.get("v")}`, author: null };
 }
 
+function normalizeAudioUrl(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (["youtube.com", "m.youtube.com", "youtu.be", "soundcloud.com", "on.soundcloud.com"].includes(host)) return null;
+    return url.toString();
+  } catch { return null; }
+}
 function normalizeSoundCloudUrl(value: unknown): string | null {
   if (typeof value !== "string") return null;
   try {
@@ -765,7 +775,7 @@ async function catalog(request: Request, env: RuntimeEnv): Promise<Response> {
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405, origin);
   const statement = env.DB.prepare("SELECT b.id, b.title, b.slug, b.author, b.category, b.year, b.summary, b.reading_time, b.soundcloud_url, b.youtube_url, b.metadata_json, b.publication_status, b.updated_at, i.storage_key, i.source_type FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.publication_status = 'published' OR ((i.source_type = 'soundcloud_link' OR i.source_type = 'youtube_link') AND (b.soundcloud_url IS NOT NULL OR b.youtube_url IS NOT NULL) AND b.publication_status <> 'unpublished') ORDER BY b.updated_at DESC");
   const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
-  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} const publicMeta = isRecord(metadata.public) ? { ...metadata.public } : {}; if (typeof publicMeta.coverImage === "string" && publicMeta.coverImage.startsWith("/")) publicMeta.coverImage = new URL(publicMeta.coverImage, request.url).toString(); return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(typeof book.storage_key === "string" && book.storage_key ? { pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString() } : {}), ...(typeof book.soundcloud_url === "string" && book.soundcloud_url ? { soundcloud_url: book.soundcloud_url } : {}), ...(typeof book.youtube_url === "string" && book.youtube_url ? { youtube_url: book.youtube_url } : {}), ...publicMeta, ...(typeof book.publication_status === "string" ? { publicationStatus: book.publication_status } : {}), ...(book.source_type === "soundcloud_link" || book.source_type === "youtube_link" ? { submissionSource: "telegram" } : {}) }; });
+  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} const publicMeta = isRecord(metadata.public) ? { ...metadata.public } : {}; if (typeof publicMeta.coverImage === "string" && publicMeta.coverImage.startsWith("/")) publicMeta.coverImage = new URL(publicMeta.coverImage, request.url).toString(); return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(typeof book.storage_key === "string" && book.storage_key ? { pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString() } : {}), ...(typeof book.soundcloud_url === "string" && book.soundcloud_url ? { soundcloud_url: book.soundcloud_url } : {}), ...(typeof book.youtube_url === "string" && book.youtube_url ? { youtube_url: book.youtube_url } : {}), ...(typeof publicMeta.audioUrl === "string" && publicMeta.audioUrl ? { audio_url: publicMeta.audioUrl } : {}), ...publicMeta, ...(typeof book.publication_status === "string" ? { publicationStatus: book.publication_status } : {}), ...(book.source_type === "soundcloud_link" || book.source_type === "youtube_link" ? { submissionSource: "telegram" } : {}) }; });
   return json({ ok: true, books }, 200, origin);
 }
 
@@ -774,7 +784,13 @@ async function adminDrafts(request: Request, env: RuntimeEnv): Promise<Response>
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
   const statement = env.DB.prepare(`SELECT COALESCE(b.id, i.id) AS id, i.id AS intake_id, COALESCE(b.title, i.original_filename, 'စာအုပ်အသစ်') AS title, b.slug, b.author, b.category, b.year, b.summary, b.soundcloud_url, b.youtube_url, b.metadata_json, COALESCE(b.publication_status, i.status) AS publication_status, COALESCE(b.updated_at, i.updated_at) AS updated_at, i.status AS intake_status, i.original_filename, i.storage_key, i.source_type, i.source_url, i.failure_code, i.failure_message, r.rights_status, r.rights_holder, r.evidence_note, r.allowed_uses, r.reviewer, r.reviewed_at FROM intake_items i LEFT JOIN book_drafts b ON b.intake_id = i.id LEFT JOIN rights_records r ON r.intake_id = i.id ORDER BY i.updated_at DESC`);
   const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
-  return json({ ok: true, drafts: result.results });
+  const drafts = result.results.map((row) => {
+    let metadata: JsonRecord = {};
+    try { metadata = JSON.parse(typeof row.metadata_json === "string" ? row.metadata_json : "{}"); } catch {}
+    const publicMeta = isRecord(metadata.public) ? metadata.public : {};
+    return { ...row, audio_url: typeof publicMeta.audioUrl === "string" ? publicMeta.audioUrl : null };
+  });
+  return json({ ok: true, drafts });
 }
 
 async function directUpload(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -918,19 +934,23 @@ async function updateBook(request: Request, env: RuntimeEnv, slug: string): Prom
   const book = await env.DB.prepare("SELECT id, metadata_json FROM book_drafts WHERE slug = ? LIMIT 1").bind(slug).first<{ id: string; metadata_json: string }>();
   if (!book) return json({ ok: false, error: "book_not_found" }, 404);
   const text = (key: string, max: number) => typeof body[key] === "string" ? String(body[key]).trim().slice(0, max) : null;
+  const hasAudioUrl = Object.prototype.hasOwnProperty.call(body, "audio_url");
   const hasSoundCloudUrl = Object.prototype.hasOwnProperty.call(body, "soundcloud_url");
   const hasYouTubeUrl = Object.prototype.hasOwnProperty.call(body, "youtube_url");
+  const rawAudioUrl = typeof body.audio_url === "string" ? body.audio_url.trim() : "";
   const rawSoundCloudUrl = typeof body.soundcloud_url === "string" ? body.soundcloud_url.trim() : "";
   const rawYouTubeUrl = typeof body.youtube_url === "string" ? body.youtube_url.trim() : "";
+  const audioUrl = hasAudioUrl ? normalizeAudioUrl(rawAudioUrl) : null;
   const soundcloudUrl = hasSoundCloudUrl ? normalizeSoundCloudUrl(rawSoundCloudUrl) : null;
   const youtubeUrl = hasYouTubeUrl ? normalizeYouTubeUrl(rawYouTubeUrl) : null;
+  if (hasAudioUrl && rawAudioUrl && !audioUrl) return json({ ok: false, error: "invalid_audio_url" }, 400);
   if (hasSoundCloudUrl && rawSoundCloudUrl && !soundcloudUrl) return json({ ok: false, error: "invalid_soundcloud_url" }, 400);
   if (hasYouTubeUrl && rawYouTubeUrl && !youtubeUrl) return json({ ok: false, error: "invalid_youtube_url" }, 400);
   let metadata: JsonRecord = {};
   try { metadata = JSON.parse(book.metadata_json || "{}"); } catch {}
   const publicMeta = isRecord(metadata.public) ? metadata.public : {};
   const coverImage = text("coverImage", 1000);
-  const nextPublic = { ...publicMeta, ...(coverImage ? { coverImage } : {}) };
+  const nextPublic = { ...publicMeta, ...(coverImage ? { coverImage } : {}), ...(hasAudioUrl ? { audioUrl: audioUrl || null } : {}) };
   const now = new Date().toISOString();
   const soundcloudAssignment = hasSoundCloudUrl ? "soundcloud_url = ?, " : "";
   const youtubeAssignment = hasYouTubeUrl ? "youtube_url = ?, " : "";

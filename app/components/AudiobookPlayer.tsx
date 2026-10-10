@@ -3,14 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { groupAudiobooks, type AudiobookCoverGroup } from "../audiobook-grouping";
-import {
-  audioProgressStorageKey,
-  clearAudioProgress,
-  formatAudioTime,
-  readAudioProgress,
-  saveAudioDuration,
-  saveAudioProgress,
-} from "../audio-progress";
+import { clearAudioProgress, formatAudioTime, readAudioProgress, saveAudioDuration, saveAudioProgress } from "../audio-progress";
 
 type Audiobook = {
   id: string | number;
@@ -19,94 +12,30 @@ type Audiobook = {
   author?: string;
   category?: string;
   coverImage?: string;
+  audio_url?: string;
   soundcloud_url?: string;
   youtube_url?: string;
-  sourceType?: string;
-  submissionSource?: string;
 };
 
-type WidgetEvent = { currentPosition?: number };
-type Widget = {
-  bind: (event: string, callback: (event?: WidgetEvent) => void) => void;
-  seekTo: (milliseconds: number) => void;
-  play: () => void;
-  pause: () => void;
-  getDuration: (callback: (duration: number) => void) => void;
-  getPosition: (callback: (position: number) => void) => void;
-  isPaused: (callback: (paused: boolean) => void) => void;
-};
-type WidgetEvents = {
-  READY: string;
-  PLAY: string;
-  PAUSE: string;
-  PLAY_PROGRESS: string;
-  FINISH: string;
-  ERROR: string;
-};
-type WidgetFactory = ((iframe: HTMLIFrameElement) => Widget) & { Events: WidgetEvents };
-type SoundCloudApi = { Widget: WidgetFactory };
-
-declare global {
-  interface Window { SC?: SoundCloudApi }
-}
-
-let apiPromise: Promise<void> | null = null;
-const preparedWidgets = new Map<string, Widget>();
-function loadWidgetApi(): Promise<void> {
-  if (typeof window === "undefined" || window.SC?.Widget) return Promise.resolve();
-  if (apiPromise) return apiPromise;
-  apiPromise = new Promise((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>('script[data-soundcloud-widget="true"]');
-    const script = existing ?? document.createElement("script");
-    script.src = "https://w.soundcloud.com/player/api.js";
-    script.async = true;
-    script.dataset.soundcloudWidget = "true";
-    script.onload = () => resolve();
-    script.onerror = () => { apiPromise = null; reject(new Error("soundcloud_widget_unavailable")); };
-    if (!existing) document.head.appendChild(script);
-    else if (window.SC?.Widget) resolve();
-  });
-  return apiPromise;
-}
-
-function setMediaSessionPlaybackState(state: "none" | "paused" | "playing") {
-  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
-  try { navigator.mediaSession.playbackState = state; } catch { /* Ignore unsupported Media Session state updates. */ }
-}
-
-export function normalizeYouTubeUrl(value?: string | null): string | null {
+function normalizeAudioUrl(value?: string | null): string | null {
   if (!value?.trim()) return null;
   try {
     const url = new URL(value.trim());
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
-    let videoId = "";
-    if (host === "youtu.be") videoId = url.pathname.slice(1);
-    else if (host === "youtube.com" || host === "m.youtube.com") {
-      videoId = url.pathname === "/watch" ? url.searchParams.get("v") ?? "" : url.pathname.match(/^\/(?:embed|shorts|live)\/([^/?]+)/)?.[1] ?? "";
-    }
-    if (!["https:", "http:"].includes(url.protocol) || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) return null;
-    return `https://www.youtube.com/watch?v=${videoId}`;
-  } catch { return null; }
-}
-
-function youtubeVideoId(value?: string | null): string | null {
-  const normalized = normalizeYouTubeUrl(value);
-  return normalized ? new URL(normalized).searchParams.get("v") : null;
-}
-
-export function normalizeSoundCloudUrl(value?: string | null): string | null {
-  if (!value?.trim()) return null;
-  try {
-    const url = new URL(value.trim());
-    const host = url.hostname.toLowerCase().replace(/^www\./, "");
-    if (url.protocol !== "https:" || !["soundcloud.com", "on.soundcloud.com"].includes(host)) return null;
-    url.hash = "";
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (["youtube.com", "m.youtube.com", "youtu.be", "soundcloud.com", "on.soundcloud.com"].includes(host)) return null;
     return url.toString();
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
-function soundcloudCoverUrl(url?: string) {
-  return url ? `/api/soundcloud/cover?url=${encodeURIComponent(url)}` : null;
+function sourceUrl(book: Audiobook): string | null {
+  return book.youtube_url || book.soundcloud_url || null;
+}
+
+function audiobookRecordKey(book: Audiobook): string {
+  return String(book.slug ?? book.id);
 }
 
 const audiobookCoverPalette = [["#dbe7df", "#315a50"], ["#f0dfc8", "#80553c"], ["#d9dfef", "#485d83"], ["#eedce5", "#814d68"], ["#dce6ec", "#3d6570"], ["#e8e1ce", "#625638"]];
@@ -118,7 +47,7 @@ function audiobookCoverColors(book: Audiobook) {
 }
 
 function AudiobookCover({ book, coverImage }: { book: Audiobook; coverImage?: string }) {
-  const candidates = Array.from(new Set([coverImage || book.coverImage, soundcloudCoverUrl(book.soundcloud_url), youtubeVideoId(book.youtube_url) ? `https://i.ytimg.com/vi/${youtubeVideoId(book.youtube_url)}/hqdefault.jpg` : null].filter((value): value is string => Boolean(value))));
+  const candidates = Array.from(new Set([coverImage || book.coverImage].filter((value): value is string => Boolean(value))));
   const candidateKey = candidates.join("\u0000");
   const [imageIndex, setImageIndex] = useState(0);
   useEffect(() => setImageIndex(0), [candidateKey]);
@@ -137,52 +66,14 @@ export function AudiobookShelf({ books, onPlay }: { books: Audiobook[]; onPlay: 
   if (!books.length) return null;
   return <section className="audiobook-section" aria-label="အသံစာအုပ်များ">
     <div className="audiobook-section-heading"><div><p className="eyebrow">နားထောင်ရန်</p><h2>အသံစာအုပ်များ</h2></div><span>{groups.length} အုပ် · {books.length} ခေါင်းစဉ်</span></div>
-    <div className="audiobook-grid">
-      {groups.map((group) => <AudiobookGroupCard key={group.key} group={group} onPlay={onPlay} />)}
-    </div>
+    <div className="audiobook-grid">{groups.map((group) => <AudiobookGroupCard key={group.key} group={group} onPlay={onPlay} />)}</div>
   </section>;
 }
 
-function audiobookRecordKey(book: Audiobook): string {
-  return String(book.slug ?? book.id);
-}
-
-/** Start a preloaded SoundCloud widget directly inside the Listen click handler. */
-export function playPreparedAudiobook(book: Audiobook): boolean {
-  const widget = preparedWidgets.get(audiobookRecordKey(book));
-  if (!widget) return false;
-  widget.play();
-  return true;
-}
-
-function PreparedAudiobookWidget({ book }: { book: Audiobook }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const url = normalizeSoundCloudUrl(book.soundcloud_url);
-  useEffect(() => {
-    if (!url || !iframeRef.current) return;
-    let disposed = false;
-    void loadWidgetApi().then(() => {
-      if (disposed || !iframeRef.current || !window.SC?.Widget) return;
-      const widget = window.SC.Widget(iframeRef.current);
-      widget.bind(window.SC.Widget.Events.READY, () => {
-        if (disposed) return;
-        preparedWidgets.set(audiobookRecordKey(book), widget);
-        window.dispatchEvent(new Event("thuthayatethar:audio-widget-ready"));
-      });
-    });
-    return () => {
-      disposed = true;
-      if (preparedWidgets.get(audiobookRecordKey(book))) preparedWidgets.delete(audiobookRecordKey(book));
-    };
-  }, [book, url]);
-  if (!url) return null;
-  return <iframe ref={iframeRef} className="audiobook-preloader" title="" width="1" height="1" loading="eager" scrolling="no" frameBorder="0" allow="autoplay; encrypted-media" aria-hidden="true" tabIndex={-1} src={`https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}&auto_play=false&hide_related=true&show_comments=false&visual=false&show_user=false&show_reposts=false&show_teaser=false&show_artwork=false`} />;
-}
 
 function audiobookOptionLabel(title: string): string {
   const normalized = title.normalize("NFKC").replace(/[၀-၉]/g, (digit) => String(digit.charCodeAt(0) - 0x1040));
-  const marked = normalized.match(/\b(?:chapter|part|episode)\s*[-_:()]?\s*(\d+)\b/i)
-    ?? normalized.match(/(?:အခန်း|အပိုင်း)\s*[-_:()]?\s*(\d+)/);
+  const marked = normalized.match(/\b(?:chapter|part|episode)\s*[-_:()]?\s*(\d+)\b/i) ?? normalized.match(/(?:အခန်း|အပိုင်း)\s*[-_:()]?\s*(\d+)/);
   if (marked) return `အပိုင်း ${marked[1]}`;
   const trailing = normalized.match(/(?:^|[\s._-])(\d+)\s*$/);
   return trailing ? `အပိုင်း ${trailing[1]}` : title;
@@ -190,289 +81,76 @@ function audiobookOptionLabel(title: string): string {
 
 function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audiobook>; onPlay: (book: Audiobook) => void }) {
   const [selectedKey, setSelectedKey] = useState(() => audiobookRecordKey(group.books[0]));
-  const selectedBook = group.books.find((book) => audiobookRecordKey(book) === selectedKey) ?? group.books[0];
+  const selectedBook = group.books.find((item) => audiobookRecordKey(item) === selectedKey) ?? group.books[0];
   const book = group.books[0];
-
   useEffect(() => {
-    if (!group.books.some((item) => audiobookRecordKey(item) === selectedKey)) {
-      setSelectedKey(audiobookRecordKey(group.books[0]));
-    }
+    if (!group.books.some((item) => audiobookRecordKey(item) === selectedKey)) setSelectedKey(audiobookRecordKey(group.books[0]));
   }, [group.books, selectedKey]);
-
   return <article className="audiobook-card" key={group.key}>
     <AudiobookCover book={book} coverImage={group.books.find((item) => item.coverImage)?.coverImage} />
     <div className="audiobook-card-copy"><small>{book.category || "အသံစာအုပ်"}</small><strong>{group.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
     <div className="audiobook-track-picker">
-      {group.books.length > 1
-        ? <label className="audiobook-track-select"><span>အပိုင်း / ခေါင်းစဉ်ရွေးပါ</span><select value={audiobookRecordKey(selectedBook)} onChange={(event) => setSelectedKey(event.target.value)} aria-label={`${group.title} အပိုင်း သို့မဟုတ် ခေါင်းစဉ်ရွေးရန်`}>{group.books.map((item) => <option key={audiobookRecordKey(item)} value={audiobookRecordKey(item)}>{audiobookOptionLabel(item.title)}</option>)}</select></label>
-        : <span className="audiobook-single-track">{selectedBook.title}</span>}
+      {group.books.length > 1 ? <label className="audiobook-track-select"><span>အပိုင်း / ခေါင်းစဉ်ရွေးပါ</span><select value={audiobookRecordKey(selectedBook)} onChange={(event) => setSelectedKey(event.target.value)} aria-label={`${group.title} အပိုင်း သို့မဟုတ် ခေါင်းစဉ်ရွေးရန်`}>{group.books.map((item) => <option key={audiobookRecordKey(item)} value={audiobookRecordKey(item)}>{audiobookOptionLabel(item.title)}</option>)}</select></label> : <span className="audiobook-single-track">{selectedBook.title}</span>}
       <button type="button" className="audiobook-listen" onClick={() => onPlay(selectedBook)} aria-label={`${selectedBook.title} ကို နားထောင်မည်`}><span aria-hidden="true">▶</span> နားထောင်မည်</button>
     </div>
   </article>;
 }
 
-export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { book: Audiobook | null; onClose: () => void; preloadBooks?: Audiobook[] }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const widgetRef = useRef<Widget | null>(null);
+export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | null; onClose: () => void; preloadBooks?: Audiobook[] }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
   const positionRef = useRef(0);
   const durationRef = useRef(0);
-  const [widgetApiState, setWidgetApiState] = useState<"loading" | "ready" | "error">("loading");
+  const [isPlaying, setIsPlaying] = useState(false);
   const [playerReady, setPlayerReady] = useState(false);
   const [playerError, setPlayerError] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
-  const resumeAfterVisibilityRef = useRef(false);
-  const [preparedRevision, setPreparedRevision] = useState(0);
-  const preparedWidget = book ? preparedWidgets.get(audiobookRecordKey(book)) : null;
-  const normalizedUrl = useMemo(() => normalizeSoundCloudUrl(book?.soundcloud_url), [book?.soundcloud_url]);
-  const playerSrc = useMemo(() => normalizedUrl
-    ? `https://w.soundcloud.com/player/?url=${encodeURIComponent(normalizedUrl)}&auto_play=true&hide_related=true&show_comments=false&visual=false&show_user=false&show_reposts=false&show_teaser=false&show_artwork=false`
-    : "", [normalizedUrl]);
+  const audioUrl = useMemo(() => normalizeAudioUrl(book?.audio_url), [book?.audio_url]);
+  const unsupportedSource = book && !audioUrl ? sourceUrl(book) : null;
 
   useEffect(() => {
-    setWidgetApiState("loading");
-    setPlayerReady(false);
-    setPlayerError(false);
-    setIsPlaying(false);
-    positionRef.current = 0;
-    durationRef.current = 0;
-    setPositionMs(0);
-    setDurationMs(0);
-    resumeAfterVisibilityRef.current = false;
-    if (!book || !normalizedUrl) return;
-    let disposed = false;
-    void loadWidgetApi().then(() => {
-      if (!disposed) setWidgetApiState("ready");
-    }).catch(() => {
-      if (!disposed) setWidgetApiState("error");
-    });
-    return () => { disposed = true; };
-  }, [book?.slug, book?.id, normalizedUrl]);
-
-  useEffect(() => {
-    const refreshPreparedWidgets = () => setPreparedRevision((revision) => revision + 1);
-    window.addEventListener("thuthayatethar:audio-widget-ready", refreshPreparedWidgets);
-    return () => window.removeEventListener("thuthayatethar:audio-widget-ready", refreshPreparedWidgets);
-  }, []);
-
-  useEffect(() => {
-    document.body.classList.toggle("audiobook-playing", Boolean(book && normalizedUrl));
-    return () => document.body.classList.remove("audiobook-playing");
-  }, [book, normalizedUrl]);
-
-  useEffect(() => {
-    if (!book || !normalizedUrl || !("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
-    const session = navigator.mediaSession;
-    session.metadata = new MediaMetadata({ title: book.title, artist: book.author || "သုတရိပ်သာ", album: "သုတရိပ်သာ · အသံစာအုပ်" });
-    const register = (action: MediaSessionAction, handler: MediaSessionActionHandler) => {
-      try { session.setActionHandler(action, handler); } catch { /* This browser does not support the action. */ }
-    };
-    register("play", () => widgetRef.current?.play());
-    register("pause", () => {
-      resumeAfterVisibilityRef.current = false;
-      widgetRef.current?.pause();
-    });
-    register("seekto", (details) => {
-      if (typeof details.seekTime === "number") widgetRef.current?.seekTo(details.seekTime * 1000);
-    });
-    return () => {
-      try {
-        session.metadata = null;
-        session.playbackState = "none";
-        session.setActionHandler("play", null);
-        session.setActionHandler("pause", null);
-        session.setActionHandler("seekto", null);
-      } catch { /* Ignore unsupported media-session cleanup. */ }
-    };
-  }, [book?.slug, book?.id, book?.title, book?.author, normalizedUrl]);
-
-  useEffect(() => {
-    if (!book || !normalizedUrl || widgetApiState !== "ready" || (!preparedWidget && (!iframeRef.current || !window.SC?.Widget))) return;
-    let disposed = false;
-    let lastUiUpdate = 0;
-    let lastProgressSave = 0;
-    const soundCloud = window.SC;
-    if (!preparedWidget && !soundCloud?.Widget) return;
-    const widget = preparedWidget ?? soundCloud!.Widget(iframeRef.current!);
-    widgetRef.current = widget;
-    const events = soundCloud?.Widget.Events ?? window.SC!.Widget.Events;
+    const audio = audioRef.current;
+    if (!book || !audioUrl || !audio) return;
     const saved = readAudioProgress(book, window.localStorage);
+    setIsPlaying(false); setPlayerReady(false); setPlayerError(false); setPositionMs(saved?.positionMs ?? 0); setDurationMs(saved?.durationMs ?? 0);
+    positionRef.current = saved?.positionMs ?? 0; durationRef.current = saved?.durationMs ?? 0;
+    audio.currentTime = saved?.positionMs ? saved.positionMs / 1000 : 0;
+    const persist = () => { const position = audio.currentTime * 1000; positionRef.current = position; setPositionMs(position); saveAudioProgress(book, window.localStorage, position, durationRef.current); window.dispatchEvent(new Event("thuthayatethar:audio-progress")); };
+    const onLoadedMetadata = () => { durationRef.current = Number.isFinite(audio.duration) ? audio.duration * 1000 : 0; setDurationMs(durationRef.current); saveAudioDuration(book, window.localStorage, durationRef.current); setPlayerReady(true); if (positionRef.current > 0) audio.currentTime = Math.min(positionRef.current / 1000, audio.duration); void audio.play().catch(() => undefined); };
+    const onTimeUpdate = () => { const position = audio.currentTime * 1000; positionRef.current = position; setPositionMs(position); };
+    const onPlay = () => { setIsPlaying(true); setMediaSessionPlaybackState("playing"); };
+    const onPause = () => { setIsPlaying(false); setMediaSessionPlaybackState("paused"); persist(); };
+    const onEnded = () => { setIsPlaying(false); setMediaSessionPlaybackState("none"); clearAudioProgress(book, window.localStorage); positionRef.current = 0; setPositionMs(0); window.dispatchEvent(new Event("thuthayatethar:audio-progress")); };
+    const onError = () => { setPlayerError(true); setPlayerReady(false); setMediaSessionPlaybackState("none"); };
+    audio.addEventListener("loadedmetadata", onLoadedMetadata); audio.addEventListener("timeupdate", onTimeUpdate); audio.addEventListener("play", onPlay); audio.addEventListener("pause", onPause); audio.addEventListener("ended", onEnded); audio.addEventListener("error", onError); audio.addEventListener("canplay", () => setPlayerReady(true));
+    audio.load();
+    return () => { persist(); audio.pause(); audio.removeEventListener("loadedmetadata", onLoadedMetadata); audio.removeEventListener("timeupdate", onTimeUpdate); audio.removeEventListener("play", onPlay); audio.removeEventListener("pause", onPause); audio.removeEventListener("ended", onEnded); audio.removeEventListener("error", onError); setMediaSessionPlaybackState("none"); };
+  }, [book, audioUrl]);
 
-    const emitProgressChange = () => window.dispatchEvent(new Event("thuthayatethar:audio-progress"));
-    const persistPosition = (position: number, duration = durationRef.current) => {
-      if (!Number.isFinite(position) || position < 0) return;
-      const safePosition = duration > 0 ? Math.min(position, duration) : position;
-      positionRef.current = safePosition;
-      setPositionMs(safePosition);
-      saveAudioProgress(book, window.localStorage, safePosition, duration);
-      emitProgressChange();
-    };
+  useEffect(() => { document.body.classList.toggle("audiobook-playing", Boolean(book)); return () => document.body.classList.remove("audiobook-playing"); }, [book]);
+  useEffect(() => {
+    if (!book || !audioUrl || !("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
+    const session = navigator.mediaSession; session.metadata = new MediaMetadata({ title: book.title, artist: book.author || "သုတရိပ်သာ", album: "သုတရိပ်သာ · အသံစာအုပ်" });
+    try { session.setActionHandler("play", () => void audioRef.current?.play()); session.setActionHandler("pause", () => audioRef.current?.pause()); session.setActionHandler("seekbackward", () => { if (audioRef.current) audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - 15); }); session.setActionHandler("seekforward", () => { if (audioRef.current) audioRef.current.currentTime = Math.min(audioRef.current.duration || Infinity, audioRef.current.currentTime + 30); }); } catch { /* Unsupported Media Session action. */ }
+    return () => { try { session.metadata = null; session.playbackState = "none"; session.setActionHandler("play", null); session.setActionHandler("pause", null); session.setActionHandler("seekbackward", null); session.setActionHandler("seekforward", null); } catch { /* Ignore cleanup errors. */ } };
+  }, [book?.slug, book?.id, book?.title, book?.author, audioUrl]);
 
-    if (saved) {
-      positionRef.current = saved.positionMs;
-      durationRef.current = saved.durationMs;
-      setPositionMs(saved.positionMs);
-      setDurationMs(saved.durationMs);
-    }
-
-    const initializePlayer = () => {
-      if (disposed) return;
-      setPlayerReady(true);
-      widget.getDuration((duration) => {
-        if (disposed || !Number.isFinite(duration) || duration <= 0) return;
-        durationRef.current = duration;
-        setDurationMs(duration);
-        saveAudioDuration(book, window.localStorage, duration);
-        if (positionRef.current > duration) {
-          positionRef.current = duration;
-          setPositionMs(duration);
-        }
-      });
-      if (saved?.positionMs) widget.seekTo(saved.positionMs);
-      widget.isPaused((paused) => {
-        if (disposed) return;
-        setIsPlaying(!paused);
-        setMediaSessionPlaybackState(paused ? "paused" : "playing");
-        // Opening the player is already initiated by the user's Listen click.
-        // Explicitly start the widget after READY so mobile browsers do not
-        // leave the first track waiting for a second tap on the dock button.
-        if (paused) widget.play();
-      });
-    };
-    widget.bind(events.READY, initializePlayer);
-    // A preloaded iframe may already be ready before the Listen click.
-    if (preparedWidget) initializePlayer();
-
-    widget.bind(events.PLAY, () => {
-      if (disposed) return;
-      setIsPlaying(true);
-      setMediaSessionPlaybackState("playing");
-      persistPosition(positionRef.current);
-    });
-    widget.bind(events.PAUSE, () => {
-      if (disposed) return;
-      setIsPlaying(false);
-      setMediaSessionPlaybackState("paused");
-      widget.getPosition((position) => { if (!disposed) persistPosition(position); });
-    });
-
-    // Mobile browsers may suspend a third-party iframe while the PWA is
-    // backgrounded or the screen is locked. Remember whether it was playing
-    // before that lifecycle transition and wake it when the app is visible
-    // again. This does not force playback while hidden, which browsers may
-    // reject, but prevents a silent player after returning to the PWA.
-    const rememberPlaybackBeforeBackground = () => {
-      widget.isPaused((paused) => {
-        if (!disposed) resumeAfterVisibilityRef.current = !paused;
-      });
-    };
-    const resumeAfterBackground = () => {
-      if (disposed || !resumeAfterVisibilityRef.current) return;
-      widget.isPaused((paused) => {
-        if (disposed || !paused) return;
-        widget.play();
-      });
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") rememberPlaybackBeforeBackground();
-      else resumeAfterBackground();
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("pagehide", rememberPlaybackBeforeBackground);
-    window.addEventListener("pageshow", resumeAfterBackground);
-    widget.bind(events.PLAY_PROGRESS, (event) => {
-      if (disposed || typeof event?.currentPosition !== "number" || !Number.isFinite(event.currentPosition)) return;
-      const now = Date.now();
-      const position = Math.max(0, event.currentPosition);
-      if (now - lastUiUpdate >= 250 || (durationRef.current > 0 && position >= durationRef.current)) {
-        positionRef.current = position;
-        setPositionMs(durationRef.current > 0 ? Math.min(position, durationRef.current) : position);
-        lastUiUpdate = now;
-      }
-      if (now - lastProgressSave >= 1000) {
-        persistPosition(position);
-        lastProgressSave = now;
-      }
-    });
-    widget.bind(events.FINISH, () => {
-      if (disposed) return;
-      resumeAfterVisibilityRef.current = false;
-      setIsPlaying(false);
-      setMediaSessionPlaybackState("none");
-      clearAudioProgress(book, window.localStorage);
-      positionRef.current = 0;
-      setPositionMs(0);
-      emitProgressChange();
-    });
-    widget.bind(events.ERROR, () => {
-      if (disposed) return;
-      setPlayerError(true);
-      setMediaSessionPlaybackState("none");
-    });
-
-    return () => {
-      disposed = true;
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("pagehide", rememberPlaybackBeforeBackground);
-      window.removeEventListener("pageshow", resumeAfterBackground);
-      if (widgetRef.current === widget) widgetRef.current = null;
-      // The iframe is discarded on track changes; this guard prevents stale updates.
-    };
-  }, [book, normalizedUrl, playerSrc, widgetApiState, preparedRevision]);
-
-  const youtubeUrl = useMemo(() => normalizeYouTubeUrl(book?.youtube_url), [book?.youtube_url]);
-  const youtubeId = youtubeVideoId(youtubeUrl);
-  if (youtubeUrl && youtubeId) {
-    return <aside className="audiobook-dock audiobook-youtube-dock" aria-label="YouTube အသံစာအုပ်ဖွင့်စက်">
-      <div className="audiobook-dock-heading"><span className="audiobook-live-dot" /><span className="audiobook-dock-title"><small>ယခုနားထောင်နေသည် · YouTube</small><strong>{book?.title}</strong><span>{book?.author || "တင်သူ မသိရသေးပါ"}</span></span><a href={youtubeUrl} target="_blank" rel="noreferrer" className="audiobook-open-source">YouTube ↗</a><button type="button" onClick={onClose} className="audiobook-dock-close" aria-label="အသံဖွင့်စက်ကို ပိတ်မည်">×</button></div>
-      <iframe className="audiobook-youtube-frame" title={`${book?.title} — YouTube အသံရင်းမြစ်`} src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&playsinline=1&rel=0`} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
-      <p className="audiobook-player-status" role="status">YouTube video player ဖြင့် နားဆင်နိုင်ပါသည်။</p>
-      {preloadBooks.map((item) => <PreparedAudiobookWidget key={audiobookRecordKey(item)} book={item} />)}
-    </aside>;
-  }
-  if (!book || !normalizedUrl || !playerSrc) {
-    return <>{preloadBooks.map((item) => <PreparedAudiobookWidget key={audiobookRecordKey(item)} book={item} />)}</>;
-  }
-
-  const togglePlayback = () => {
-    const widget = widgetRef.current;
-    if (!widget || !playerReady) return;
-    if (isPlaying) {
-      resumeAfterVisibilityRef.current = false;
-      widget.pause();
-    }
-    else widget.play();
-  };
-
-  const seekTo = (value: string) => {
-    const position = Number(value);
-    if (!Number.isFinite(position)) return;
-    positionRef.current = position;
-    setPositionMs(position);
-    widgetRef.current?.seekTo(position);
-    saveAudioProgress(book, window.localStorage, position, durationRef.current);
-    window.dispatchEvent(new Event("thuthayatethar:audio-progress"));
-  };
-
+  if (!book) return null;
+  const togglePlayback = () => { const audio = audioRef.current; if (!audio || !playerReady || playerError) return; if (audio.paused) void audio.play().catch(() => setPlayerError(true)); else audio.pause(); };
+  const seekTo = (value: string) => { const position = Number(value); if (!Number.isFinite(position) || !audioRef.current) return; audioRef.current.currentTime = position / 1000; setPositionMs(position); saveAudioProgress(book, window.localStorage, position, durationRef.current); };
   const displayedPosition = durationMs > 0 ? Math.min(positionMs, durationMs) : positionMs;
-  const sourceLabel = `SoundCloud မူရင်းအသံစာမျက်နှာကို ဖွင့်မည်`;
+  const sourceLabel = book.youtube_url ? "YouTube မူရင်းစာမျက်နှာကို ဖွင့်မည်" : "SoundCloud မူရင်းစာမျက်နှာကို ဖွင့်မည်";
   return <aside className="audiobook-dock" aria-label="အသံစာအုပ်ဖွင့်စက်">
-    <div className="audiobook-dock-heading"><span className="audiobook-live-dot" /><span className="audiobook-dock-title"><small>ယခုနားထောင်နေသည်</small><strong>{book.title}</strong><span>{book.author || "တင်သူ မသိရသေးပါ"}</span></span>
-      <a href={normalizedUrl} target="_blank" rel="noreferrer" className="audiobook-open-source" aria-label={sourceLabel}>SoundCloud ↗</a>
-      <button type="button" onClick={onClose} className="audiobook-dock-close" aria-label="အသံဖွင့်စက်ကို ပိတ်မည်">×</button>
-    </div>
-    <div className="audiobook-controls" aria-label="အသံစာအုပ်ထိန်းချုပ်မှု">
-      <button type="button" className="audiobook-play-toggle" onClick={togglePlayback} disabled={!playerReady || playerError} aria-label={isPlaying ? "ခဏရပ်မည်" : "ဆက်နားထောင်မည်"}>
-        <span aria-hidden="true">{isPlaying ? "Ⅱ" : "▶"}</span>
-      </button>
-      <input type="range" min="0" max={durationMs || 1} step="1000" value={displayedPosition} disabled={!playerReady || durationMs <= 0 || playerError} onChange={(event) => seekTo(event.target.value)} aria-label="အသံစာအုပ်အတွင်း ဖွင့်နေသည့်နေရာ" />
-      <span className="audiobook-time" aria-live="off">{formatAudioTime(displayedPosition)}{durationMs > 0 ? ` / ${formatAudioTime(durationMs)}` : ""}</span>
-    </div>
-    {widgetApiState !== "ready" || !playerReady || playerError
-      ? <p className="audiobook-player-status" role="status">{widgetApiState === "error" || playerError ? "အသံစာအုပ်ကို ဖွင့်မရပါ။ SoundCloud မူရင်းကို စမ်းဖွင့်ပါ။" : "အသံဖွင့်စက်ကို ပြင်ဆင်နေသည်…"}</p>
-      : null}
-    {preloadBooks.map((item) => <PreparedAudiobookWidget key={audiobookRecordKey(item)} book={item} />)}
-    {widgetApiState === "ready" && !preparedWidget && <iframe key={`${book.slug ?? book.id}:${normalizedUrl}`} ref={iframeRef} className="audiobook-engine" title={`${book.title} — SoundCloud အသံရင်းမြစ်`} width="1" height="1" loading="eager" scrolling="no" frameBorder="0" allow="autoplay; encrypted-media" aria-hidden="true" tabIndex={-1} src={playerSrc} />}
+    {audioUrl && <audio ref={audioRef} className="audiobook-native-audio" src={audioUrl} preload="metadata" aria-label={`${book.title} အသံစာအုပ်`} />}
+    <div className="audiobook-dock-heading"><span className="audiobook-live-dot" /><span className="audiobook-dock-title"><small>ယခုနားထောင်နေသည် · AUDIO</small><strong>{book.title}</strong><span>{book.author || "တင်သူ မသိရသေးပါ"}</span></span>{unsupportedSource && <a href={unsupportedSource} target="_blank" rel="noreferrer" className="audiobook-open-source">မူရင်း ↗</a>}<button type="button" onClick={onClose} className="audiobook-dock-close" aria-label="အသံဖွင့်စက်ကို ပိတ်မည်">×</button></div>
+    {audioUrl ? <>
+      <div className="audiobook-controls" aria-label="အသံစာအုပ်ထိန်းချုပ်မှု"><button type="button" className="audiobook-play-toggle" onClick={togglePlayback} disabled={!playerReady || playerError} aria-label={isPlaying ? "ခဏရပ်မည်" : "ဆက်နားထောင်မည်"}><span aria-hidden="true">{isPlaying ? "Ⅱ" : "▶"}</span></button><input type="range" min="0" max={durationMs || 1} step="1000" value={displayedPosition} disabled={!playerReady || durationMs <= 0 || playerError} onChange={(event) => seekTo(event.target.value)} aria-label="အသံစာအုပ်အတွင်း ဖွင့်နေသည့်နေရာ" /><span className="audiobook-time" aria-live="off">{formatAudioTime(displayedPosition)}{durationMs > 0 ? ` / ${formatAudioTime(durationMs)}` : ""}</span></div>
+      {(playerError || !playerReady) && <p className="audiobook-player-status" role="status">{playerError ? "အသံဖိုင်ကို ဖွင့်မရပါ။ URL နှင့် ဖိုင်ခွင့်ပြုချက်ကို စစ်ပါ။" : "အသံဖွင့်စက်ကို ပြင်ဆင်နေသည်…"}</p>}
+    </> : <p className="audiobook-player-status audiobook-source-required" role="status">YouTube/SoundCloud စာမျက်နှာ link သာရှိပါသည်။ Native audio ဖွင့်ရန် admin မှ တိုက်ရိုက် MP3, M4A, OGG သို့မဟုတ် WAV URL ထည့်ပေးရန်လိုအပ်ပါသည်။</p>}
   </aside>;
+}
+
+function setMediaSessionPlaybackState(state: "none" | "paused" | "playing") {
+  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+  try { navigator.mediaSession.playbackState = state; } catch { /* Unsupported Media Session state. */ }
 }

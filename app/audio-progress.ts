@@ -1,7 +1,9 @@
 export type AudioProgressBook = {
   id: string | number;
   slug?: string;
+  audio_url?: string;
   soundcloud_url?: string;
+  youtube_url?: string;
 };
 
 export type AudioProgress = {
@@ -80,7 +82,7 @@ export function mostRecentListening<T extends AudioProgressBook>(
   storage: ProgressStorage,
 ): RecentListening<T> | null {
   const recent = books
-    .filter((book) => Boolean(book.soundcloud_url))
+    .filter((book) => Boolean(book.audio_url || book.soundcloud_url || book.youtube_url))
     .flatMap((book) => {
       const progress = readAudioProgress(book, storage);
       return progress ? [{ book, ...progress }] : [];

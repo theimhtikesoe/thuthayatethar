@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import dynamic from "next/dynamic";
-import AudiobookPlayer, { AudiobookShelf, playPreparedAudiobook } from "./components/AudiobookPlayer";
+import AudiobookPlayer, { AudiobookShelf } from "./components/AudiobookPlayer";
 import { chapterLabel, groupBooks, groupTitle, type ChapterGroup } from "./catalog-grouping";
 import { formatAudioTime, mostRecentListening } from "./audio-progress";
 import { correctedCatalogTitle } from "./burmese-text";
@@ -34,6 +34,7 @@ type Book = {
   externalUrl?: string;
   soundcloud_url?: string;
   youtube_url?: string;
+  audio_url?: string;
   sourceType?: string;
   submissionSource?: string;
   publicationStatus?: string;
@@ -397,6 +398,7 @@ export default function HomePage() {
             externalUrl: book.externalUrl,
             soundcloud_url: book.soundcloud_url,
             youtube_url: book.youtube_url,
+            audio_url: book.audio_url,
             sourceType: book.sourceType,
             submissionSource: book.submissionSource,
             publicationStatus: book.publicationStatus,
@@ -440,7 +442,7 @@ export default function HomePage() {
     try {
       const identity = JSON.parse(saved) as { slug?: string; id?: string | number };
       const book = catalogBooks.find((item) => (identity.slug && item.slug === identity.slug) || String(item.id) === String(identity.id));
-      if (book?.soundcloud_url || book?.youtube_url) setAudioBook((current) => current ?? book);
+      if (book?.audio_url || book?.soundcloud_url || book?.youtube_url) setAudioBook((current) => current ?? book);
     } catch { /* Ignore an invalid last-player record. */ }
   }, [catalogBooks]);
   useEffect(() => {
@@ -460,12 +462,10 @@ export default function HomePage() {
 
   const availableBooks = catalogBooks ?? [];
   function playAudiobook(book: Book) {
-    if (!book.soundcloud_url && !book.youtube_url) return;
-    // Calling the prepared widget here preserves the Listen click's browser gesture.
-    playPreparedAudiobook(book);
+    if (!book.audio_url && !book.soundcloud_url && !book.youtube_url) return;
     setAudioBook((current) => {
       const sameIdentity = current && (current.slug ?? String(current.id)) === (book.slug ?? String(book.id));
-      return sameIdentity && current?.soundcloud_url === book.soundcloud_url && current?.youtube_url === book.youtube_url ? current : book;
+      return sameIdentity && current?.audio_url === book.audio_url && current?.soundcloud_url === book.soundcloud_url && current?.youtube_url === book.youtube_url ? current : book;
     });
     writeLocalValue("thuthayatethar:active-audiobook", JSON.stringify({ slug: book.slug, id: book.id }));
   }
@@ -579,7 +579,7 @@ export default function HomePage() {
   }
 
   const matchingAudioBooks = useMemo(() => {
-    return availableBooks.filter((book) => Boolean(book.soundcloud_url || book.youtube_url));
+    return availableBooks.filter((book) => Boolean(book.audio_url || book.soundcloud_url || book.youtube_url));
   }, [availableBooks]);
   const recentListening = useMemo<RecentListening | null>(() => {
     if (typeof window === "undefined") return null;
@@ -589,8 +589,8 @@ export default function HomePage() {
   const filteredBooks = useMemo(() => {
     return availableBooks.filter((book) => {
       const isWattpad = Boolean(book.externalUrl || book.sourceType === "wattpad");
-      const isAudioOnly = Boolean((book.soundcloud_url || book.youtube_url) && !book.pdfUrl && !book.pages.length);
-      const matchesFormat = (format === "စာအုပ်" && !isWattpad && !book.soundcloud_url && !book.youtube_url) ||
+      const isAudioOnly = Boolean((book.audio_url || book.soundcloud_url || book.youtube_url) && !book.pdfUrl && !book.pages.length);
+      const matchesFormat = (format === "စာအုပ်" && !isWattpad && !book.audio_url && !book.soundcloud_url && !book.youtube_url) ||
         (format === "Wattpad" && isWattpad);
       return !isAudioOnly && matchesFormat;
     });
@@ -732,7 +732,7 @@ export default function HomePage() {
               key={group.book.id}
               group={group}
               index={index}
-              onOpen={(book) => (book.soundcloud_url || book.youtube_url) && !book.pdfUrl && !book.pages.length ? playAudiobook(book) : book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)}
+              onOpen={(book) => (book.audio_url || book.soundcloud_url || book.youtube_url) && !book.pdfUrl && !book.pages.length ? playAudiobook(book) : book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)}
             />)}
             {!catalogLoading && format !== "အသံစာအုပ်" && !filteredGroups.length && <div className="empty-state"><span>⌁</span><h3>ဒီလိုစာအုပ် မတွေ့သေးပါ</h3><p>လက်ရှိ Website catalog ထဲမှာ ထုတ်ဝေထားသောစာအုပ် မရှိသေးပါ။</p><button className="primary-button" type="button" onClick={resetFilters}>စာအုပ်များသို့ ပြန်သွားမည်</button></div>}
           </div>
