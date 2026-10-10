@@ -399,7 +399,9 @@ export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { 
     };
   }, [book, normalizedUrl, playerSrc, widgetApiState, preparedRevision]);
 
-  if (!book || !normalizedUrl || !playerSrc) return null;
+  if (!book || !normalizedUrl || !playerSrc) {
+    return <>{preloadBooks.map((item) => <PreparedAudiobookWidget key={audiobookRecordKey(item)} book={item} />)}</>;
+  }
 
   const togglePlayback = () => {
     const widget = widgetRef.current;
