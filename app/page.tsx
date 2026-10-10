@@ -203,7 +203,6 @@ const books: Book[] = [
   }
 ];
 
-const formats = ["အားလုံး", "စာအုပ်", "အသံစာအုပ်", "Wattpad"];
 const coverPalette = [
   ["#cad7d3", "#264e4b"], ["#e5c6b2", "#8a4f3d"], ["#d6c6a9", "#655139"],
   ["#c7d4e5", "#38567b"], ["#b9c8d1", "#334d62"], ["#e0c4cf", "#7b405d"],
@@ -284,7 +283,7 @@ export default function HomePage() {
   const [catalogBooks, setCatalogBooks] = useState<Book[] | null>(null);
   const catalogSnapshotRef = useRef("");
   const [catalogLoading, setCatalogLoading] = useState(true);
-  const [format, setFormat] = useState("အားလုံး");
+  const [format, setFormat] = useState("စာအုပ်");
   const [selected, setSelected] = useState<Book | null>(null);
   const [readerBook, setReaderBook] = useState<Book | null>(null);
   const [audioBook, setAudioBook] = useState<Book | null>(null);
@@ -311,6 +310,8 @@ export default function HomePage() {
     const syncHashTab = () => {
       if (window.location.hash === "#audiobooks") {
         setFormat("အသံစာအုပ်");
+      } else if (window.location.hash === "#wattpad") {
+        setFormat("Wattpad");
       } else if (window.location.hash === "#catalog") {
         setFormat("စာအုပ်");
       }
@@ -585,15 +586,13 @@ export default function HomePage() {
     return availableBooks.filter((book) => {
       const isWattpad = Boolean(book.externalUrl || book.sourceType === "wattpad");
       const isAudioOnly = Boolean(book.soundcloud_url && !book.pdfUrl && !book.pages.length);
-      const matchesFormat = format === "အားလုံး" ||
-        (format === "စာအုပ်" && !isWattpad && !book.soundcloud_url) ||
+      const matchesFormat = (format === "စာအုပ်" && !isWattpad && !book.soundcloud_url) ||
         (format === "Wattpad" && isWattpad);
       return !isAudioOnly && matchesFormat;
     });
   }, [availableBooks, format]);
   const filteredGroups = useMemo(() => groupBooks(filteredBooks), [filteredBooks]);
-  const audioOnlyCount = matchingAudioBooks.filter((book) => !book.pdfUrl && !book.pages.length).length;
-  const visibleResultCount = format === "အသံစာအုပ်" ? matchingAudioBooks.length : filteredGroups.length + (format === "အားလုံး" ? audioOnlyCount : 0);
+  const visibleResultCount = format === "အသံစာအုပ်" ? matchingAudioBooks.length : filteredGroups.length;
   const savedOfflineBooks = availableBooks.filter((book) => book.pdfUrl && offlineStatuses[offlineBookKey(book)] === "saved");
   const offlineCandidates = useMemo(() => availableBooks.filter((book) => book.pdfUrl && book.rights === "full" && !book.externalUrl), [availableBooks]);
   const offlinePickerBooks = offlineCandidates;
@@ -636,7 +635,7 @@ export default function HomePage() {
   };
 
   const resetFilters = () => {
-    setFormat("အားလုံး");
+    setFormat("စာအုပ်");
   };
 
   return (
@@ -647,14 +646,16 @@ export default function HomePage() {
           <span><strong>သုတရိပ်သာ</strong><small>မြန်မာစာအုပ်များအတွက် ဒစ်ဂျစ်တယ်ရိပ်သာ</small></span>
         </a>
         <nav className="topnav" aria-label="အဓိကမီနူး">
-          <a className={format !== "အသံစာအုပ်" ? "active" : ""} href="#catalog" aria-current={format !== "အသံစာအုပ်" ? "page" : undefined} onClick={() => setFormat("စာအုပ်")}>စာအုပ်များ</a>
+          <a className={format === "စာအုပ်" ? "active" : ""} href="#catalog" aria-current={format === "စာအုပ်" ? "page" : undefined} onClick={() => setFormat("စာအုပ်")}>စာအုပ်များ</a>
           <a className={format === "အသံစာအုပ်" ? "active" : ""} href="#audiobooks" aria-current={format === "အသံစာအုပ်" ? "page" : undefined} onClick={() => setFormat("အသံစာအုပ်")}>အသံစာအုပ်</a>
+          <a className={format === "Wattpad" ? "active" : ""} href="#wattpad" aria-current={format === "Wattpad" ? "page" : undefined} onClick={() => setFormat("Wattpad")}>Wattpad</a>
         </nav>
       </header>
 
       <section className="catalog-section" id="catalog">
+        <span id="wattpad" className="nav-anchor-target" aria-hidden="true" />
         <div className="section-heading">
-          <div><p className="eyebrow">စာကြည့်တိုက်</p><h2>{format === "အသံစာအုပ်" ? "အသံစာအုပ်" : "စာအုပ်များ"}</h2></div>
+          <div><p className="eyebrow">စာကြည့်တိုက်</p><h2>{format === "အသံစာအုပ်" ? "အသံစာအုပ်" : format === "Wattpad" ? "Wattpad" : "စာအုပ်များ"}</h2></div>
           <span className="result-count">{visibleResultCount} အုပ်</span>
         </div>
         {format !== "အသံစာအုပ်" && recentReadings[0] && (() => {
@@ -683,7 +684,7 @@ export default function HomePage() {
               </button>
             </section>;
           })()}
-          {(format === "အားလုံး" || format === "အသံစာအုပ်") && <AudiobookShelf books={matchingAudioBooks} onPlay={(book) => playAudiobook(book as Book)} />}
+          {format === "အသံစာအုပ်" && <AudiobookShelf books={matchingAudioBooks} onPlay={(book) => playAudiobook(book as Book)} />}
           {format === "အသံစာအုပ်" && !catalogLoading && !matchingAudioBooks.length && <div className="empty-state audiobook-empty"><span>♫</span><h3>အသံစာအုပ် မတွေ့ပါ</h3><p>Telegram ထဲသို့ SoundCloud link ပို့ထားပါက မကြာမီ ဒီနေရာတွင် ပေါ်လာပါမည်။</p></div>}
         </div>
         <div className="offline-actions" aria-label="Offline စာအုပ်စီမံရန်">
@@ -721,11 +722,6 @@ export default function HomePage() {
           {offlineBatchMessage && <p className="offline-picker-message" role="status">{offlineBatchMessage}</p>}
         </section>}
         <div className="catalog-layout">
-          <aside className="filters" aria-label="စာအုပ်ရှာဖွေမှု">
-            <div className="format-filter-tabs" role="group" aria-label="အကြောင်းအရာအမျိုးအစား">
-              {formats.map((item) => <button type="button" key={item} className={format === item ? "active" : ""} aria-pressed={format === item} onClick={() => setFormat(item)}>{item}</button>)}
-            </div>
-          </aside>
           <div className="book-grid" aria-live="polite">
             {catalogLoading && <div className="empty-state"><span>…</span><h3>စာအုပ်များကို ရယူနေသည်</h3><p>နောက်ဆုံး catalog ကို ခဏစောင့်ပေးပါ။</p></div>}
             {!catalogLoading && filteredGroups.map((group, index) => <BookCard
@@ -734,7 +730,7 @@ export default function HomePage() {
               index={index}
               onOpen={(book) => book.soundcloud_url && !book.pdfUrl && !book.pages.length ? playAudiobook(book) : book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)}
             />)}
-            {!catalogLoading && format !== "အသံစာအုပ်" && !filteredGroups.length && <div className="empty-state"><span>⌁</span><h3>ဒီလိုစာအုပ် မတွေ့သေးပါ</h3><p>လက်ရှိ Website catalog ထဲမှာ ထုတ်ဝေထားသောစာအုပ် မရှိသေးပါ။</p><button className="primary-button" type="button" onClick={resetFilters}>အားလုံးပြန်ကြည့်မည်</button></div>}
+            {!catalogLoading && format !== "အသံစာအုပ်" && !filteredGroups.length && <div className="empty-state"><span>⌁</span><h3>ဒီလိုစာအုပ် မတွေ့သေးပါ</h3><p>လက်ရှိ Website catalog ထဲမှာ ထုတ်ဝေထားသောစာအုပ် မရှိသေးပါ။</p><button className="primary-button" type="button" onClick={resetFilters}>စာအုပ်များသို့ ပြန်သွားမည်</button></div>}
           </div>
         </div>
       </section>
