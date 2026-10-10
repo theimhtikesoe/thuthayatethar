@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { groupAudiobooks, type AudiobookCoverGroup } from "../audiobook-grouping";
 import { isBedAungThaik, isPinnedAudiobook } from "../catalog-grouping";
+import { correctedCatalogTitle } from "../burmese-text";
 import {
   audioProgressStorageKey,
   clearAudioProgress,
@@ -164,12 +165,12 @@ function PreparedAudiobookWidget({ book }: { book: Audiobook }) {
 }
 
 function audiobookOptionLabel(title: string): string {
-  const normalized = title.normalize("NFKC").replace(/[၀-၉]/g, (digit) => String(digit.charCodeAt(0) - 0x1040));
+  const normalized = correctedCatalogTitle(title).normalize("NFKC").replace(/[၀-၉]/g, (digit) => String(digit.charCodeAt(0) - 0x1040));
   const marked = normalized.match(/\b(?:chapter|part|episode)\s*[-_:()]?\s*(\d+)\b/i)
     ?? normalized.match(/(?:အခန်း|အပိုင်း)\s*[-_:()]?\s*(\d+)/);
-  if (marked) return `အပိုင်း ${marked[1]}`;
+  if (marked) return `အခန်း ${marked[1]}`;
   const trailing = normalized.match(/(?:^|[\s._-])(\d+)\s*$/);
-  return trailing ? `အပိုင်း ${trailing[1]}` : title;
+  return trailing ? `အခန်း ${trailing[1]}` : correctedCatalogTitle(title);
 }
 
 function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audiobook>; onPlay: (book: Audiobook) => void }) {
@@ -188,12 +189,12 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
 
   return <article className="audiobook-card" key={group.key}>
     <AudiobookCover book={book} coverImage={group.books.find((item) => item.coverImage)?.coverImage} />
-    <div className="audiobook-card-copy"><small>{isPinnedAudiobook(book) ? "ပင်ထားသည် · အသံစာအုပ်" : isBedAungThaik(book) ? "အပေါ်ဆုံး · အသံစာအုပ်" : book.category || "အသံစာအုပ်"}</small><strong>{group.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
+    <div className="audiobook-card-copy"><small>{isPinnedAudiobook(book) ? "ပင်ထားသည် · အသံစာအုပ်" : isBedAungThaik(book) ? "အပေါ်ဆုံး · အသံစာအုပ်" : book.category || "အသံစာအုပ်"}</small><strong>{correctedCatalogTitle(group.title)}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span>{group.books.length > 1 && <em>{group.books.length} ခန်းပါ အသံစာအုပ်</em>}</div>
     <div className="audiobook-track-picker">
       {group.books.length > 1
-        ? <label className="audiobook-track-select"><span>အပိုင်း / ခေါင်းစဉ်ရွေးပါ</span><select value={audiobookRecordKey(selectedBook)} onChange={(event) => setSelectedKey(event.target.value)} aria-label={`${group.title} အပိုင်း သို့မဟုတ် ခေါင်းစဉ်ရွေးရန်`}>{group.books.map((item) => <option key={audiobookRecordKey(item)} value={audiobookRecordKey(item)}>{audiobookOptionLabel(item.title)}</option>)}</select></label>
-        : <span className="audiobook-single-track">{selectedBook.title}</span>}
-      <button type="button" className={`audiobook-listen${!canPlay ? " is-unavailable" : ""}`} onClick={() => { if (canPlay) onPlay(selectedBook); }} disabled={!canPlay} aria-label={`${selectedBook.title} ${listenLabel}`}><span aria-hidden="true">{canPlay ? "▶" : isUploading ? "↻" : "–"}</span> {listenLabel}</button>
+        ? <label className="audiobook-track-select"><span>အခန်း / ခေါင်းစဉ်ရွေးပါ</span><select value={audiobookRecordKey(selectedBook)} onChange={(event) => setSelectedKey(event.target.value)} aria-label={`${correctedCatalogTitle(group.title)} အခန်းရွေးရန်`}>{group.books.map((item) => <option key={audiobookRecordKey(item)} value={audiobookRecordKey(item)}>{audiobookOptionLabel(item.title)}</option>)}</select></label>
+        : <span className="audiobook-single-track">{correctedCatalogTitle(selectedBook.title)}</span>}
+      <button type="button" className={`audiobook-listen${!canPlay ? " is-unavailable" : ""}`} onClick={() => { if (canPlay) onPlay(selectedBook); }} disabled={!canPlay} aria-label={`${correctedCatalogTitle(selectedBook.title)} ${listenLabel}`}><span aria-hidden="true">{canPlay ? "▶" : isUploading ? "↻" : "–"}</span> {listenLabel}</button>
     </div>
   </article>;
 }

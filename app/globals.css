@@ -466,14 +466,14 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
   .search-box input { font-size: 12px; }
   .search-box kbd { display: none; }
   .book-grid { display: grid; width: 100%; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 9px; }
-  .book-card, .book-card:hover { display: grid; grid-template-columns: 74px minmax(0, 1fr); grid-template-rows: auto auto auto; align-items: center; gap: 6px 12px; width: 100%; min-width: 0; min-height: 112px; padding: 9px; border: 1px solid rgba(81,73,60,.1); border-radius: 9px; background: rgba(255,253,249,.88); transform: none; }
-  .cover-wrap { grid-column: 1; grid-row: 1 / 4; width: 74px; align-self: stretch; }
-  .book-cover { width: 74px; height: 102px; min-height: 102px; aspect-ratio: auto; padding: 8px; border-radius: 4px 7px 7px 4px; box-shadow: 3px 4px 8px rgba(57,48,38,.1); }
+  .book-card, .book-card:hover { display: grid; grid-template-columns: 112px minmax(0, 1fr); grid-template-rows: auto auto auto; align-items: center; gap: 8px 13px; width: 100%; min-width: 0; min-height: 164px; padding: 10px; border: 1px solid rgba(81,73,60,.1); border-radius: 11px; background: rgba(255,253,249,.88); transform: none; }
+  .cover-wrap { grid-column: 1; grid-row: 1 / 4; width: 112px; align-self: stretch; }
+  .book-cover { width: 112px; height: 150px; min-height: 150px; aspect-ratio: auto; padding: 12px 10px; border-radius: 5px 9px 9px 5px; box-shadow: 4px 6px 11px rgba(57,48,38,.12); }
   .book-cover:before { left: 6px; }
   .book-cover:after { width: 50px; height: 50px; right: -22px; bottom: -14px; }
-  .book-cover strong { font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
-  .book-cover small { font-size: 7px; }
-  .cover-mark { margin: 12px 0 8px 4px; font-size: 23px; }
+  .book-cover strong { font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+  .book-cover small { font-size: 8px; }
+  .cover-mark { margin: 18px 0 12px 4px; font-size: 28px; }
   .cover-number { font-size: 8px; }
   .cover-wrap:hover .book-cover, .cover-wrap:focus-visible .book-cover { transform: none; }
   .book-meta { grid-column: 2; grid-row: 1; align-self: end; margin: 0; min-width: 0; }
@@ -712,6 +712,7 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .audiobook-card-copy small { color: var(--green); font-size: 10px; }
 .audiobook-card-copy strong { display: -webkit-box; overflow-wrap: anywhere; overflow: hidden; font-size: 16px; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .audiobook-card-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+.audiobook-card-copy em { color: #9a7650; font-size: 9px; font-style: normal; }
 .audiobook-track-picker { grid-column: 2; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; align-items: stretch; }
 .audiobook-track-select { display: grid; min-width: 0; gap: 4px; color: var(--muted); font-size: 10px; }
 .audiobook-track-select select { width: 100%; min-width: 0; height: 38px; border: 1px solid rgba(73,109,99,.24); border-radius: 8px; background: #fffdf9; color: var(--ink); padding: 6px 9px; font: inherit; font-size: 11px; }
@@ -750,8 +751,8 @@ body.audiobook-playing .reader-shell .reader-workspace { padding-bottom: 170px; 
   .audiobook-section-heading { margin-bottom: 12px; }
   .audiobook-section-heading h2 { font-size: 19px; }
   .audiobook-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  .audiobook-card { grid-template-columns: 92px minmax(0, 1fr); gap: 9px 13px; padding: 12px; border-radius: 13px; }
-  .audiobook-cover { width: 92px; height: 92px; }
+  .audiobook-card { grid-template-columns: 112px minmax(0, 1fr); gap: 9px 13px; padding: 12px; border-radius: 13px; }
+  .audiobook-cover { width: 112px; height: 112px; }
   .audiobook-card-copy small { font-size: 9px; }
   .audiobook-card-copy strong { font-size: 14px; line-height: 1.6; -webkit-line-clamp: 4; }
   .audiobook-card-copy > span { font-size: 10px; }
