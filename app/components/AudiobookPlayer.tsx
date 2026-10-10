@@ -174,9 +174,9 @@ function audiobookOptionLabel(title: string): string {
   const normalized = correctedCatalogTitle(title).normalize("NFKC").replace(/[၀-၉]/g, (digit) => String(digit.charCodeAt(0) - 0x1040));
   const marked = normalized.match(/\b(?:chapter|part|episode)\s*[-_:()]?\s*(\d+)\b/i)
     ?? normalized.match(/(?:အခန်း|အပိုင်း)\s*[-_:()]?\s*(\d+)/);
-  if (marked) return `အခန်း ${marked[1]}`;
+  if (marked) return "";
   const trailing = normalized.match(/(?:^|[\s._-])(\d+)\s*$/);
-  return trailing ? `အခန်း ${trailing[1]}` : correctedCatalogTitle(title);
+  return trailing ? "" : correctedCatalogTitle(title);
 }
 
 function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audiobook>; onPlay: (book: Audiobook) => void }) {
