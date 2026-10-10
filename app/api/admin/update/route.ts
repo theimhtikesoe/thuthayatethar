@@ -12,7 +12,7 @@ function workerBase() {
 export async function PUT(request: Request) {
   const token = cookies().get("admin_session")?.value;
   if (!token) return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
-  let body: { slug?: string; title?: string; author?: string; category?: string; year?: string; summary?: string; coverImage?: string; soundcloud_url?: string } = {};
+  let body: { slug?: string; title?: string; author?: string; category?: string; year?: string; summary?: string; coverImage?: string; soundcloud_url?: string; youtube_url?: string } = {};
   try { body = await request.json(); } catch { return NextResponse.json({ ok: false, error: "invalid_json" }, { status: 400 }); }
   const slug = body.slug;
   if (!isValidAdminSlug(slug)) return NextResponse.json({ ok: false, error: "invalid_slug" }, { status: 400 });

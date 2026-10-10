@@ -763,3 +763,11 @@ body.audiobook-playing .reader-shell .reader-workspace { padding-bottom: 170px; 
   body.audiobook-playing .reader-shell > .reader-nav { bottom: 118px; }
   body.audiobook-playing .reader-shell .reader-workspace { padding-bottom: 165px; }
 }
+
+/* YouTube audiobook sources use the official embedded player so playback stays within YouTube's terms. */
+.audiobook-youtube-dock { width: min(680px, calc(100vw - 28px)); }
+.audiobook-youtube-frame { display: block; width: 100%; min-height: 220px; aspect-ratio: 16 / 9; border: 0; border-radius: 10px; background: #111; }
+@media (max-width: 600px) {
+  .audiobook-youtube-dock { width: auto; }
+  .audiobook-youtube-frame { min-height: 190px; }
+}

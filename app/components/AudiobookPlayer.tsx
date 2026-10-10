@@ -20,6 +20,8 @@ type Audiobook = {
   category?: string;
   coverImage?: string;
   soundcloud_url?: string;
+  youtube_url?: string;
+  sourceType?: string;
   submissionSource?: string;
 };
 
@@ -72,6 +74,26 @@ function setMediaSessionPlaybackState(state: "none" | "paused" | "playing") {
   try { navigator.mediaSession.playbackState = state; } catch { /* Ignore unsupported Media Session state updates. */ }
 }
 
+export function normalizeYouTubeUrl(value?: string | null): string | null {
+  if (!value?.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    let videoId = "";
+    if (host === "youtu.be") videoId = url.pathname.slice(1);
+    else if (host === "youtube.com" || host === "m.youtube.com") {
+      videoId = url.pathname === "/watch" ? url.searchParams.get("v") ?? "" : url.pathname.match(/^\/(?:embed|shorts|live)\/([^/?]+)/)?.[1] ?? "";
+    }
+    if (!["https:", "http:"].includes(url.protocol) || !/^[A-Za-z0-9_-]{11}$/.test(videoId)) return null;
+    return `https://www.youtube.com/watch?v=${videoId}`;
+  } catch { return null; }
+}
+
+function youtubeVideoId(value?: string | null): string | null {
+  const normalized = normalizeYouTubeUrl(value);
+  return normalized ? new URL(normalized).searchParams.get("v") : null;
+}
+
 export function normalizeSoundCloudUrl(value?: string | null): string | null {
   if (!value?.trim()) return null;
   try {
@@ -96,7 +118,7 @@ function audiobookCoverColors(book: Audiobook) {
 }
 
 function AudiobookCover({ book, coverImage }: { book: Audiobook; coverImage?: string }) {
-  const candidates = Array.from(new Set([coverImage || book.coverImage, soundcloudCoverUrl(book.soundcloud_url)].filter((value): value is string => Boolean(value))));
+  const candidates = Array.from(new Set([coverImage || book.coverImage, soundcloudCoverUrl(book.soundcloud_url), youtubeVideoId(book.youtube_url) ? `https://i.ytimg.com/vi/${youtubeVideoId(book.youtube_url)}/hqdefault.jpg` : null].filter((value): value is string => Boolean(value))));
   const candidateKey = candidates.join("\u0000");
   const [imageIndex, setImageIndex] = useState(0);
   useEffect(() => setImageIndex(0), [candidateKey]);
@@ -399,6 +421,16 @@ export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { 
     };
   }, [book, normalizedUrl, playerSrc, widgetApiState, preparedRevision]);
 
+  const youtubeUrl = useMemo(() => normalizeYouTubeUrl(book?.youtube_url), [book?.youtube_url]);
+  const youtubeId = youtubeVideoId(youtubeUrl);
+  if (youtubeUrl && youtubeId) {
+    return <aside className="audiobook-dock audiobook-youtube-dock" aria-label="YouTube အသံစာအုပ်ဖွင့်စက်">
+      <div className="audiobook-dock-heading"><span className="audiobook-live-dot" /><span className="audiobook-dock-title"><small>ယခုနားထောင်နေသည် · YouTube</small><strong>{book?.title}</strong><span>{book?.author || "တင်သူ မသိရသေးပါ"}</span></span><a href={youtubeUrl} target="_blank" rel="noreferrer" className="audiobook-open-source">YouTube ↗</a><button type="button" onClick={onClose} className="audiobook-dock-close" aria-label="အသံဖွင့်စက်ကို ပိတ်မည်">×</button></div>
+      <iframe className="audiobook-youtube-frame" title={`${book?.title} — YouTube အသံရင်းမြစ်`} src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1&playsinline=1&rel=0`} allow="autoplay; encrypted-media; picture-in-picture" allowFullScreen />
+      <p className="audiobook-player-status" role="status">YouTube video player ဖြင့် နားဆင်နိုင်ပါသည်။</p>
+      {preloadBooks.map((item) => <PreparedAudiobookWidget key={audiobookRecordKey(item)} book={item} />)}
+    </aside>;
+  }
   if (!book || !normalizedUrl || !playerSrc) {
     return <>{preloadBooks.map((item) => <PreparedAudiobookWidget key={audiobookRecordKey(item)} book={item} />)}</>;
   }

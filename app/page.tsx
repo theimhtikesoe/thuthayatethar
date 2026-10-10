@@ -33,6 +33,7 @@ type Book = {
   coverImage?: string;
   externalUrl?: string;
   soundcloud_url?: string;
+  youtube_url?: string;
   sourceType?: string;
   submissionSource?: string;
   publicationStatus?: string;
@@ -395,6 +396,7 @@ export default function HomePage() {
               : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || undefined,
             externalUrl: book.externalUrl,
             soundcloud_url: book.soundcloud_url,
+            youtube_url: book.youtube_url,
             sourceType: book.sourceType,
             submissionSource: book.submissionSource,
             publicationStatus: book.publicationStatus,
@@ -438,7 +440,7 @@ export default function HomePage() {
     try {
       const identity = JSON.parse(saved) as { slug?: string; id?: string | number };
       const book = catalogBooks.find((item) => (identity.slug && item.slug === identity.slug) || String(item.id) === String(identity.id));
-      if (book?.soundcloud_url) setAudioBook((current) => current ?? book);
+      if (book?.soundcloud_url || book?.youtube_url) setAudioBook((current) => current ?? book);
     } catch { /* Ignore an invalid last-player record. */ }
   }, [catalogBooks]);
   useEffect(() => {
@@ -458,12 +460,12 @@ export default function HomePage() {
 
   const availableBooks = catalogBooks ?? [];
   function playAudiobook(book: Book) {
-    if (!book.soundcloud_url) return;
+    if (!book.soundcloud_url && !book.youtube_url) return;
     // Calling the prepared widget here preserves the Listen click's browser gesture.
     playPreparedAudiobook(book);
     setAudioBook((current) => {
       const sameIdentity = current && (current.slug ?? String(current.id)) === (book.slug ?? String(book.id));
-      return sameIdentity && current?.soundcloud_url === book.soundcloud_url ? current : book;
+      return sameIdentity && current?.soundcloud_url === book.soundcloud_url && current?.youtube_url === book.youtube_url ? current : book;
     });
     writeLocalValue("thuthayatethar:active-audiobook", JSON.stringify({ slug: book.slug, id: book.id }));
   }
@@ -577,7 +579,7 @@ export default function HomePage() {
   }
 
   const matchingAudioBooks = useMemo(() => {
-    return availableBooks.filter((book) => Boolean(book.soundcloud_url));
+    return availableBooks.filter((book) => Boolean(book.soundcloud_url || book.youtube_url));
   }, [availableBooks]);
   const recentListening = useMemo<RecentListening | null>(() => {
     if (typeof window === "undefined") return null;
@@ -587,8 +589,8 @@ export default function HomePage() {
   const filteredBooks = useMemo(() => {
     return availableBooks.filter((book) => {
       const isWattpad = Boolean(book.externalUrl || book.sourceType === "wattpad");
-      const isAudioOnly = Boolean(book.soundcloud_url && !book.pdfUrl && !book.pages.length);
-      const matchesFormat = (format === "စာအုပ်" && !isWattpad && !book.soundcloud_url) ||
+      const isAudioOnly = Boolean((book.soundcloud_url || book.youtube_url) && !book.pdfUrl && !book.pages.length);
+      const matchesFormat = (format === "စာအုပ်" && !isWattpad && !book.soundcloud_url && !book.youtube_url) ||
         (format === "Wattpad" && isWattpad);
       return !isAudioOnly && matchesFormat;
     });
@@ -730,7 +732,7 @@ export default function HomePage() {
               key={group.book.id}
               group={group}
               index={index}
-              onOpen={(book) => book.soundcloud_url && !book.pdfUrl && !book.pages.length ? playAudiobook(book) : book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)}
+              onOpen={(book) => (book.soundcloud_url || book.youtube_url) && !book.pdfUrl && !book.pages.length ? playAudiobook(book) : book.rights === "full" && !book.externalUrl ? openReader(book) : setSelected(book)}
             />)}
             {!catalogLoading && format !== "အသံစာအုပ်" && !filteredGroups.length && <div className="empty-state"><span>⌁</span><h3>ဒီလိုစာအုပ် မတွေ့သေးပါ</h3><p>လက်ရှိ Website catalog ထဲမှာ ထုတ်ဝေထားသောစာအုပ် မရှိသေးပါ။</p><button className="primary-button" type="button" onClick={resetFilters}>စာအုပ်များသို့ ပြန်သွားမည်</button></div>}
           </div>
@@ -930,7 +932,7 @@ function PdfReader({ book, theme, setTheme, onClose, onListenAudio }: { book: Bo
   const productionPdfOrigin = typeof window !== "undefined" && window.location.hostname === "thuthayatethar.rz99systems.com";
   const readerPdfUrl = productionPdfOrigin ? book.pdfUrl ?? "" : offlinePdfUrl || book.pdfUrl || "";
   const standaloneReaderUrl = book.slug ? `/#read=${encodeURIComponent(book.slug)}` : undefined;
-  return <div ref={shell} className={`reader-shell pdf-reader-shell theme-${theme}${readerUiHidden ? " reader-ui-hidden" : ""}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose} aria-label="စာကြည့်တိုက်သို့ ပြန်မည်">← <span>စာကြည့်တိုက်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-header-actions"><div className="reader-theme-buttons" role="group" aria-label="ဖတ်ရှုရန်အရောင်"><button type="button" className={theme === "paper" ? "active paper" : "paper"} onClick={() => setTheme("paper")} aria-label="စာရွက်အရောင်">●</button><button type="button" className={theme === "sepia" ? "active sepia" : "sepia"} onClick={() => setTheme("sepia")} aria-label="Sepia အရောင်">●</button><button type="button" className={theme === "night" ? "active night" : "night"} onClick={() => setTheme("night")} aria-label="ညအရောင်">●</button></div><button type="button" className="reader-offline" onClick={saveOffline} disabled={savingOffline} aria-label="Offline သိမ်းမည်">{savingOffline ? "…" : offlineSaved ? "✓" : "⇩"}<span>{offlineSaved ? "Offline သိမ်းပြီး" : "Offline သိမ်းမည်"}</span></button><button type="button" className="reader-fullscreen" onClick={toggleFullscreen} aria-label={fullscreen ? "အပြည့်မျက်နှာပြင်ပိတ်မည်" : "အပြည့်မျက်နှာပြင်ဖွင့်မည်"}>{fullscreen ? "⤢" : "⛶"}<span>{fullscreen ? "ပိတ်မည်" : "အပြည့်"}</span></button><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></div></header><div className="pdf-reader-workspace">{book.soundcloud_url && <button type="button" className="reader-audiobook-toggle" onClick={onListenAudio}>♫ <span>အသံစာအုပ်ကို နားထောင်ရန်</span></button>}<FlipBook key={book.slug ?? book.id} url={readerPdfUrl} offlineUrl={offlinePdfUrl} standaloneUrl={standaloneReaderUrl} title={book.title} progressKey={readingProgressKey(book)} /></div>{readerUiHidden && <button type="button" className="reader-controls-reveal" onClick={() => void showReaderControls()} aria-label="ဖတ်ရှုထိန်းချုပ်မှုများ ပြန်ဖော်မည်" title="ထိန်းချုပ်မှုများ ပြန်ဖော်ရန်">☰</button>}{downloadError && <div className="reader-offline-error" role="status"><span>{downloadError}</span><button type="button" onClick={saveOffline} disabled={savingOffline}>ပြန်စမ်းမည်</button></div>}<footer className="reader-nav"><span>လက်နှစ်ချောင်းဖြင့် ချဲ့ကြည့်နိုင်ပါသည်။</span></footer></div>;
+  return <div ref={shell} className={`reader-shell pdf-reader-shell theme-${theme}${readerUiHidden ? " reader-ui-hidden" : ""}`} onContextMenu={(event) => event.preventDefault()}><header className="reader-header"><button type="button" className="reader-back" onClick={onClose} aria-label="စာကြည့်တိုက်သို့ ပြန်မည်">← <span>စာကြည့်တိုက်</span></button><div className="reader-title"><span>ဖတ်ရှုနေသည်</span><strong>{book.title}</strong></div><div className="reader-header-actions"><div className="reader-theme-buttons" role="group" aria-label="ဖတ်ရှုရန်အရောင်"><button type="button" className={theme === "paper" ? "active paper" : "paper"} onClick={() => setTheme("paper")} aria-label="စာရွက်အရောင်">●</button><button type="button" className={theme === "sepia" ? "active sepia" : "sepia"} onClick={() => setTheme("sepia")} aria-label="Sepia အရောင်">●</button><button type="button" className={theme === "night" ? "active night" : "night"} onClick={() => setTheme("night")} aria-label="ညအရောင်">●</button></div><button type="button" className="reader-offline" onClick={saveOffline} disabled={savingOffline} aria-label="Offline သိမ်းမည်">{savingOffline ? "…" : offlineSaved ? "✓" : "⇩"}<span>{offlineSaved ? "Offline သိမ်းပြီး" : "Offline သိမ်းမည်"}</span></button><button type="button" className="reader-fullscreen" onClick={toggleFullscreen} aria-label={fullscreen ? "အပြည့်မျက်နှာပြင်ပိတ်မည်" : "အပြည့်မျက်နှာပြင်ဖွင့်မည်"}>{fullscreen ? "⤢" : "⛶"}<span>{fullscreen ? "ပိတ်မည်" : "အပြည့်"}</span></button><div className="reader-lock">▣ ဖတ်ရှုရန်သီးသန့်</div></div></header><div className="pdf-reader-workspace">{(book.soundcloud_url || book.youtube_url) && <button type="button" className="reader-audiobook-toggle" onClick={onListenAudio}>♫ <span>အသံစာအုပ်ကို နားထောင်ရန်</span></button>}<FlipBook key={book.slug ?? book.id} url={readerPdfUrl} offlineUrl={offlinePdfUrl} standaloneUrl={standaloneReaderUrl} title={book.title} progressKey={readingProgressKey(book)} /></div>{readerUiHidden && <button type="button" className="reader-controls-reveal" onClick={() => void showReaderControls()} aria-label="ဖတ်ရှုထိန်းချုပ်မှုများ ပြန်ဖော်မည်" title="ထိန်းချုပ်မှုများ ပြန်ဖော်ရန်">☰</button>}{downloadError && <div className="reader-offline-error" role="status"><span>{downloadError}</span><button type="button" onClick={saveOffline} disabled={savingOffline}>ပြန်စမ်းမည်</button></div>}<footer className="reader-nav"><span>လက်နှစ်ချောင်းဖြင့် ချဲ့ကြည့်နိုင်ပါသည်။</span></footer></div>;
 }
 function Reader(props: ReaderProps) {
   if (props.book.pages.length === 0 && props.book.pdfUrl) return <PdfReader book={props.book} theme={props.theme} setTheme={props.setTheme} onClose={props.onClose} onListenAudio={props.onListenAudio} />;
