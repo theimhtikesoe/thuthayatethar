@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { groupAudiobooks, type AudiobookCoverGroup } from "../audiobook-grouping";
+import { isBedAungThaik } from "../catalog-grouping";
 import {
   audioProgressStorageKey,
   clearAudioProgress,
@@ -186,7 +187,7 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
 
   return <article className="audiobook-card" key={group.key}>
     <AudiobookCover book={book} coverImage={group.books.find((item) => item.coverImage)?.coverImage} />
-    <div className="audiobook-card-copy"><small>{book.category || "အသံစာအုပ်"}</small><strong>{group.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
+    <div className="audiobook-card-copy"><small>{isBedAungThaik(book) ? "အပေါ်ဆုံး · အသံစာအုပ်" : book.category || "အသံစာအုပ်"}</small><strong>{group.title}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span></div>
     <div className="audiobook-track-picker">
       {group.books.length > 1
         ? <label className="audiobook-track-select"><span>အပိုင်း / ခေါင်းစဉ်ရွေးပါ</span><select value={audiobookRecordKey(selectedBook)} onChange={(event) => setSelectedKey(event.target.value)} aria-label={`${group.title} အပိုင်း သို့မဟုတ် ခေါင်းစဉ်ရွေးရန်`}>{group.books.map((item) => <option key={audiobookRecordKey(item)} value={audiobookRecordKey(item)}>{audiobookOptionLabel(item.title)}</option>)}</select></label>

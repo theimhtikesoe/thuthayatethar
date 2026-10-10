@@ -9,6 +9,10 @@ export type ChapterGroup<T extends ChapterBook> = {
   chapters: T[];
 };
 
+export function isBedAungThaik(book: Pick<ChapterBook, "title" | "author">): boolean {
+  return `${book.title} ${book.author ?? ""}`.normalize("NFKC").replace(/\s+/g, "").includes("အောင်သိုက်");
+}
+
 function normalizeDigits(value: string): string {
   return value.replace(/[၀-၉]/g, (digit) => String(digit.charCodeAt(0) - 0x1040));
 }

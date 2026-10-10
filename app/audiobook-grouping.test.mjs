@@ -1,8 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { groupAudiobooks } from "./audiobook-grouping.ts";
+import { isBedAungThaik } from "./catalog-grouping.ts";
 
 const book = (id, title, coverImage, extra = {}) => ({ id, title, coverImage, ...extra });
+
+test("BED Aung Thaik audiobooks are recognized from author or title metadata", () => {
+  assert.equal(isBedAungThaik(book(1, "မြညိုချစ်သောကိုရင်သြ", "", { author: "ဘီအီးဒီအောင်သိုက်" })), true);
+  assert.equal(isBedAungThaik(book(2, "မြညိုငိုတဲ့နေ့ – ဘီအီးဒီအောင်သိုက်", "", { author: "ရွှေဇင်ထိုက်" })), true);
+  assert.equal(isBedAungThaik(book(3, "အခြားစာအုပ်", "", { author: "အခြားစာရေးသူ" })), false);
+});
 
 test("chapters 20 through 88 of the same book share one selector even with different covers", () => {
   const groups = groupAudiobooks([
