@@ -196,7 +196,7 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
           const itemKey = audiobookRecordKey(item);
           const active = itemKey === audiobookRecordKey(selectedBook);
           return <button type="button" className={`audiobook-chapter-row${active ? " active" : ""}`} key={itemKey} onClick={() => setSelectedKey(itemKey)} aria-pressed={active}>
-            <span className="audiobook-chapter-number">{String(index + 1).padStart(2, "0")}</span><span className="audiobook-chapter-name">{audiobookOptionLabel(item.title)}</span><span className="audiobook-chapter-chevron" aria-hidden="true">{active ? "●" : "›"}</span>
+            <span className="audiobook-chapter-number">အခန်း {String(index + 1).padStart(2, "0")}</span><span className="audiobook-chapter-name">{audiobookOptionLabel(item.title)}</span><span className="audiobook-chapter-chevron" aria-hidden="true">{active ? "●" : "›"}</span>
           </button>;
         })}</div>
       </div> : <span className="audiobook-single-track">{correctedCatalogTitle(selectedBook.title)}</span>}

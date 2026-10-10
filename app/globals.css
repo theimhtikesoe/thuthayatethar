@@ -1029,3 +1029,22 @@ body.audiobook-playing .reader-shell .reader-workspace { padding-bottom: 170px; 
   .audiobook-time { min-width: 88px; font-size: 10px; }
   .audiobook-player-status { min-height: 26px; margin-top: 3px; padding: 4px 7px; font-size: 9px; }
 }
+
+
+/* Audiobook chapter cards: normalize chapter panel and action baselines across groups. */
+.audiobook-card { grid-template-rows: 116px auto; }
+.audiobook-card-copy { max-height: 116px; overflow: hidden; align-content: start; }
+.audiobook-track-picker.has-chapters { grid-template-rows: 202px 44px; }
+.audiobook-track-picker.has-chapters .audiobook-chapter-panel { height: 202px; }
+.audiobook-track-picker.has-chapters .audiobook-chapter-list { height: 100%; max-height: none; align-content: start; }
+.audiobook-track-picker.has-chapters .audiobook-listen { height: 44px; }
+.audiobook-chapter-number { min-width: 54px; font-size: 9px; white-space: nowrap; }
+.audiobook-chapter-name { font-size: 10px; }
+@media (max-width: 640px) {
+  .audiobook-card { grid-template-rows: 112px auto; }
+  .audiobook-card-copy { max-height: 112px; }
+  .audiobook-track-picker.has-chapters { grid-template-rows: 176px 46px; }
+  .audiobook-track-picker.has-chapters .audiobook-chapter-panel { height: 176px; }
+  .audiobook-track-picker.has-chapters .audiobook-listen { height: 46px; }
+  .audiobook-chapter-number { min-width: 52px; font-size: 8px; }
+}
