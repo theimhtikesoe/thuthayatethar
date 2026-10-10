@@ -476,22 +476,15 @@ async function enqueueYoutubeConversion(env: RuntimeEnv, intakeId: string, sourc
   if (!env.YOUTUBE_CONVERTER_URL || !env.YOUTUBE_CONVERTER_SECRET) return;
   const now = new Date().toISOString();
   await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = 'queued', youtube_audio_error = NULL, updated_at = ? WHERE intake_id = ?").bind(now, intakeId).run();
-  const callbackUrl = env.YOUTUBE_CONVERTER_CALLBACK_URL || "https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev";
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort("converter_enqueue_timeout"), 5_000);
-    const response = await fetch(`${env.YOUTUBE_CONVERTER_URL.replace(/\/$/, "")}/jobs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Converter-Secret": env.YOUTUBE_CONVERTER_SECRET },
-      body: JSON.stringify({ intakeId, sourceUrl, title, callbackUrl }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    if (!response.ok) throw new Error(`converter_enqueue_http_${response.status}`);
-  } catch (error) {
-    await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = 'failed', youtube_audio_error = ?, updated_at = ? WHERE intake_id = ?").bind(error instanceof Error ? error.message.slice(0, 500) : "converter_unavailable", new Date().toISOString(), intakeId).run();
-    logWorkerEvent("youtube_conversion_enqueue_failed", { intakeId, errorType: error instanceof Error ? error.name : "unknown" });
-  }
+  logWorkerEvent("youtube_conversion_queued", { intakeId });
+}
+
+async function youtubeAudioJobs(request: Request, env: RuntimeEnv): Promise<Response> {
+  if (!env.YOUTUBE_CONVERTER_SECRET || !constantTimeEqual(request.headers.get("x-converter-secret"), env.YOUTUBE_CONVERTER_SECRET)) return json({ ok: false, error: "unauthorized" }, 401);
+  const row = await env.DB.prepare("SELECT b.intake_id, b.title, b.youtube_url FROM book_drafts b WHERE b.youtube_audio_status = 'queued' AND b.youtube_url IS NOT NULL ORDER BY b.updated_at ASC LIMIT 1").bind().first<{ intake_id: string; title: string; youtube_url: string }>();
+  if (!row) return json({ ok: true, job: null });
+  await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = 'running', updated_at = ? WHERE intake_id = ? AND youtube_audio_status = 'queued'").bind(new Date().toISOString(), row.intake_id).run();
+  return json({ ok: true, job: { intakeId: row.intake_id, title: row.title, sourceUrl: row.youtube_url } });
 }
 
 async function youtubeAudioCallback(request: Request, env: RuntimeEnv): Promise<Response> {
@@ -1210,6 +1203,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "telegram-ingestion", storage: Boolean(runtimeEnv.BUCKET), processor: Boolean(runtimeEnv.TELEGRAM_BOT_TOKEN) });
     if (request.method === "OPTIONS" && url.pathname.startsWith("/book/") && (url.pathname.endsWith("/pdf") || url.pathname.endsWith("/audio") || url.pathname.endsWith("/cover"))) return publicAssetPreflight(runtimeEnv);
     if (url.pathname === "/catalog") return catalog(request, runtimeEnv);
+    if (request.method === "GET" && url.pathname === "/internal/youtube-audio-jobs") return youtubeAudioJobs(request, runtimeEnv);
     if (request.method === "POST" && url.pathname === "/internal/youtube-audio-callback") return youtubeAudioCallback(request, runtimeEnv);
     if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv);
     if (url.pathname === "/admin/drafts") return adminDrafts(request, runtimeEnv);

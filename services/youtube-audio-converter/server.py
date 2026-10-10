@@ -119,6 +119,24 @@ def process(job_id: str) -> None:
                 pass
 
 
+def poll_worker() -> None:
+    while True:
+        try:
+            request = urllib.request.Request(f"{CALLBACK_URL}/internal/youtube-audio-jobs", headers={"X-Converter-Secret": SECRET})
+            with urllib.request.urlopen(request, timeout=30) as response:
+                payload = json.loads(response.read())
+            job = payload.get("job")
+            if job:
+                with db() as conn:
+                    existing = conn.execute("SELECT id FROM jobs WHERE intake_id=?", (job["intakeId"],)).fetchone()
+                    if not existing:
+                        job_id = str(uuid.uuid4())
+                        conn.execute("INSERT INTO jobs(id,intake_id,source_url,title,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (job_id, job["intakeId"], job["sourceUrl"], job.get("title", ""), "queued", now(), now()))
+                        JOB_QUEUE.put(job_id)
+        except Exception:
+            pass
+        time.sleep(10)
+
 def worker() -> None:
     while True:
         job_id = JOB_QUEUE.get()
@@ -187,4 +205,5 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     init_db()
     threading.Thread(target=worker, daemon=True, name="converter-worker").start()
+    threading.Thread(target=poll_worker, daemon=True, name="worker-poller").start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
