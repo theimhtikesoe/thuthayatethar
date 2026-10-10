@@ -773,26 +773,80 @@ async function catalog(request: Request, env: RuntimeEnv): Promise<Response> {
   const origin = env.CATALOG_ORIGIN;
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": origin ?? "*", "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" } });
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405, origin);
-  const statement = env.DB.prepare("SELECT b.id, b.title, b.slug, b.author, b.category, b.year, b.summary, b.reading_time, b.soundcloud_url, b.youtube_url, b.metadata_json, b.publication_status, b.updated_at, i.storage_key, i.source_type FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.publication_status = 'published' OR ((i.source_type = 'soundcloud_link' OR i.source_type = 'youtube_link') AND (b.soundcloud_url IS NOT NULL OR b.youtube_url IS NOT NULL) AND b.publication_status <> 'unpublished') ORDER BY b.updated_at DESC");
+  const statement = env.DB.prepare("SELECT b.id, b.title, b.slug, b.author, b.category, b.year, b.summary, b.reading_time, b.soundcloud_url, b.youtube_url, b.audio_storage_key, b.audio_mime_type, b.audio_byte_size, b.metadata_json, b.publication_status, b.updated_at, i.storage_key, i.source_type FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.publication_status = 'published' OR ((i.source_type = 'soundcloud_link' OR i.source_type = 'youtube_link') AND (b.soundcloud_url IS NOT NULL OR b.youtube_url IS NOT NULL) AND b.publication_status <> 'unpublished') ORDER BY b.updated_at DESC");
   const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
-  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} const publicMeta = isRecord(metadata.public) ? { ...metadata.public } : {}; if (typeof publicMeta.coverImage === "string" && publicMeta.coverImage.startsWith("/")) publicMeta.coverImage = new URL(publicMeta.coverImage, request.url).toString(); return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(typeof book.storage_key === "string" && book.storage_key ? { pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString() } : {}), ...(typeof book.soundcloud_url === "string" && book.soundcloud_url ? { soundcloud_url: book.soundcloud_url } : {}), ...(typeof book.youtube_url === "string" && book.youtube_url ? { youtube_url: book.youtube_url } : {}), ...(typeof publicMeta.audioUrl === "string" && publicMeta.audioUrl ? { audio_url: publicMeta.audioUrl } : {}), ...publicMeta, ...(typeof book.publication_status === "string" ? { publicationStatus: book.publication_status } : {}), ...(book.source_type === "soundcloud_link" || book.source_type === "youtube_link" ? { submissionSource: "telegram" } : {}) }; });
+  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} const publicMeta = isRecord(metadata.public) ? { ...metadata.public } : {}; if (typeof publicMeta.coverImage === "string" && publicMeta.coverImage.startsWith("/")) publicMeta.coverImage = new URL(publicMeta.coverImage, request.url).toString(); return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(typeof book.storage_key === "string" && book.storage_key ? { pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString() } : {}), ...(typeof book.soundcloud_url === "string" && book.soundcloud_url ? { soundcloud_url: book.soundcloud_url } : {}), ...(typeof book.youtube_url === "string" && book.youtube_url ? { youtube_url: book.youtube_url } : {}), ...(typeof book.audio_storage_key === "string" && book.audio_storage_key ? { audio_url: new URL(`/book/${encodeURIComponent(String(book.slug))}/audio`, request.url).toString() } : {}), ...(typeof publicMeta.audioUrl === "string" && publicMeta.audioUrl ? { audio_url: publicMeta.audioUrl } : {}), ...publicMeta, ...(typeof book.publication_status === "string" ? { publicationStatus: book.publication_status } : {}), ...(book.source_type === "soundcloud_link" || book.source_type === "youtube_link" ? { submissionSource: "telegram" } : {}) }; });
   return json({ ok: true, books }, 200, origin);
 }
 
 async function adminDrafts(request: Request, env: RuntimeEnv): Promise<Response> {
   if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
-  const statement = env.DB.prepare(`SELECT COALESCE(b.id, i.id) AS id, i.id AS intake_id, COALESCE(b.title, i.original_filename, 'စာအုပ်အသစ်') AS title, b.slug, b.author, b.category, b.year, b.summary, b.soundcloud_url, b.youtube_url, b.metadata_json, COALESCE(b.publication_status, i.status) AS publication_status, COALESCE(b.updated_at, i.updated_at) AS updated_at, i.status AS intake_status, i.original_filename, i.storage_key, i.source_type, i.source_url, i.failure_code, i.failure_message, r.rights_status, r.rights_holder, r.evidence_note, r.allowed_uses, r.reviewer, r.reviewed_at FROM intake_items i LEFT JOIN book_drafts b ON b.intake_id = i.id LEFT JOIN rights_records r ON r.intake_id = i.id ORDER BY i.updated_at DESC`);
+  const statement = env.DB.prepare(`SELECT COALESCE(b.id, i.id) AS id, i.id AS intake_id, COALESCE(b.title, i.original_filename, 'စာအုပ်အသစ်') AS title, b.slug, b.author, b.category, b.year, b.summary, b.soundcloud_url, b.youtube_url, b.audio_storage_key, b.audio_mime_type, b.audio_byte_size, b.metadata_json, COALESCE(b.publication_status, i.status) AS publication_status, COALESCE(b.updated_at, i.updated_at) AS updated_at, i.status AS intake_status, i.original_filename, i.storage_key, i.source_type, i.source_url, i.failure_code, i.failure_message, r.rights_status, r.rights_holder, r.evidence_note, r.allowed_uses, r.reviewer, r.reviewed_at FROM intake_items i LEFT JOIN book_drafts b ON b.intake_id = i.id LEFT JOIN rights_records r ON r.intake_id = i.id ORDER BY i.updated_at DESC`);
   const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
   const drafts = result.results.map((row) => {
     let metadata: JsonRecord = {};
     try { metadata = JSON.parse(typeof row.metadata_json === "string" ? row.metadata_json : "{}"); } catch {}
     const publicMeta = isRecord(metadata.public) ? metadata.public : {};
-    return { ...row, audio_url: typeof publicMeta.audioUrl === "string" ? publicMeta.audioUrl : null };
+    return { ...row, audio_url: typeof row.audio_storage_key === "string" && row.audio_storage_key && row.slug ? new URL(`/book/${encodeURIComponent(String(row.slug))}/audio`, request.url).toString() : (typeof publicMeta.audioUrl === "string" ? publicMeta.audioUrl : null) };
   });
   return json({ ok: true, drafts });
 }
 
+const AUDIO_MIME_TYPES = new Set(["audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/ogg", "audio/wav", "audio/x-wav", "audio/webm"]);
+function audioExtension(name: string): boolean {
+  return /\.(mp3|m4a|mp4|ogg|wav|webm)$/i.test(name);
+}
+async function adminAudioUpload(request: Request, env: RuntimeEnv): Promise<Response> {
+  if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
+  if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+  if (!env.BUCKET) return json({ ok: false, error: "storage_unavailable" }, 503);
+  let form: FormData;
+  try { form = await request.formData(); } catch { return json({ ok: false, error: "invalid_multipart" }, 400); }
+  const value = form.get("file");
+  if (!(value instanceof File)) return json({ ok: false, error: "audio_file_required" }, 400);
+  const fileName = value.name.trim().slice(0, 180) || "audio.mp3";
+  const mimeType = (value.type || "application/octet-stream").toLowerCase();
+  const maxBytes = maxFileBytes(env);
+  if (!AUDIO_MIME_TYPES.has(mimeType) && !audioExtension(fileName)) return json({ ok: false, error: "audio_format_required" }, 415);
+  if (!Number.isSafeInteger(value.size) || value.size <= 0) return json({ ok: false, error: "audio_empty" }, 400);
+  if (value.size > maxBytes) return json({ ok: false, error: "file_too_large" }, 413);
+  const slugValue = typeof form.get("slug") === "string" ? String(form.get("slug")) : "";
+  const existing = slugValue ? await env.DB.prepare("SELECT b.id, b.intake_id, b.audio_storage_key FROM book_drafts b WHERE b.slug = ? LIMIT 1").bind(slugValue).first<{ id: string; intake_id: string; audio_storage_key: string | null }>() : null;
+  const intakeId = existing?.intake_id ?? crypto.randomUUID();
+  const safeName = safeFileName(fileName, "document");
+  const key = `audio/${intakeId}/${safeName}`;
+  const now = new Date().toISOString();
+  const bytes = await value.arrayBuffer();
+  const stored = await env.BUCKET.put(key, bytes, { httpMetadata: { contentType: AUDIO_MIME_TYPES.has(mimeType) ? mimeType : "application/octet-stream" }, customMetadata: { intakeId, source: "admin_audio_upload", visibility: "private" } });
+  if (!stored || stored.size !== value.size) return json({ ok: false, error: "r2_storage_failed" }, 502);
+  if (existing) {
+    if (existing.audio_storage_key && existing.audio_storage_key !== key) await env.BUCKET.delete(existing.audio_storage_key);
+    await env.DB.batch([
+      env.DB.prepare("UPDATE book_drafts SET audio_storage_key = ?, audio_mime_type = ?, audio_byte_size = ?, updated_at = ? WHERE id = ?").bind(key, mimeType, value.size, now, existing.id),
+      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'audio_uploaded', ?, ?)").bind(existing.intake_id, JSON.stringify({ storageKey: key, byteSize: value.size, source: "admin" }), now),
+    ]);
+    return json({ ok: true, status: "updated", slug: slugValue, audioUrl: `/book/${encodeURIComponent(slugValue)}/audio` });
+  }
+  const title = typeof form.get("title") === "string" ? String(form.get("title")).trim().slice(0, 180) : "";
+  if (!title) { await env.BUCKET.delete(key); return json({ ok: false, error: "title_required" }, 400); }
+  const author = typeof form.get("author") === "string" ? String(form.get("author")).trim().slice(0, 180) : null;
+  const category = typeof form.get("category") === "string" ? String(form.get("category")).trim().slice(0, 100) : "အသံစာအုပ်";
+  const slug = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 70) || "audiobook"}-${intakeId.slice(0, 8)}`;
+  const syntheticUpdateId = -Math.floor(Date.now() * 1000 + Math.random() * 1000);
+  try {
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO intake_items (id, telegram_update_id, telegram_file_id, media_type, source_type, source_chat_id, source_message_id, status, original_filename, mime_type, byte_size, created_at, updated_at) VALUES (?, ?, ?, 'document', 'direct_audio', 'admin', 0, 'draft', ?, ?, ?, ?, ?)").bind(intakeId, syntheticUpdateId, `direct-audio:${intakeId}`, fileName, mimeType, value.size, now, now),
+      env.DB.prepare("INSERT INTO rights_records (id, intake_id, rights_status, created_at, updated_at) VALUES (?, ?, 'missing', ?, ?)").bind(crypto.randomUUID(), intakeId, now, now),
+      env.DB.prepare("INSERT INTO book_drafts (id, intake_id, title, slug, author, category, summary, audio_storage_key, audio_mime_type, audio_byte_size, metadata_json, publication_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)").bind(crypto.randomUUID(), intakeId, title, slug, author, category, "Admin မှ တိုက်ရိုက်တင်ထားသော အသံစာအုပ်ဖြစ်သည်။", key, mimeType, value.size, JSON.stringify({ source: "admin_audio_upload", public: { sourceType: "audio" } }), now, now),
+      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'audio_uploaded', ?, ?)").bind(intakeId, JSON.stringify({ storageKey: key, byteSize: value.size, source: "admin" }), now),
+    ]);
+  } catch (error) {
+    await env.BUCKET.delete(key);
+    throw error;
+  }
+  return json({ ok: true, status: "draft", intakeId, slug, audioUrl: `/book/${encodeURIComponent(slug)}/audio` }, 201);
+}
 async function directUpload(request: Request, env: RuntimeEnv): Promise<Response> {
   if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
   if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
@@ -906,11 +960,11 @@ async function approveAndPublish(request: Request, env: RuntimeEnv, slug: string
 async function approve(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
   if (!env.ADMIN_TOKEN || !constantTimeEqual(request.headers.get("x-admin-token"), env.ADMIN_TOKEN)) return json({ ok: false, error: "unauthorized" }, 401);
   if (request.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
-  const book = await env.DB.prepare("SELECT b.id, b.intake_id, b.publication_status, i.status AS intake_status, i.storage_key, i.source_type, b.soundcloud_url, b.youtube_url, (SELECT r.rights_status FROM rights_records r WHERE r.intake_id = b.intake_id LIMIT 1) AS rights_status FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? LIMIT 1").bind(slug).first<{ id: string; intake_id: string; publication_status: string; intake_status: string; storage_key: string | null; source_type: string; soundcloud_url: string | null; youtube_url: string | null; rights_status: string | null }>();
+  const book = await env.DB.prepare("SELECT b.id, b.intake_id, b.publication_status, i.status AS intake_status, i.storage_key, i.source_type, b.soundcloud_url, b.youtube_url, b.audio_storage_key, (SELECT r.rights_status FROM rights_records r WHERE r.intake_id = b.intake_id LIMIT 1) AS rights_status FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? LIMIT 1").bind(slug).first<{ id: string; intake_id: string; publication_status: string; intake_status: string; storage_key: string | null; source_type: string; soundcloud_url: string | null; youtube_url: string | null; audio_storage_key: string | null; rights_status: string | null }>();
   if (!book) return json({ ok: false, error: "book_not_found" }, 404);
   // An auto-published Telegram PDF has intake status 'published'. It may still receive a rights record afterwards; approve never changes its publication status.
   const alreadyPublished = book.publication_status === "published" && book.intake_status === "published";
-  const externalLinkWithoutFile = book.source_type === "wattpad_link" || ((book.source_type === "soundcloud_link" || book.source_type === "youtube_link") && (book.soundcloud_url || book.youtube_url));
+  const externalLinkWithoutFile = book.source_type === "wattpad_link" || ((book.source_type === "soundcloud_link" || book.source_type === "youtube_link") && (book.soundcloud_url || book.youtube_url)) || (book.source_type === "direct_audio" && book.audio_storage_key);
   if ((!book.storage_key && !externalLinkWithoutFile) || (book.intake_status !== "draft" && !alreadyPublished)) return json({ ok: false, error: "private_draft_not_ready" }, 409);
   if (book.publication_status === "published" && book.rights_status === "approved") return json({ ok: true, status: "published", rightsStatus: "approved", slug });
   let body: JsonRecord = {};
@@ -1038,6 +1092,32 @@ async function bookPdf(request: Request, env: RuntimeEnv, slug: string): Promise
   return new Response(request.method === "HEAD" ? null : object.body, { status: contentRange ? 206 : 200, headers });
 }
 
+async function bookAudio(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
+  if (!env.BUCKET) return json({ ok: false, error: "storage_unavailable" }, 503);
+  const book = await env.DB.prepare("SELECT b.audio_storage_key, b.audio_mime_type, b.audio_byte_size FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? AND b.publication_status = 'published' AND i.status = 'published' LIMIT 1").bind(slug).first<{ audio_storage_key: string | null; audio_mime_type: string | null; audio_byte_size: number | null }>();
+  if (!book?.audio_storage_key) return json({ ok: false, error: "audio_not_published" }, 404);
+  const totalSize = typeof book.audio_byte_size === "number" && book.audio_byte_size > 0 ? book.audio_byte_size : null;
+  const requested = request.headers.get("range");
+  let range: R2Range | undefined;
+  let contentRange: string | undefined;
+  if (requested && totalSize) {
+    const match = requested.match(/^bytes=(\d*)-(\d*)$/);
+    if (match) {
+      const start = match[1] ? Number(match[1]) : Math.max(0, totalSize - Number(match[2] || 0));
+      const end = match[2] ? Number(match[2]) : totalSize - 1;
+      if (Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end >= start && start < totalSize) {
+        const boundedEnd = Math.min(end, totalSize - 1);
+        range = { offset: start, length: boundedEnd - start + 1 };
+        contentRange = `bytes ${start}-${boundedEnd}/${totalSize}`;
+      }
+    }
+  }
+  const object = await env.BUCKET.get(book.audio_storage_key, range ? { range } : undefined);
+  if (!object) return json({ ok: false, error: "audio_file_not_found" }, 404);
+  const headers: Record<string, string> = { "Content-Type": book.audio_mime_type || object.httpMetadata?.contentType || "audio/mpeg", "Content-Disposition": "inline", "Cache-Control": "public, max-age=300", "Accept-Ranges": "bytes", "Content-Length": String(object.size), ETag: httpEtag(object.httpEtag), ...publicAssetCorsHeaders(env) };
+  if (contentRange) headers["Content-Range"] = contentRange;
+  return new Response(request.method === "HEAD" ? null : object.body, { status: contentRange ? 206 : 200, headers });
+}
 async function bookCover(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
   if (!env.BUCKET) return json({ ok: false, error: "storage_unavailable" }, 503);
   const book = await env.DB.prepare("SELECT i.id FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? AND b.publication_status = 'published' AND i.status = 'published' LIMIT 1").bind(slug).first<{ id: string }>();
@@ -1073,17 +1153,19 @@ export default {
     const runtimeEnv = await resolveSecrets(env);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "telegram-ingestion", storage: Boolean(runtimeEnv.BUCKET), processor: Boolean(runtimeEnv.TELEGRAM_BOT_TOKEN) });
-    if (request.method === "OPTIONS" && url.pathname.startsWith("/book/") && (url.pathname.endsWith("/pdf") || url.pathname.endsWith("/cover"))) return publicAssetPreflight(runtimeEnv);
+    if (request.method === "OPTIONS" && url.pathname.startsWith("/book/") && (url.pathname.endsWith("/pdf") || url.pathname.endsWith("/audio") || url.pathname.endsWith("/cover"))) return publicAssetPreflight(runtimeEnv);
     if (url.pathname === "/catalog") return catalog(request, runtimeEnv);
     if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv);
     if (url.pathname === "/admin/drafts") return adminDrafts(request, runtimeEnv);
     if (url.pathname === "/admin/upload") return directUpload(request, runtimeEnv);
+    if (url.pathname === "/admin/audio-upload") return adminAudioUpload(request, runtimeEnv);
     if (url.pathname.startsWith("/admin/retry/")) return retryIntake(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/retry/".length)));
     if (url.pathname.startsWith("/admin/approve/")) return approve(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/approve/".length)));
     if (request.method === "POST" && url.pathname.startsWith("/admin/approve-publish/")) return approveAndPublish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/approve-publish/".length)));
     if (request.method === "PUT" && url.pathname.startsWith("/admin/update/")) return updateBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/update/".length)));
     if (request.method === "DELETE" && url.pathname.startsWith("/admin/delete/")) return deleteBook(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/delete/".length)));
     if (request.method === "POST" && url.pathname.startsWith("/admin/publish/")) return publish(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/admin/publish/".length)));
+    if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/book/") && url.pathname.endsWith("/audio")) return bookAudio(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -6)));
     if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/book/") && url.pathname.endsWith("/cover")) return bookCover(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -6)));
     if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/book/") && url.pathname.endsWith("/pdf")) return bookPdf(request, runtimeEnv, decodeURIComponent(url.pathname.slice("/book/".length, -4)));
     return json({ ok: false, error: "not_found" }, 404);
