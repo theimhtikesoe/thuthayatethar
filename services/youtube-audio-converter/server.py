@@ -22,6 +22,7 @@ WORK_DIR = Path(os.getenv("WORK_DIR", "/var/lib/youtube-converter"))
 DOWNLOAD_DIR = WORK_DIR / "downloads"
 DB_PATH = WORK_DIR / "jobs.sqlite3"
 MAX_BYTES = int(os.getenv("MAX_AUDIO_BYTES", str(100 * 1024 * 1024)))
+MAX_SOURCE_BYTES = int(os.getenv("MAX_SOURCE_BYTES", str(600 * 1024 * 1024)))
 COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE", "/run/secrets/youtube-cookies.txt")
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 JOB_QUEUE: queue.Queue[str] = queue.Queue()
@@ -96,7 +97,7 @@ def process(job_id: str) -> None:
     set_job(job_id, "running")
     output = DOWNLOAD_DIR / f"{job_id}.mp3"
     try:
-        command = ["yt-dlp", "--js-runtimes", "node", "--remote-components", "ejs:github", "--no-playlist", "--format", "bestaudio[abr<=96]/bestaudio[abr<=128]/bestaudio", "--restrict-filenames", "--extract-audio", "--audio-format", "mp3", "--audio-quality", "64K", "--max-filesize", str(MAX_BYTES), "--output", str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")]
+        command = ["yt-dlp", "--js-runtimes", "node", "--remote-components", "ejs:github", "--no-playlist", "--format", "bestaudio[abr<=96]/bestaudio[abr<=128]/bestaudio", "--restrict-filenames", "--extract-audio", "--audio-format", "mp3", "--audio-quality", "64K", "--max-filesize", str(MAX_SOURCE_BYTES), "--output", str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")]
         if COOKIES_FILE and Path(COOKIES_FILE).is_file():
             command.extend(["--cookies", COOKIES_FILE])
         command.append(row["source_url"])
