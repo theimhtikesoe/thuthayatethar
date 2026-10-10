@@ -32,6 +32,10 @@ TELEGRAM_API_BASE_URL = "https://pdf-relay.rz99systems.com"
 MAX_FILE_BYTES = "167772160"
 CATALOG_ORIGIN = "https://thuthayatethar.rz99systems.com"
 
+[observability]
+enabled = true
+head_sampling_rate = 1
+
 [observability.logs]
 enabled = true
 invocation_logs = true
