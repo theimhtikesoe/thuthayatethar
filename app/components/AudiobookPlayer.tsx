@@ -22,6 +22,7 @@ type Audiobook = {
   soundcloud_url?: string;
   audio_url?: string;
   youtube_url?: string;
+  youtubeAudioStatus?: string;
   sourceType?: string;
   submissionSource?: string;
 };
@@ -173,6 +174,9 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
   const [selectedKey, setSelectedKey] = useState(() => audiobookRecordKey(group.books[0]));
   const selectedBook = group.books.find((book) => audiobookRecordKey(book) === selectedKey) ?? group.books[0];
   const book = group.books[0];
+  const canPlay = Boolean(selectedBook.audio_url || selectedBook.soundcloud_url);
+  const isUploading = Boolean(selectedBook.youtube_url && !selectedBook.audio_url && (selectedBook.youtubeAudioStatus === "queued" || selectedBook.youtubeAudioStatus === "running"));
+  const listenLabel = canPlay ? "နားထောင်မည်" : isUploading ? "Uploading…" : "မရသေးပါ";
 
   useEffect(() => {
     if (!group.books.some((item) => audiobookRecordKey(item) === selectedKey)) {
@@ -187,7 +191,7 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
       {group.books.length > 1
         ? <label className="audiobook-track-select"><span>အပိုင်း / ခေါင်းစဉ်ရွေးပါ</span><select value={audiobookRecordKey(selectedBook)} onChange={(event) => setSelectedKey(event.target.value)} aria-label={`${group.title} အပိုင်း သို့မဟုတ် ခေါင်းစဉ်ရွေးရန်`}>{group.books.map((item) => <option key={audiobookRecordKey(item)} value={audiobookRecordKey(item)}>{audiobookOptionLabel(item.title)}</option>)}</select></label>
         : <span className="audiobook-single-track">{selectedBook.title}</span>}
-      <button type="button" className="audiobook-listen" onClick={() => onPlay(selectedBook)} aria-label={`${selectedBook.title} ကို နားထောင်မည်`}><span aria-hidden="true">▶</span> နားထောင်မည်</button>
+      <button type="button" className={`audiobook-listen${!canPlay ? " is-unavailable" : ""}`} onClick={() => { if (canPlay) onPlay(selectedBook); }} disabled={!canPlay} aria-label={`${selectedBook.title} ${listenLabel}`}><span aria-hidden="true">{canPlay ? "▶" : isUploading ? "↻" : "–"}</span> {listenLabel}</button>
     </div>
   </article>;
 }

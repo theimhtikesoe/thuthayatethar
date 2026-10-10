@@ -718,6 +718,8 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .audiobook-track-select select:focus-visible { outline: 2px solid rgba(73,109,99,.22); border-color: var(--green); }
 .audiobook-single-track { min-width: 0; align-self: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 9px; }
 .audiobook-listen { justify-self: stretch; min-width: 0; border: 0; border-radius: 999px; background: #e8f0eb; color: var(--green); padding: 7px 10px; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.audiobook-listen.is-unavailable, .audiobook-listen:disabled { background: #f0eee9; color: #9b958c; cursor: not-allowed; opacity: .95; }
+.audiobook-listen.is-unavailable span { display: inline-block; margin-right: 2px; }
 .audiobook-listen:hover, .audiobook-listen:focus-visible { outline: 2px solid rgba(73,109,99,.2); background: var(--green); color: white; }
 .audiobook-dock { position: fixed; z-index: 80; left: max(18px, env(safe-area-inset-left)); right: max(18px, env(safe-area-inset-right)); bottom: max(20px, calc(env(safe-area-inset-bottom) + 12px)); width: min(680px, calc(100vw - 36px)); margin-left: auto; padding: 15px 17px 13px; border: 1px solid rgba(40,56,52,.2); border-radius: 18px; background: rgba(255,253,249,.99); box-shadow: 0 20px 62px rgba(20,30,28,.3), 0 3px 12px rgba(20,30,28,.1); backdrop-filter: blur(18px); }
 .audiobook-dock-heading { display: flex; align-items: center; gap: 11px; min-height: 48px; padding: 0 2px 10px; }

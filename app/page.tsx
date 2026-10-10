@@ -34,6 +34,7 @@ type Book = {
   externalUrl?: string;
   soundcloud_url?: string;
   youtube_url?: string;
+  youtubeAudioStatus?: string;
   audio_url?: string;
   sourceType?: string;
   submissionSource?: string;
@@ -408,6 +409,7 @@ export default function HomePage() {
             externalUrl: book.externalUrl,
             soundcloud_url: book.soundcloud_url,
             youtube_url: book.youtube_url,
+            youtubeAudioStatus: book.youtubeAudioStatus,
             audio_url: book.audio_url,
             sourceType: book.sourceType,
             submissionSource: book.submissionSource,
