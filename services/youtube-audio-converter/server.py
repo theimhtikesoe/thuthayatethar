@@ -67,7 +67,7 @@ def callback(intake_id: str, status: str, audio: bytes | None = None, error: str
             f"{CALLBACK_URL}/internal/youtube-audio-callback",
             data=audio,
             method="POST",
-            headers={"X-Converter-Secret": SECRET, "X-Intake-Id": intake_id, "Content-Type": "audio/mpeg", "Content-Length": str(len(audio))},
+            headers={"X-Converter-Secret": SECRET, "X-Intake-Id": intake_id, "User-Agent": "thuthayatethar-converter/1.0", "Content-Type": "audio/mpeg", "Content-Length": str(len(audio))},
         )
     else:
         payload = json.dumps({"status": status, "error": error or "conversion_failed"}).encode()
@@ -75,7 +75,7 @@ def callback(intake_id: str, status: str, audio: bytes | None = None, error: str
             f"{CALLBACK_URL}/internal/youtube-audio-callback",
             data=payload,
             method="POST",
-            headers={"X-Converter-Secret": SECRET, "X-Intake-Id": intake_id, "Content-Type": "application/json"},
+            headers={"X-Converter-Secret": SECRET, "X-Intake-Id": intake_id, "User-Agent": "thuthayatethar-converter/1.0", "Content-Type": "application/json"},
         )
     with urllib.request.urlopen(request, timeout=60) as response:
         if response.status >= 300:
@@ -122,7 +122,7 @@ def process(job_id: str) -> None:
 def poll_worker() -> None:
     while True:
         try:
-            request = urllib.request.Request(f"{CALLBACK_URL}/internal/youtube-audio-jobs", headers={"X-Converter-Secret": SECRET})
+            request = urllib.request.Request(f"{CALLBACK_URL}/internal/youtube-audio-jobs", headers={"X-Converter-Secret": SECRET, "User-Agent": "thuthayatethar-converter/1.0"})
             with urllib.request.urlopen(request, timeout=30) as response:
                 payload = json.loads(response.read())
             job = payload.get("job")
