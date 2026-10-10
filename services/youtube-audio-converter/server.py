@@ -97,16 +97,30 @@ def process(job_id: str) -> None:
     set_job(job_id, "running")
     output = DOWNLOAD_DIR / f"{job_id}.mp3"
     try:
-        command = ["yt-dlp", "--js-runtimes", "node", "--remote-components", "ejs:github", "--no-playlist", "--format", "bestaudio[abr<=96]/bestaudio[abr<=128]/bestaudio", "--restrict-filenames", "--extract-audio", "--audio-format", "mp3", "--audio-quality", "64K", "--max-filesize", str(MAX_SOURCE_BYTES), "--output", str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")]
-        if COOKIES_FILE and Path(COOKIES_FILE).is_file():
-            command.extend(["--cookies", COOKIES_FILE])
-        command.append(row["source_url"])
-        result = subprocess.run(command, capture_output=True, text=True, timeout=4 * 60 * 60)
-        if result.returncode != 0 or not output.exists():
-            raise RuntimeError((result.stderr or result.stdout or "yt_dlp_failed")[-1000:])
-        data = output.read_bytes()
-        if not data or len(data) > MAX_BYTES:
-            raise RuntimeError("audio_size_limit_exceeded")
+        data: bytes | None = None
+        last_error = "yt_dlp_failed"
+        # Long audiobooks can exceed the Worker/R2 body limit at 64K. Retry the
+        # same source at speech-friendly bitrates before reporting failure.
+        for quality in ("64K", "48K", "32K"):
+            for path in DOWNLOAD_DIR.glob(f"{job_id}.*"):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            command = ["yt-dlp", "--js-runtimes", "node", "--remote-components", "ejs:github", "--no-playlist", "--format", "bestaudio[abr<=96]/bestaudio[abr<=128]/bestaudio", "--restrict-filenames", "--extract-audio", "--audio-format", "mp3", "--audio-quality", quality, "--max-filesize", str(MAX_SOURCE_BYTES), "--output", str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")]
+            if COOKIES_FILE and Path(COOKIES_FILE).is_file():
+                command.extend(["--cookies", COOKIES_FILE])
+            command.append(row["source_url"])
+            result = subprocess.run(command, capture_output=True, text=True, timeout=4 * 60 * 60)
+            if result.returncode != 0 or not output.exists():
+                raise RuntimeError((result.stderr or result.stdout or "yt_dlp_failed")[-1000:])
+            candidate = output.read_bytes()
+            if candidate and len(candidate) <= MAX_BYTES:
+                data = candidate
+                break
+            last_error = "audio_size_limit_exceeded"
+        if data is None:
+            raise RuntimeError(last_error)
         callback(row["intake_id"], "completed", data)
         set_job(job_id, "completed")
     except Exception as exc:
@@ -133,8 +147,11 @@ def poll_worker() -> None:
             job = payload.get("job")
             if job:
                 with db() as conn:
-                    existing = conn.execute("SELECT id FROM jobs WHERE intake_id=?", (job["intakeId"],)).fetchone()
-                    if not existing:
+                    existing = conn.execute("SELECT id, status FROM jobs WHERE intake_id=?", (job["intakeId"],)).fetchone()
+                    if existing and existing["status"] == "failed":
+                        conn.execute("UPDATE jobs SET status='queued', error=NULL, source_url=?, title=?, updated_at=? WHERE id=?", (job["sourceUrl"], job.get("title", ""), now(), existing["id"]))
+                        JOB_QUEUE.put(existing["id"])
+                    elif not existing:
                         job_id = str(uuid.uuid4())
                         conn.execute("INSERT INTO jobs(id,intake_id,source_url,title,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (job_id, job["intakeId"], job["sourceUrl"], job.get("title", ""), "queued", now(), now()))
                         JOB_QUEUE.put(job_id)

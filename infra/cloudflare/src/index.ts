@@ -487,15 +487,15 @@ async function saveLinkIntake(env: RuntimeEnv, input: LinkIntakeInput): Promise<
 async function enqueueYoutubeConversion(env: RuntimeEnv, intakeId: string, sourceUrl: string, title: string): Promise<void> {
   if (!env.YOUTUBE_CONVERTER_URL || !env.YOUTUBE_CONVERTER_SECRET) return;
   const now = new Date().toISOString();
-  await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = 'queued', youtube_audio_error = NULL, updated_at = ? WHERE intake_id = ?").bind(now, intakeId).run();
+  await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = 'queued', youtube_audio_error = NULL, youtube_audio_attempts = 0, youtube_audio_next_retry_at = NULL, updated_at = ? WHERE intake_id = ?").bind(now, intakeId).run();
   logWorkerEvent("youtube_conversion_queued", { intakeId });
 }
 
 async function youtubeAudioJobs(request: Request, env: RuntimeEnv): Promise<Response> {
   if (!env.YOUTUBE_CONVERTER_SECRET || !constantTimeEqual(request.headers.get("x-converter-secret"), env.YOUTUBE_CONVERTER_SECRET)) return json({ ok: false, error: "unauthorized" }, 401);
-  const row = await env.DB.prepare("SELECT b.intake_id, b.title, b.youtube_url FROM book_drafts b WHERE b.youtube_audio_status = 'queued' AND b.youtube_url IS NOT NULL ORDER BY b.updated_at ASC LIMIT 1").bind().first<{ intake_id: string; title: string; youtube_url: string }>();
+  const row = await env.DB.prepare("SELECT b.intake_id, b.title, b.youtube_url FROM book_drafts b WHERE b.youtube_url IS NOT NULL AND ((b.youtube_audio_status = 'queued' AND (b.youtube_audio_next_retry_at IS NULL OR strftime('%s', b.youtube_audio_next_retry_at) <= strftime('%s', 'now'))) OR (b.youtube_audio_status = 'failed' AND b.youtube_audio_attempts < 3 AND (b.youtube_audio_next_retry_at IS NULL OR strftime('%s', b.youtube_audio_next_retry_at) <= strftime('%s', 'now')))) ORDER BY b.updated_at ASC LIMIT 1").bind().first<{ intake_id: string; title: string; youtube_url: string }>();
   if (!row) return json({ ok: true, job: null });
-  await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = 'running', updated_at = ? WHERE intake_id = ? AND youtube_audio_status = 'queued'").bind(new Date().toISOString(), row.intake_id).run();
+  await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = 'running', youtube_audio_attempts = youtube_audio_attempts + 1, youtube_audio_next_retry_at = NULL, updated_at = ? WHERE intake_id = ? AND (youtube_audio_status = 'queued' OR youtube_audio_status = 'failed')").bind(new Date().toISOString(), row.intake_id).run();
   return json({ ok: true, job: { intakeId: row.intake_id, title: row.title, sourceUrl: row.youtube_url } });
 }
 
@@ -511,7 +511,7 @@ async function youtubeAudioCallback(request: Request, env: RuntimeEnv): Promise<
     let payload: JsonRecord = {};
     try { payload = await request.json() as JsonRecord; } catch { /* Keep a generic failure. */ }
     const error = typeof payload.error === "string" ? payload.error.slice(0, 500) : "youtube_conversion_failed";
-    await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = 'failed', youtube_audio_error = ?, updated_at = ? WHERE id = ?").bind(error, now, book.id).run();
+    await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = CASE WHEN youtube_audio_attempts < 3 THEN 'queued' ELSE 'failed' END, youtube_audio_error = ?, youtube_audio_next_retry_at = CASE WHEN youtube_audio_attempts < 3 THEN datetime('now', '+30 seconds') ELSE NULL END, updated_at = ? WHERE id = ?").bind(error, now, book.id).run();
     return json({ ok: true, status: "failed", intakeId });
   }
   if (!env.BUCKET || !contentType.startsWith("audio/")) return json({ ok: false, error: "audio_body_required" }, 415);
@@ -520,7 +520,7 @@ async function youtubeAudioCallback(request: Request, env: RuntimeEnv): Promise<
   const key = `audio/youtube/${intakeId}.mp3`;
   await env.BUCKET.put(key, data, { httpMetadata: { contentType: "audio/mpeg" }, customMetadata: { intakeId, source: "youtube_converter" } });
   await env.DB.batch([
-    env.DB.prepare("UPDATE book_drafts SET audio_storage_key = ?, audio_mime_type = 'audio/mpeg', audio_byte_size = ?, youtube_audio_status = 'completed', youtube_audio_error = NULL, updated_at = ? WHERE id = ?").bind(key, data.byteLength, now, book.id),
+    env.DB.prepare("UPDATE book_drafts SET audio_storage_key = ?, audio_mime_type = 'audio/mpeg', audio_byte_size = ?, youtube_audio_status = 'completed', youtube_audio_error = NULL, youtube_audio_next_retry_at = NULL, updated_at = ? WHERE id = ?").bind(key, data.byteLength, now, book.id),
     env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'youtube_audio_converted', ?, ?)").bind(intakeId, JSON.stringify({ key, byteSize: data.byteLength }), now),
   ]);
   return json({ ok: true, status: "completed", intakeId, slug: book.slug, byteSize: data.byteLength });
