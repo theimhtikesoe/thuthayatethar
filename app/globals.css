@@ -733,7 +733,7 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .audiobook-controls { display: grid; grid-template-columns: 34px minmax(60px, 1fr) auto; align-items: center; gap: 10px; padding: 3px 2px 2px; }
 .audiobook-play-toggle { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--green); color: #fffdf9; font-size: 12px; }
 .audiobook-play-toggle:disabled { opacity: .48; cursor: wait; }
-.audiobook-controls input[type="range"] { width: 100%; height: 4px; accent-color: var(--green); cursor: pointer; }
+.audiobook-controls input[type="range"] { width: 100%; height: 4px; accent-color: var(--green); cursor: pointer; touch-action: pan-y; }
 .audiobook-controls input[type="range"]:disabled { cursor: wait; }
 .audiobook-time { min-width: 68px; color: var(--muted); font-size: 9px; text-align: right; font-variant-numeric: tabular-nums; }
 .audiobook-player-status { min-height: 46px; margin: 0; display: grid; place-items: center; color: var(--muted); font-size: 9px; text-align: center; }
