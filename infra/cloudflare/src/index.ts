@@ -504,7 +504,7 @@ async function youtubeAudioCallback(request: Request, env: RuntimeEnv): Promise<
   }
   if (!env.BUCKET || !contentType.startsWith("audio/")) return json({ ok: false, error: "audio_body_required" }, 415);
   const data = await request.arrayBuffer();
-  if (!data.byteLength || data.byteLength > 100 * 1024 * 1024) return json({ ok: false, error: "audio_size_limit_exceeded" }, 413);
+  if (!data.byteLength || data.byteLength > 250 * 1024 * 1024) return json({ ok: false, error: "audio_size_limit_exceeded" }, 413);
   const key = `audio/youtube/${intakeId}.mp3`;
   await env.BUCKET.put(key, data, { httpMetadata: { contentType: "audio/mpeg" }, customMetadata: { intakeId, source: "youtube_converter" } });
   await env.DB.batch([
