@@ -42,12 +42,6 @@ jobs:
       - name: Run ingestion regression tests
         run: pnpm run test:ingestion
 
-      - name: Apply production D1 migrations
-        run: pnpm dlx wrangler@4 d1 migrations apply thuthayatethar-ingestion --remote --config infra/cloudflare/wrangler.toml
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: 557f8dd4f971a942beb3057ddc74a248
-
       - name: Deploy Telegram ingestion Worker
         run: pnpm dlx wrangler@4 deploy --config infra/cloudflare/wrangler.toml
         env:
