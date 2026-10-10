@@ -716,10 +716,6 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .audiobook-track-picker { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; align-items: stretch; }
 .audiobook-track-picker.has-chapters { gap: 10px; }
 .audiobook-chapter-panel { min-width: 0; padding: 10px; border: 1px solid rgba(73,109,99,.16); border-radius: 12px; background: linear-gradient(145deg, rgba(239,247,241,.92), rgba(255,250,241,.9)); }
-.audiobook-chapter-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; color: var(--green); font-size: 10px; }
-.audiobook-chapter-heading span { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; }
-.audiobook-chapter-heading i { font-size: 14px; font-style: normal; line-height: 1; }
-.audiobook-chapter-heading strong { color: #9a7650; font-size: 9px; font-weight: 600; }
 .audiobook-chapter-list { display: grid; gap: 4px; max-height: 178px; overflow-y: auto; padding-right: 2px; scrollbar-width: thin; scrollbar-color: rgba(73,109,99,.35) transparent; }
 .audiobook-chapter-row { min-width: 0; display: grid; grid-template-columns: 25px minmax(0,1fr) 15px; align-items: center; gap: 7px; padding: 7px 7px; border: 1px solid transparent; border-radius: 8px; background: rgba(255,255,255,.48); color: var(--muted); text-align: left; font: inherit; font-size: 10px; cursor: pointer; transition: background .16s ease, border-color .16s ease, color .16s ease, transform .16s ease; }
 .audiobook-chapter-row:hover { border-color: rgba(73,109,99,.18); background: rgba(255,255,255,.88); color: var(--ink); transform: translateX(2px); }

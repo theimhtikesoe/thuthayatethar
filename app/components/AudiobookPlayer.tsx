@@ -192,7 +192,6 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
     <div className="audiobook-card-copy"><small>{isPinnedAudiobook(book) ? "ပင်ထားသည် · အသံစာအုပ်" : isBedAungThaik(book) ? "အပေါ်ဆုံး · အသံစာအုပ်" : book.category || "အသံစာအုပ်"}</small><strong>{correctedCatalogTitle(group.title)}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span>{group.books.length > 1 && <em>{group.books.length} ခန်းပါ အသံစာအုပ်</em>}</div>
     <div className={`audiobook-track-picker${group.books.length > 1 ? " has-chapters" : ""}`}>
       {group.books.length > 1 ? <div className="audiobook-chapter-panel" aria-label={`${correctedCatalogTitle(group.title)} အခန်းများ`}>
-        <div className="audiobook-chapter-heading"><span><i aria-hidden="true">☷</i> မာတိကာ</span><strong>{group.books.length} ခန်း</strong></div>
         <div className="audiobook-chapter-list">{group.books.map((item, index) => {
           const itemKey = audiobookRecordKey(item);
           const active = itemKey === audiobookRecordKey(selectedBook);
