@@ -63,13 +63,13 @@ def valid_youtube_url(value: str) -> bool:
         return False
 
 
-def callback(intake_id: str, status: str, audio: bytes | None = None, error: str | None = None) -> None:
+def callback(intake_id: str, status: str, audio: bytes | None = None, error: str | None = None, part_index: int | None = None, part_total: int | None = None) -> None:
     if status == "completed" and audio is not None:
         request = urllib.request.Request(
             f"{CALLBACK_URL}/internal/youtube-audio-callback",
             data=audio,
             method="POST",
-            headers={"X-Converter-Secret": SECRET, "X-Intake-Id": intake_id, "User-Agent": "thuthayatethar-converter/1.0", "Content-Type": "audio/mpeg", "Content-Length": str(len(audio))},
+            headers={"X-Converter-Secret": SECRET, "X-Intake-Id": intake_id, "User-Agent": "thuthayatethar-converter/1.0", "Content-Type": "audio/mpeg", "Content-Length": str(len(audio)), **({"X-Audio-Part-Index": str(part_index), "X-Audio-Part-Total": str(part_total)} if part_index is not None and part_total is not None else {})},
         )
     else:
         payload = json.dumps({"status": status, "error": error or "conversion_failed"}).encode()
@@ -119,6 +119,18 @@ def process(job_id: str) -> None:
                 data = candidate
                 break
             last_error = "audio_size_limit_exceeded"
+        if data is None and last_error == "audio_size_limit_exceeded" and output.exists():
+            segment_pattern = DOWNLOAD_DIR / f"{job_id}-part-%03d.mp3"
+            segment_result = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(output), "-f", "segment", "-segment_time", "1800", "-c", "copy", str(segment_pattern)], capture_output=True, text=True, timeout=60 * 60)
+            if segment_result.returncode != 0:
+                raise RuntimeError((segment_result.stderr or "audio_segment_failed")[-1000:])
+            parts = sorted(DOWNLOAD_DIR.glob(f"{job_id}-part-*.mp3"))
+            if not parts or any(path.stat().st_size > MAX_BYTES for path in parts):
+                raise RuntimeError("audio_segment_size_limit_exceeded")
+            for index, path in enumerate(parts):
+                callback(row["intake_id"], "completed", path.read_bytes(), part_index=index, part_total=len(parts))
+            set_job(job_id, "completed")
+            return
         if data is None:
             raise RuntimeError(last_error)
         callback(row["intake_id"], "completed", data)

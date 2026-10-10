@@ -517,13 +517,29 @@ async function youtubeAudioCallback(request: Request, env: RuntimeEnv): Promise<
   if (!env.BUCKET || !contentType.startsWith("audio/")) return json({ ok: false, error: "audio_body_required" }, 415);
   const data = await request.arrayBuffer();
   if (!data.byteLength || data.byteLength > 250 * 1024 * 1024) return json({ ok: false, error: "audio_size_limit_exceeded" }, 413);
-  const key = `audio/youtube/${intakeId}.mp3`;
-  await env.BUCKET.put(key, data, { httpMetadata: { contentType: "audio/mpeg" }, customMetadata: { intakeId, source: "youtube_converter" } });
+  const partIndex = Number(request.headers.get("x-audio-part-index") ?? "");
+  const partTotal = Number(request.headers.get("x-audio-part-total") ?? "");
+  const isMultipart = Number.isInteger(partIndex) && partIndex >= 0 && Number.isInteger(partTotal) && partTotal > 0 && partIndex < partTotal;
+  const key = isMultipart ? `audio/youtube/${intakeId}/part-${partIndex}.mp3` : `audio/youtube/${intakeId}.mp3`;
+  await env.BUCKET.put(key, data, { httpMetadata: { contentType: "audio/mpeg" }, customMetadata: { intakeId, source: "youtube_converter", ...(isMultipart ? { partIndex: String(partIndex), partTotal: String(partTotal) } : {}) } });
+  if (!isMultipart) {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE book_drafts SET audio_storage_key = ?, audio_mime_type = 'audio/mpeg', audio_byte_size = ?, youtube_audio_parts_json = NULL, youtube_audio_status = 'completed', youtube_audio_error = NULL, youtube_audio_next_retry_at = NULL, updated_at = ? WHERE id = ?").bind(key, data.byteLength, now, book.id),
+      env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'youtube_audio_converted', ?, ?)").bind(intakeId, JSON.stringify({ key, byteSize: data.byteLength }), now),
+    ]);
+    return json({ ok: true, status: "completed", intakeId, slug: book.slug, byteSize: data.byteLength });
+  }
+  let parts: Array<{ index: number; key: string; byteSize: number }> = [];
+  const previous = await env.DB.prepare("SELECT youtube_audio_parts_json FROM book_drafts WHERE id = ? LIMIT 1").bind(book.id).first<{ youtube_audio_parts_json: string | null }>();
+  try { const parsed = JSON.parse(previous?.youtube_audio_parts_json || "[]"); if (Array.isArray(parsed)) parts = parsed.filter((part): part is { index: number; key: string; byteSize: number } => isRecord(part) && Number.isInteger(part.index) && typeof part.key === "string" && typeof part.byteSize === "number"); } catch {}
+  parts = [...parts.filter((part) => part.index !== partIndex), { index: partIndex, key, byteSize: data.byteLength }].sort((left, right) => left.index - right.index);
+  const completed = parts.length === partTotal && parts.every((part, index) => part.index === index);
+  const totalBytes = parts.reduce((sum, part) => sum + part.byteSize, 0);
   await env.DB.batch([
-    env.DB.prepare("UPDATE book_drafts SET audio_storage_key = ?, audio_mime_type = 'audio/mpeg', audio_byte_size = ?, youtube_audio_status = 'completed', youtube_audio_error = NULL, youtube_audio_next_retry_at = NULL, updated_at = ? WHERE id = ?").bind(key, data.byteLength, now, book.id),
-    env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'youtube_audio_converted', ?, ?)").bind(intakeId, JSON.stringify({ key, byteSize: data.byteLength }), now),
+    env.DB.prepare("UPDATE book_drafts SET audio_storage_key = NULL, audio_mime_type = 'audio/mpeg', audio_byte_size = ?, youtube_audio_parts_json = ?, youtube_audio_status = ?, youtube_audio_error = NULL, youtube_audio_next_retry_at = NULL, updated_at = ? WHERE id = ?").bind(totalBytes, JSON.stringify(parts), completed ? "completed" : "running", now, book.id),
+    ...(completed ? [env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'youtube_audio_converted', ?, ?)").bind(intakeId, JSON.stringify({ parts: parts.length, byteSize: totalBytes }), now)] : []),
   ]);
-  return json({ ok: true, status: "completed", intakeId, slug: book.slug, byteSize: data.byteLength });
+  return json({ ok: true, status: completed ? "completed" : "part_received", intakeId, slug: book.slug, partIndex, partTotal, byteSize: data.byteLength });
 }
 
 async function saveSoundCloudCollectionTracks(
@@ -833,9 +849,9 @@ async function catalog(request: Request, env: RuntimeEnv): Promise<Response> {
   const origin = env.CATALOG_ORIGIN;
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Origin": origin ?? "*", "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" } });
   if (request.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405, origin);
-  const statement = env.DB.prepare("SELECT b.id, b.title, b.slug, b.author, b.category, b.year, b.summary, b.reading_time, b.soundcloud_url, b.youtube_url, b.youtube_audio_status, b.audio_storage_key, b.audio_mime_type, b.audio_byte_size, b.metadata_json, b.publication_status, b.updated_at, i.storage_key, i.source_type FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.publication_status = 'published' OR ((i.source_type = 'soundcloud_link' OR i.source_type = 'youtube_link') AND (b.soundcloud_url IS NOT NULL OR b.youtube_url IS NOT NULL) AND b.publication_status <> 'unpublished') ORDER BY b.updated_at DESC");
+  const statement = env.DB.prepare("SELECT b.id, b.title, b.slug, b.author, b.category, b.year, b.summary, b.reading_time, b.soundcloud_url, b.youtube_url, b.youtube_audio_status, b.youtube_audio_parts_json, b.audio_storage_key, b.audio_mime_type, b.audio_byte_size, b.metadata_json, b.publication_status, b.updated_at, i.storage_key, i.source_type FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.publication_status = 'published' OR ((i.source_type = 'soundcloud_link' OR i.source_type = 'youtube_link') AND (b.soundcloud_url IS NOT NULL OR b.youtube_url IS NOT NULL) AND b.publication_status <> 'unpublished') ORDER BY b.updated_at DESC");
   const result = statement.all ? await statement.all<JsonRecord>() : { results: [] };
-  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} const publicMeta = isRecord(metadata.public) ? { ...metadata.public } : {}; if (typeof publicMeta.coverImage === "string" && publicMeta.coverImage.startsWith("/")) publicMeta.coverImage = new URL(publicMeta.coverImage, request.url).toString(); return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(typeof book.storage_key === "string" && book.storage_key ? { pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString() } : {}), ...(typeof book.soundcloud_url === "string" && book.soundcloud_url ? { soundcloud_url: book.soundcloud_url } : {}), ...(typeof book.youtube_url === "string" && book.youtube_url ? { youtube_url: book.youtube_url } : {}), ...(typeof book.youtube_audio_status === "string" && book.youtube_audio_status ? { youtubeAudioStatus: book.youtube_audio_status } : {}), ...(typeof book.audio_storage_key === "string" && book.audio_storage_key ? { audio_url: new URL(`/book/${encodeURIComponent(String(book.slug))}/audio`, request.url).toString() } : {}), ...(typeof publicMeta.audioUrl === "string" && publicMeta.audioUrl ? { audio_url: publicMeta.audioUrl } : {}), ...publicMeta, ...(typeof book.publication_status === "string" ? { publicationStatus: book.publication_status } : {}), ...(book.source_type === "soundcloud_link" || book.source_type === "youtube_link" ? { submissionSource: "telegram" } : {}) }; });
+  const books = result.results.map((book) => { let metadata: JsonRecord = {}; try { metadata = JSON.parse(typeof book.metadata_json === "string" ? book.metadata_json : "{}"); } catch {} const publicMeta = isRecord(metadata.public) ? { ...metadata.public } : {}; if (typeof publicMeta.coverImage === "string" && publicMeta.coverImage.startsWith("/")) publicMeta.coverImage = new URL(publicMeta.coverImage, request.url).toString(); let audioParts: Array<{ url: string; index: number; byteSize: number }> = []; try { const parsed = JSON.parse(typeof book.youtube_audio_parts_json === "string" ? book.youtube_audio_parts_json : "[]"); if (Array.isArray(parsed)) audioParts = parsed.filter((part): part is { index: number; byteSize: number } => isRecord(part) && Number.isInteger(part.index) && typeof part.byteSize === "number").sort((left, right) => left.index - right.index).map((part) => ({ ...part, url: new URL(`/book/${encodeURIComponent(String(book.slug))}/audio?part=${part.index}`, request.url).toString() })); } catch {} return { id: book.id, title: book.title, slug: book.slug, author: book.author, category: book.category, year: book.year, summary: book.summary, readingTime: book.reading_time, ...(typeof book.storage_key === "string" && book.storage_key ? { pdfUrl: new URL(`/book/${encodeURIComponent(String(book.slug))}/pdf`, request.url).toString() } : {}), ...(typeof book.soundcloud_url === "string" && book.soundcloud_url ? { soundcloud_url: book.soundcloud_url } : {}), ...(typeof book.youtube_url === "string" && book.youtube_url ? { youtube_url: book.youtube_url } : {}), ...(typeof book.youtube_audio_status === "string" && book.youtube_audio_status ? { youtubeAudioStatus: book.youtube_audio_status } : {}), ...(audioParts.length ? { audioParts } : {}), ...(typeof book.audio_storage_key === "string" && book.audio_storage_key ? { audio_url: new URL(`/book/${encodeURIComponent(String(book.slug))}/audio`, request.url).toString() } : {}), ...(typeof publicMeta.audioUrl === "string" && publicMeta.audioUrl ? { audio_url: publicMeta.audioUrl } : {}), ...publicMeta, ...(typeof book.publication_status === "string" ? { publicationStatus: book.publication_status } : {}), ...(book.source_type === "soundcloud_link" || book.source_type === "youtube_link" ? { submissionSource: "telegram" } : {}) }; });
   return json({ ok: true, books }, 200, origin);
 }
 
@@ -1154,9 +1170,16 @@ async function bookPdf(request: Request, env: RuntimeEnv, slug: string): Promise
 
 async function bookAudio(request: Request, env: RuntimeEnv, slug: string): Promise<Response> {
   if (!env.BUCKET) return json({ ok: false, error: "storage_unavailable" }, 503);
-  const book = await env.DB.prepare("SELECT b.audio_storage_key, b.audio_mime_type, b.audio_byte_size FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? AND b.publication_status = 'published' AND i.status = 'published' LIMIT 1").bind(slug).first<{ audio_storage_key: string | null; audio_mime_type: string | null; audio_byte_size: number | null }>();
-  if (!book?.audio_storage_key) return json({ ok: false, error: "audio_not_published" }, 404);
-  const totalSize = typeof book.audio_byte_size === "number" && book.audio_byte_size > 0 ? book.audio_byte_size : null;
+  const book = await env.DB.prepare("SELECT b.audio_storage_key, b.youtube_audio_parts_json, b.audio_mime_type, b.audio_byte_size FROM book_drafts b JOIN intake_items i ON i.id = b.intake_id WHERE b.slug = ? AND b.publication_status = 'published' AND i.status = 'published' LIMIT 1").bind(slug).first<{ audio_storage_key: string | null; youtube_audio_parts_json: string | null; audio_mime_type: string | null; audio_byte_size: number | null }>();
+  if (!book?.audio_storage_key && !book?.youtube_audio_parts_json) return json({ ok: false, error: "audio_not_published" }, 404);
+  const requestedPart = new URL(request.url).searchParams.get("part");
+  let storageKey = book.audio_storage_key;
+  let partSize: number | null = null;
+  if (!storageKey && book.youtube_audio_parts_json && requestedPart !== null) {
+    try { const parts = JSON.parse(book.youtube_audio_parts_json) as Array<{ index?: number; key?: string; byteSize?: number }>; const part = parts.find((item) => item.index === Number(requestedPart)); if (part?.key) { storageKey = part.key; partSize = typeof part.byteSize === "number" ? part.byteSize : null; } } catch {}
+  }
+  if (!storageKey) return json({ ok: false, error: "audio_part_required" }, 400);
+  const totalSize = partSize ?? (typeof book.audio_byte_size === "number" && book.audio_byte_size > 0 ? book.audio_byte_size : null);
   const requested = request.headers.get("range");
   let range: R2Range | undefined;
   let contentRange: string | undefined;
@@ -1172,7 +1195,7 @@ async function bookAudio(request: Request, env: RuntimeEnv, slug: string): Promi
       }
     }
   }
-  const object = await env.BUCKET.get(book.audio_storage_key, range ? { range } : undefined);
+  const object = await env.BUCKET.get(storageKey, range ? { range } : undefined);
   if (!object) return json({ ok: false, error: "audio_file_not_found" }, 404);
   const headers: Record<string, string> = { "Content-Type": book.audio_mime_type || object.httpMetadata?.contentType || "audio/mpeg", "Content-Disposition": "inline", "Cache-Control": "public, max-age=300", "Accept-Ranges": "bytes", "Content-Length": String(object.size), ETag: httpEtag(object.httpEtag), ...publicAssetCorsHeaders(env) };
   if (contentRange) headers["Content-Range"] = contentRange;
