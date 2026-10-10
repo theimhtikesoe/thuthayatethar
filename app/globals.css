@@ -17,8 +17,9 @@ button { cursor: pointer; }
 .brand-mark span:first-child { background: var(--ink); border-radius: 4px 1px 1px 4px; flex: 1; }
 .brand-mark span:last-child { background: var(--gold); border-radius: 1px 4px 4px 1px; flex: 1; }
 .topnav { display: flex; align-items: center; gap: 32px; font-size: 12px; color: var(--muted); }
-.topnav a { padding: 8px 0; border-bottom: 1px solid transparent; }
+.topnav a { display: inline-flex; align-items: center; min-height: 36px; padding: 8px 0; border-bottom: 1px solid transparent; }
 .topnav a.active, .topnav a:hover { color: var(--ink); border-color: var(--gold); }
+.nav-anchor-target { display: block; height: 0; scroll-margin-top: 12px; }
 .quiet-button { border: 1px solid var(--line); padding: 9px 14px; border-radius: 7px; background: rgba(255,255,255,.42); color: var(--ink); font-size: 11px; }
 .quiet-button span { color: var(--gold); margin-left: 4px; }
 .hero { max-width: 1240px; margin: 20px auto 0; padding: 76px 42px 92px; display: grid; grid-template-columns: .9fr 1.1fr; gap: 50px; align-items: center; overflow: hidden; }
@@ -69,7 +70,6 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .continue-listening .continue-label, .continue-listening .continue-action { color: #a2573d; }
 .continue-listening .continue-progress > span { background: #bd7757; }
 .catalog-layout { display: grid; grid-template-columns: 1fr; gap: 24px; }
-.filters { max-width: 440px; border: 0; padding: 0; }
 .search-box { display: flex; align-items: center; gap: 7px; border-bottom: 1px solid var(--ink); padding: 8px 0 10px; margin-bottom: 18px; }
 .search-box span { font-size: 22px; transform: rotate(-20deg); }
 .search-box input { width: 100%; border: 0; outline: 0; background: transparent; min-width: 0; font-size: 11px; color: var(--ink); }
@@ -79,10 +79,6 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .search-clear:focus-visible { outline: 2px solid rgba(73,109,99,.35); outline-offset: 2px; }
 .filter-controls { display: grid; gap: 12px; }
 .filter-controls[hidden] { display: none !important; }
-.format-filter-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
-.format-filter-tabs button { flex: 0 0 auto; min-height: 34px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); padding: 6px 12px; font-size: 9px; cursor: pointer; transition: background .16s ease, border-color .16s ease, color .16s ease; }
-.format-filter-tabs button:hover, .format-filter-tabs button:focus-visible { border-color: rgba(73,109,99,.5); outline: none; }
-.format-filter-tabs button.active { border-color: var(--green); background: var(--green); color: white; }
 .filter-select { display: grid; gap: 5px; color: var(--muted); font-size: 9px; }
 .filter-select select { width: 100%; min-width: 0; min-height: 38px; appearance: none; border: 1px solid var(--line); border-radius: 6px; background: #fffdf9; color: var(--ink); padding: 7px 28px 7px 10px; font: inherit; font-size: 11px; }
 .filter-select select:focus-visible { outline: 2px solid rgba(73,109,99,.28); border-color: var(--green); }
@@ -449,9 +445,11 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 
 /* Phone-first catalog: one clear search/filter row and compact book list. */
 @media (max-width: 640px) {
-  .topbar { padding: calc(16px + env(safe-area-inset-top)) 16px 16px; }
+  .topbar { flex-direction: column; align-items: stretch; gap: 8px; padding: calc(16px + env(safe-area-inset-top)) 16px 16px; }
   .brand strong { font-size: 18px; }
   .brand small { font-size: 8px; }
+  .topnav { width: 100%; justify-content: space-between; gap: 10px; font-size: 11px; }
+  .topnav a { min-height: 40px; padding: 7px 0; }
   .catalog-section { padding: 34px max(16px, env(safe-area-inset-left)) calc(44px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-right)); }
   .section-heading { flex-direction: row; align-items: flex-end; justify-content: space-between; gap: 10px; margin-bottom: 16px; }
   .section-heading .eyebrow { margin: 0 0 2px; font-size: 9px; }
@@ -463,7 +461,6 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
   .continue-summary-text strong { max-width: 48vw; font-size: 10px; }
   .continue-summary-text small, .continue-action { font-size: 9px; }
   .catalog-layout { display: block; }
-  .filters { border: 0; padding: 0; margin-bottom: 14px; }
   .search-box { min-height: 42px; margin-bottom: 10px; padding: 7px 1px; }
   .search-box input { font-size: 12px; }
   .search-box kbd { display: none; }
