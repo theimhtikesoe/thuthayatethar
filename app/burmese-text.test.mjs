@@ -26,6 +26,20 @@ test("the three reviewed Zawgyi catalog titles render in Unicode", () => {
   );
 });
 
+test("the eight Myanmar Audio Books SoundCloud titles render in Unicode", () => {
+  const corrections = new Map([
+    ["ျမသန္းတင့္ - ေခတ္သစ္ပုေတၱာဝါဒ", "မြသန်းတင့် - ခေတ်သစ်ပုတ္တောဝါဒ"],
+    ["ဓမၼာစရိယဦးေ႒းလိႈင္ - ရွင္အရဟံ မေထရ္", "ဓမ္မာစရိယဦးဋ္ဌေးလှိုင် - ရှင်အရဟံ မထေရ်"],
+    ["ဓမၼာစရိယဦးေ႒းလိႈင္ - ေပါင္ေလာင္ရွင္ကႆပ", "ဓမ္မာစရိယဦးဋ္ဌေးလှိုင် - ပေါင်လောင်ရှင်ကဿပ"],
+    ["စဥ္းစားျခင္း မိုးတိမ္နဲ႔ မစဥ္းစားျခင္း ေသတၱာ - ေမၿငိမ္း", "စဉ်းစားခြင်း မိုးတိမ်နဲ့ မစဉ်းစားခြင်း သေတ္တာ - မေငြိမ်း"],
+    ["ဆရာေဇာ္ေဇာ္ေအာင္ ၏ ခင္သန္းႏုအေၾကာင္း၀တၳဳ", "ဆရာဇော်ဇော်အောင် ၏ ခင်သန်းနုအကြောင်းဝတ္ထု"],
+    ["ေမာင္သိန္းေဇာ္ - ေတာင္ကုန္းအေဟာင္းမ်ား", "မောင်သိန်းဇော် - တောင်ကုန်းအဟောင်းများ"],
+    ["ေဒါင္းကတဲ့ေန႔ - ေမာင္စိန္ဝင္း (ပုတီးကုန္း)", "ဒေါင်းကတဲ့နေ့ - မောင်စိန်ဝင်း (ပုတီးကုန်း)"],
+    ["အိုင္ခ်င္း - မွာပါ့မယ္ေမာင္", "အိုင်ချင်း - မှာပါ့မယ်မောင်"],
+  ]);
+  for (const [legacy, unicode] of corrections) assert.equal(correctedCatalogTitle(legacy), unicode);
+});
+
 test("already-corrected titles and user-entered content are preserved", () => {
   const title = "မိတ်ဆွေသူငယ်ချင်း (Mate Sway Thu Ngal Chin) - နိုင်းနိုင်းစနေ Nine Nine Sanay";
   assert.equal(correctedCatalogTitle(title), title);
