@@ -209,6 +209,10 @@ function NativeAudiobookPlayer({ book, onClose }: { book: Audiobook; onClose: ()
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   useEffect(() => {
+    const savedPart = typeof window === "undefined" ? 0 : Number(window.localStorage.getItem(`${audioProgressStorageKey(book)}:part`) ?? "0");
+    setPartIndex(Number.isInteger(savedPart) && savedPart >= 0 ? Math.min(savedPart, Math.max(0, parts.length - 1)) : 0);
+  }, [book.id, book.slug]);
+  useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !parts[partIndex]) return;
     const saved = readAudioProgress(book, window.localStorage);
