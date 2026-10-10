@@ -365,7 +365,7 @@ export default function HomePage() {
     const refreshCatalog = () => {
       if (requestActive || disposed) return;
       requestActive = true;
-      fetch("/api/catalog", { cache: "no-store" })
+      fetch(`/api/catalog?refresh=${Date.now()}`, { cache: "no-store" })
       .then((response) => response.json())
       .then((payload: { ok?: boolean; configured?: boolean; books?: Array<Partial<Book> & { id?: string | number; pages?: string[]; pdfUrl?: string }> }) => {
         if (payload.ok !== true || payload.configured === false || !Array.isArray(payload.books)) { if (!hasCachedCatalog && !disposed) setCatalogBooks([]); return; }

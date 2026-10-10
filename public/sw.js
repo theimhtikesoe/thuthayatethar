@@ -1,14 +1,17 @@
 // Keep user-downloaded books independent from deploy-specific app-shell caches.
 // A new Vercel build may replace the shell, but must not make users download
 // every saved PDF again.
-const SHELL_CACHE = "thuthayatethar-shell-v6";
+const SHELL_CACHE = "thuthayatethar-shell-v7";
 const BOOK_CACHE = "thuthayatethar-books";
-const CATALOG_CACHE = "thuthayatethar-catalog";
+const CATALOG_CACHE = "thuthayatethar-catalog-v2";
 const BOOK_WORKER_ORIGIN = "https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev";
 const SHELL = ["/", "/manifest.webmanifest", "/logo.svg", "/icon.svg", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/pdf.worker.min.js", "/covers/tian-guan-ci-fu.webp"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
@@ -22,7 +25,7 @@ self.addEventListener("activate", (event) => {
         if (response && !(await stableBooks.match(request))) await stableBooks.put(request, response);
       }
     }
-    await Promise.all(keys.filter((key) => key !== SHELL_CACHE && key !== BOOK_CACHE && key !== CATALOG_CACHE && !key.startsWith("thuthayatethar-books-") && !key.startsWith("thuthayatethar-catalog")).map((key) => caches.delete(key)));
+    await Promise.all(keys.filter((key) => key !== SHELL_CACHE && key !== BOOK_CACHE && key !== CATALOG_CACHE && !key.startsWith("thuthayatethar-books-")).map((key) => caches.delete(key)));
     await self.clients.claim();
   })());
 });
@@ -98,9 +101,9 @@ self.addEventListener("fetch", (event) => {
       const cache = await caches.open(CATALOG_CACHE);
       try {
         const response = await fetch(request);
-        if (response.ok) await cache.put(request.url, response.clone());
+        if (response.ok) await cache.put(new Request(`${self.location.origin}/api/catalog`), response.clone());
         return response;
-      } catch { return (await cache.match(request.url)) || new Response(JSON.stringify({ ok: false, books: [] }), { headers: { "content-type": "application/json" } }); }
+      } catch { return (await cache.match(`${self.location.origin}/api/catalog`)) || new Response(JSON.stringify({ ok: false, books: [] }), { headers: { "content-type": "application/json" } }); }
     })());
     return;
   }

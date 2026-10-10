@@ -7,8 +7,8 @@ export async function GET() {
   try {
     const response = await fetch(endpoint, { cache: "no-store" });
     const payload = await response.json();
-    return NextResponse.json(payload, { status: response.status });
+    return NextResponse.json(payload, { status: response.status, headers: { "Cache-Control": "no-store, max-age=0, must-revalidate" } });
   } catch {
-    return NextResponse.json({ ok: false, books: [], error: "catalog_unavailable" }, { status: 502 });
+    return NextResponse.json({ ok: false, books: [], error: "catalog_unavailable" }, { status: 502, headers: { "Cache-Control": "no-store, max-age=0, must-revalidate" } });
   }
 }
