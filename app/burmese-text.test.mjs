@@ -47,3 +47,16 @@ test("already-corrected titles and user-entered content are preserved", () => {
   assert.equal(correctedCatalogTitle(), "စာအုပ်အသစ်");
   assert.equal(correctedCatalogTitle("xj3aq3cyzsn4"), "ဝင်းဖေ ဝတ္ထုတိုများ");
 });
+
+test("live audiobook titles with legacy Zawgyi metadata render in Unicode", () => {
+  const corrections = new Map([
+    ["05 - အသံထြက္၀တၳဳ- ေဆာင္းလုလင္ မ", "05 - အသံထွက်ဝတ္ထု - ဆောင်းလုလင် မ"],
+    ["04 - အသံထြက္၀တၳဳ- လြန္းထားထား(ေဆးတကၠသုိလ္)- ေယာက်ာ္းတစ္ေယာက္ရဲ႕အခ်စ္", "04 - အသံထွက်ဝတ္ထု - လွန်းထားထား (ဆေးတက္ကသိုလ်) - ယောကျာ်းတစ်ယောက်ရဲ့အချစ်"],
+    ["03 - အသံထြက္၀တၳဳ- ေမာင္သာခ်ိဳ- စစ္ေတာင္းႏွစ္လီ", "03 - အသံထွက်ဝတ္ထု - မောင်သာချို - စစ်တောင်းနှစ်လီ"],
+    ["02 - အသံထြက္၀တၳဳ- မင္းရွင္- ေရာင္းခါစ", "02 - အသံထွက်ဝတ္ထု - မင်းရှင် - ရောင်းခါစ"],
+    ["01 - အသံထြက္၀တၳဳ- ျငိမ္းေက်ာ္ သုသန္၌ သနပ္ခါးလူးျခင္း", "01 - အသံထွက်ဝတ္ထု - ငြိမ်းကျော် သုဿန်၌ သနပ်ခါးလူးခြင်း"],
+    ["Law Of Authority And Obidence (အုပ္ခ်ဳပ္ျခင္း နွင္႕ နာခံျခင္း တို႕၏ နိယာမ)", "Law Of Authority And Obidence (အုပ်ချုပ်ခြင်း နှင့် နာခံခြင်း တို့၏ နိယာမ)"],
+    ["A Lesson Of Faith (ႏွလုံးသားမွယုံၾကည္မူ၏သင္ခန္းစာ)", "A Lesson Of Faith (နှလုံးသားမှ ယုံကြည်မှု၏ သင်ခန်းစာ)"],
+  ]);
+  for (const [legacy, unicode] of corrections) assert.equal(correctedCatalogTitle(legacy), unicode);
+});
