@@ -20,6 +20,8 @@ type Audiobook = {
   category?: string;
   coverImage?: string;
   soundcloud_url?: string;
+  audio_url?: string;
+  youtube_url?: string;
   sourceType?: string;
   submissionSource?: string;
 };
@@ -190,7 +192,39 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
   </article>;
 }
 
+function NativeAudiobookPlayer({ book, onClose }: { book: Audiobook; onClose: () => void }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [position, setPosition] = useState(0);
+  const [duration, setDuration] = useState(0);
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !book.audio_url) return;
+    const saved = readAudioProgress(book, window.localStorage);
+    const onMetadata = () => { const total = Number.isFinite(audio.duration) ? audio.duration * 1000 : 0; setDuration(total); saveAudioDuration(book, window.localStorage, total); if (saved?.positionMs) audio.currentTime = Math.min(saved.positionMs / 1000, audio.duration); setReady(true); void audio.play().catch(() => undefined); };
+    const onTime = () => setPosition(audio.currentTime * 1000);
+    const onPlay = () => { setPlaying(true); setMediaSessionPlaybackState("playing"); };
+    const onPause = () => { setPlaying(false); saveAudioProgress(book, window.localStorage, audio.currentTime * 1000, duration); setMediaSessionPlaybackState("paused"); };
+    const onEnded = () => { setPlaying(false); clearAudioProgress(book, window.localStorage); setMediaSessionPlaybackState("none"); };
+    const onError = () => { setError(true); setReady(false); setMediaSessionPlaybackState("none"); };
+    audio.addEventListener("loadedmetadata", onMetadata); audio.addEventListener("timeupdate", onTime); audio.addEventListener("play", onPlay); audio.addEventListener("pause", onPause); audio.addEventListener("ended", onEnded); audio.addEventListener("error", onError); audio.load();
+    return () => { audio.pause(); audio.removeEventListener("loadedmetadata", onMetadata); audio.removeEventListener("timeupdate", onTime); audio.removeEventListener("play", onPlay); audio.removeEventListener("pause", onPause); audio.removeEventListener("ended", onEnded); audio.removeEventListener("error", onError); setMediaSessionPlaybackState("none"); };
+  }, [book, book.audio_url]);
+  const shown = duration > 0 ? Math.min(position, duration) : position;
+  const toggle = () => { const audio = audioRef.current; if (!audio || !ready || error) return; if (audio.paused) void audio.play().catch(() => setError(true)); else audio.pause(); };
+  const seek = (value: string) => { const valueMs = Number(value); if (!audioRef.current || !Number.isFinite(valueMs)) return; audioRef.current.currentTime = valueMs / 1000; setPosition(valueMs); saveAudioProgress(book, window.localStorage, valueMs, duration); };
+  return <aside className="audiobook-dock" aria-label="အသံစာအုပ်ဖွင့်စက်">
+    <audio ref={audioRef} className="audiobook-native-audio" src={book.audio_url} preload="metadata" aria-label={`${book.title} အသံစာအုပ်`} />
+    <div className="audiobook-dock-heading"><span className="audiobook-live-dot" /><span className="audiobook-dock-title"><small>ယခုနားထောင်နေသည် · AUDIO</small><strong>{book.title}</strong><span>{book.author || "တင်သူ မသိရသေးပါ"}</span></span><button type="button" onClick={onClose} className="audiobook-dock-close" aria-label="အသံဖွင့်စက်ကို ပိတ်မည်">×</button></div>
+    <div className="audiobook-controls" aria-label="အသံစာအုပ်ထိန်းချုပ်မှု"><button type="button" className="audiobook-play-toggle" onClick={toggle} disabled={!ready || error} aria-label={playing ? "ခဏရပ်မည်" : "ဆက်နားထောင်မည်"}><span aria-hidden="true">{playing ? "Ⅱ" : "▶"}</span></button><input type="range" min="0" max={duration || 1} step="1000" value={shown} disabled={!ready || !duration || error} onChange={(event) => seek(event.target.value)} aria-label="အသံစာအုပ်အတွင်း ဖွင့်နေသည့်နေရာ" /><span className="audiobook-time">{formatAudioTime(shown)}{duration ? ` / ${formatAudioTime(duration)}` : ""}</span></div>
+    <p className="audiobook-player-status" role="status">{error ? "အသံဖိုင်ကို ဖွင့်မရပါ။" : !ready ? "အသံဖွင့်စက်ကို ပြင်ဆင်နေသည်…" : "YouTube မှ ပြောင်းထားသော audio"}</p>
+  </aside>;
+}
+
 export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { book: Audiobook | null; onClose: () => void; preloadBooks?: Audiobook[] }) {
+  if (book?.audio_url) return <NativeAudiobookPlayer book={book} onClose={onClose} />;
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<Widget | null>(null);
   const positionRef = useRef(0);

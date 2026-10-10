@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS book_drafts (
   audio_storage_key TEXT,
   audio_mime_type TEXT,
   audio_byte_size INTEGER,
+  youtube_audio_status TEXT,
+  youtube_audio_error TEXT,
   metadata_json TEXT NOT NULL DEFAULT '{}',
   ocr_text_storage_key TEXT,
   page_count INTEGER,

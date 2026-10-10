@@ -31,6 +31,8 @@ TELEGRAM_ALLOWED_CHAT_IDS = "-1004314141664"
 TELEGRAM_API_BASE_URL = "https://pdf-relay.rz99systems.com"
 MAX_FILE_BYTES = "167772160"
 CATALOG_ORIGIN = "https://thuthayatethar.rz99systems.com"
+YOUTUBE_CONVERTER_URL = "http://45.76.179.49:8787"
+YOUTUBE_CONVERTER_CALLBACK_URL = "https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev"
 
 [observability]
 enabled = true

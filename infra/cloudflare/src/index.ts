@@ -37,6 +37,9 @@ export interface Env {
   TELEGRAM_WEBHOOK_SECRET_STORE?: SecretStoreBinding;
   TELEGRAM_BOT_TOKEN_STORE?: SecretStoreBinding;
   ADMIN_TOKEN_STORE?: SecretStoreBinding;
+  YOUTUBE_CONVERTER_URL?: string;
+  YOUTUBE_CONVERTER_CALLBACK_URL?: string;
+  YOUTUBE_CONVERTER_SECRET?: string | SecretStoreBinding;
 }
 
 type RuntimeEnv = Omit<Env, "TELEGRAM_WEBHOOK_SECRET" | "TELEGRAM_ALLOWED_CHAT_IDS" | "TELEGRAM_BOT_TOKEN" | "CATALOG_ORIGIN" | "ADMIN_TOKEN" | "FILE_RELAY_ACCESS_ID" | "FILE_RELAY_ACCESS_SECRET"> & {
@@ -47,6 +50,7 @@ type RuntimeEnv = Omit<Env, "TELEGRAM_WEBHOOK_SECRET" | "TELEGRAM_ALLOWED_CHAT_I
   ADMIN_TOKEN?: string;
   FILE_RELAY_ACCESS_ID?: string;
   FILE_RELAY_ACCESS_SECRET?: string;
+  YOUTUBE_CONVERTER_SECRET?: string;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -74,6 +78,7 @@ async function resolveSecrets(env: Env): Promise<RuntimeEnv> {
     CATALOG_ORIGIN: await secretValue(env.CATALOG_ORIGIN),
     FILE_RELAY_ACCESS_ID: await secretValue(env.FILE_RELAY_ACCESS_ID),
     FILE_RELAY_ACCESS_SECRET: await secretValue(env.FILE_RELAY_ACCESS_SECRET),
+    YOUTUBE_CONVERTER_SECRET: await secretValue(env.YOUTUBE_CONVERTER_SECRET),
   };
 }
 
@@ -467,6 +472,55 @@ async function saveLinkIntake(env: RuntimeEnv, input: LinkIntakeInput): Promise<
   return { intakeId: persisted.id, created: insert.meta.changes > 0 };
 }
 
+async function enqueueYoutubeConversion(env: RuntimeEnv, intakeId: string, sourceUrl: string, title: string): Promise<void> {
+  if (!env.YOUTUBE_CONVERTER_URL || !env.YOUTUBE_CONVERTER_SECRET) return;
+  const now = new Date().toISOString();
+  await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = 'queued', youtube_audio_error = NULL, updated_at = ? WHERE intake_id = ?").bind(now, intakeId).run();
+  const callbackUrl = env.YOUTUBE_CONVERTER_CALLBACK_URL || "https://thuthayatethar-telegram-ingestion.hlah3894.workers.dev";
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort("converter_enqueue_timeout"), 5_000);
+    const response = await fetch(`${env.YOUTUBE_CONVERTER_URL.replace(/\/$/, "")}/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Converter-Secret": env.YOUTUBE_CONVERTER_SECRET },
+      body: JSON.stringify({ intakeId, sourceUrl, title, callbackUrl }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!response.ok) throw new Error(`converter_enqueue_http_${response.status}`);
+  } catch (error) {
+    await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = 'failed', youtube_audio_error = ?, updated_at = ? WHERE intake_id = ?").bind(error instanceof Error ? error.message.slice(0, 500) : "converter_unavailable", new Date().toISOString(), intakeId).run();
+    logWorkerEvent("youtube_conversion_enqueue_failed", { intakeId, errorType: error instanceof Error ? error.name : "unknown" });
+  }
+}
+
+async function youtubeAudioCallback(request: Request, env: RuntimeEnv): Promise<Response> {
+  if (!env.YOUTUBE_CONVERTER_SECRET || !constantTimeEqual(request.headers.get("x-converter-secret"), env.YOUTUBE_CONVERTER_SECRET)) return json({ ok: false, error: "unauthorized" }, 401);
+  const intakeId = request.headers.get("x-intake-id")?.trim();
+  if (!intakeId) return json({ ok: false, error: "intake_id_required" }, 400);
+  const book = await env.DB.prepare("SELECT id, slug FROM book_drafts WHERE intake_id = ? LIMIT 1").bind(intakeId).first<{ id: string; slug: string }>();
+  if (!book) return json({ ok: false, error: "book_not_found" }, 404);
+  const contentType = request.headers.get("content-type")?.toLowerCase() || "";
+  const now = new Date().toISOString();
+  if (contentType.includes("application/json")) {
+    let payload: JsonRecord = {};
+    try { payload = await request.json() as JsonRecord; } catch { /* Keep a generic failure. */ }
+    const error = typeof payload.error === "string" ? payload.error.slice(0, 500) : "youtube_conversion_failed";
+    await env.DB.prepare("UPDATE book_drafts SET youtube_audio_status = 'failed', youtube_audio_error = ?, updated_at = ? WHERE id = ?").bind(error, now, book.id).run();
+    return json({ ok: true, status: "failed", intakeId });
+  }
+  if (!env.BUCKET || !contentType.startsWith("audio/")) return json({ ok: false, error: "audio_body_required" }, 415);
+  const data = await request.arrayBuffer();
+  if (!data.byteLength || data.byteLength > 100 * 1024 * 1024) return json({ ok: false, error: "audio_size_limit_exceeded" }, 413);
+  const key = `audio/youtube/${intakeId}.mp3`;
+  await env.BUCKET.put(key, data, { httpMetadata: { contentType: "audio/mpeg" }, customMetadata: { intakeId, source: "youtube_converter" } });
+  await env.DB.batch([
+    env.DB.prepare("UPDATE book_drafts SET audio_storage_key = ?, audio_mime_type = 'audio/mpeg', audio_byte_size = ?, youtube_audio_status = 'completed', youtube_audio_error = NULL, updated_at = ? WHERE id = ?").bind(key, data.byteLength, now, book.id),
+    env.DB.prepare("INSERT INTO ingestion_events (intake_id, event_type, detail_json, created_at) VALUES (?, 'youtube_audio_converted', ?, ?)").bind(intakeId, JSON.stringify({ key, byteSize: data.byteLength }), now),
+  ]);
+  return json({ ok: true, status: "completed", intakeId, slug: book.slug, byteSize: data.byteLength });
+}
+
 async function saveSoundCloudCollectionTracks(
   tracks: SoundCloudTrack[], collectionUrl: string, collectionType: SoundCloudCollectionType, updateId: number, chatId: string, messageId: number, env: RuntimeEnv,
 ): Promise<{ created: number; duplicates: number }> {
@@ -747,6 +801,7 @@ async function receive(request: Request, env: RuntimeEnv): Promise<Response> {
         metadata: { source: "telegram", sourceType: "youtube_link", sourceUrl: url, public: { sourceType: "youtube" } }, eventDetail: { url },
       });
       saved.push({ ...result, sourceType: "youtube_link" });
+      if (result.created) await enqueueYoutubeConversion(env, result.intakeId, url, metadata.title);
     }
     if (!saved.length) return json({ ok: true, status: "ignored", skippedChannelUrls });
     const created = saved.filter((item) => item.created).length;
@@ -1155,6 +1210,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/health") return json({ ok: true, service: "telegram-ingestion", storage: Boolean(runtimeEnv.BUCKET), processor: Boolean(runtimeEnv.TELEGRAM_BOT_TOKEN) });
     if (request.method === "OPTIONS" && url.pathname.startsWith("/book/") && (url.pathname.endsWith("/pdf") || url.pathname.endsWith("/audio") || url.pathname.endsWith("/cover"))) return publicAssetPreflight(runtimeEnv);
     if (url.pathname === "/catalog") return catalog(request, runtimeEnv);
+    if (request.method === "POST" && url.pathname === "/internal/youtube-audio-callback") return youtubeAudioCallback(request, runtimeEnv);
     if (request.method === "POST" && url.pathname === "/telegram/webhook") return receive(request, runtimeEnv);
     if (url.pathname === "/admin/drafts") return adminDrafts(request, runtimeEnv);
     if (url.pathname === "/admin/upload") return directUpload(request, runtimeEnv);
