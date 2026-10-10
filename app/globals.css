@@ -716,7 +716,7 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .audiobook-track-picker { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; align-items: stretch; }
 .audiobook-track-picker.has-chapters { gap: 10px; }
 .audiobook-chapter-panel { min-width: 0; padding: 10px; border: 1px solid rgba(73,109,99,.16); border-radius: 12px; background: linear-gradient(145deg, rgba(239,247,241,.92), rgba(255,250,241,.9)); }
-.audiobook-chapter-list { display: grid; gap: 4px; max-height: 178px; overflow-y: auto; padding-right: 2px; scrollbar-width: thin; scrollbar-color: rgba(73,109,99,.35) transparent; }
+.audiobook-chapter-list { display: grid; gap: 4px; min-height: 0; max-height: 178px; overflow-y: auto; padding-right: 2px; scrollbar-width: thin; scrollbar-color: rgba(73,109,99,.35) transparent; }
 .audiobook-chapter-row { min-width: 0; display: grid; grid-template-columns: 25px minmax(0,1fr) 15px; align-items: center; gap: 7px; padding: 7px 7px; border: 1px solid transparent; border-radius: 8px; background: rgba(255,255,255,.48); color: var(--muted); text-align: left; font: inherit; font-size: 10px; cursor: pointer; transition: background .16s ease, border-color .16s ease, color .16s ease, transform .16s ease; }
 .audiobook-chapter-row:hover { border-color: rgba(73,109,99,.18); background: rgba(255,255,255,.88); color: var(--ink); transform: translateX(2px); }
 .audiobook-chapter-row.active { border-color: rgba(73,109,99,.26); background: var(--green); color: #fffdf9; box-shadow: 0 4px 10px rgba(38,78,75,.14); }
@@ -1034,17 +1034,17 @@ body.audiobook-playing .reader-shell .reader-workspace { padding-bottom: 170px; 
 /* Audiobook chapter cards: normalize chapter panel and action baselines across groups. */
 .audiobook-card { grid-template-rows: 116px auto; }
 .audiobook-card-copy { max-height: 116px; overflow: hidden; align-content: start; }
-.audiobook-track-picker.has-chapters { grid-template-rows: 202px 44px; }
-.audiobook-track-picker.has-chapters .audiobook-chapter-panel { height: 202px; }
-.audiobook-track-picker.has-chapters .audiobook-chapter-list { height: 100%; max-height: none; align-content: start; }
+.audiobook-track-picker.has-chapters { grid-template-rows: 176px 44px; }
+.audiobook-track-picker.has-chapters .audiobook-chapter-panel { height: 176px; min-height: 0; overflow: hidden; }
+.audiobook-track-picker.has-chapters .audiobook-chapter-list { height: 100%; min-height: 0; max-height: none; align-content: start; }
 .audiobook-track-picker.has-chapters .audiobook-listen { height: 44px; }
 .audiobook-chapter-number { min-width: 54px; font-size: 9px; white-space: nowrap; }
 .audiobook-chapter-name { font-size: 10px; }
 @media (max-width: 640px) {
   .audiobook-card { grid-template-rows: 112px auto; }
   .audiobook-card-copy { max-height: 112px; }
-  .audiobook-track-picker.has-chapters { grid-template-rows: 176px 46px; }
-  .audiobook-track-picker.has-chapters .audiobook-chapter-panel { height: 176px; }
+  .audiobook-track-picker.has-chapters { grid-template-rows: 156px 46px; }
+  .audiobook-track-picker.has-chapters .audiobook-chapter-panel { height: 156px; }
   .audiobook-track-picker.has-chapters .audiobook-listen { height: 46px; }
   .audiobook-chapter-number { min-width: 52px; font-size: 8px; }
 }

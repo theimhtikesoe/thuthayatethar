@@ -164,6 +164,12 @@ function PreparedAudiobookWidget({ book }: { book: Audiobook }) {
   return <iframe ref={iframeRef} className="audiobook-preloader" title="" width="1" height="1" loading="eager" scrolling="no" frameBorder="0" allow="autoplay; encrypted-media" aria-hidden="true" tabIndex={-1} src={`https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}&auto_play=false&hide_related=true&show_comments=false&visual=false&show_user=false&show_reposts=false&show_teaser=false&show_artwork=false`} />;
 }
 
+function audiobookChapterNumberLabel(index: number): string {
+  const paddedNumber = String(index + 1).padStart(2, "0");
+  const myanmarNumber = paddedNumber.replace(/\d/g, (digit) => "၀၁၂၃၄၅၆၇၈၉"[Number(digit)]);
+  return `အခန်း ${myanmarNumber}`;
+}
+
 function audiobookOptionLabel(title: string): string {
   const normalized = correctedCatalogTitle(title).normalize("NFKC").replace(/[၀-၉]/g, (digit) => String(digit.charCodeAt(0) - 0x1040));
   const marked = normalized.match(/\b(?:chapter|part|episode)\s*[-_:()]?\s*(\d+)\b/i)
@@ -196,7 +202,7 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
           const itemKey = audiobookRecordKey(item);
           const active = itemKey === audiobookRecordKey(selectedBook);
           return <button type="button" className={`audiobook-chapter-row${active ? " active" : ""}`} key={itemKey} onClick={() => setSelectedKey(itemKey)} aria-pressed={active}>
-            <span className="audiobook-chapter-number">အခန်း {String(index + 1).padStart(2, "0")}</span><span className="audiobook-chapter-name">{audiobookOptionLabel(item.title)}</span><span className="audiobook-chapter-chevron" aria-hidden="true">{active ? "●" : "›"}</span>
+            <span className="audiobook-chapter-number">{audiobookChapterNumberLabel(index)}</span><span className="audiobook-chapter-name">{audiobookOptionLabel(item.title)}</span><span className="audiobook-chapter-chevron" aria-hidden="true">{active ? "●" : "›"}</span>
           </button>;
         })}</div>
       </div> : <span className="audiobook-single-track">{correctedCatalogTitle(selectedBook.title)}</span>}
