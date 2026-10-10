@@ -57,7 +57,7 @@ const DEFAULT_MAX_FILE_BYTES = 20 * 1024 * 1024;
 // This must be a fixed value: a module-scope `new Date()` changes with every isolate start.
 const DEFAULT_AUTO_PUBLISH_FROM = "2026-10-09T08:06:29.995077Z"; // first production auto-publish Worker deployment; 2026-10-09 15:06 UTC+7
 const MAX_SOUNDCLOUD_PAGE_BYTES = 1024 * 1024;
-const MAX_SOUNDCLOUD_CHANNEL_TRACKS = 50;
+const MAX_SOUNDCLOUD_COLLECTION_TRACKS = 50;
 const SOUNDCLOUD_FETCH_TIMEOUT_MS = 8_000;
 
 async function secretValue(value: string | SecretStoreBinding | undefined): Promise<string | undefined> {
@@ -203,15 +203,23 @@ function soundcloudMetadata(message: JsonRecord, soundcloudUrl: string, useCapti
   return { title: (match?.[1] ?? clean).slice(0, 180) || trackTitle.slice(0, 180) || "SoundCloud အသံစာအုပ်", author: match?.[2]?.slice(0, 180) || null };
 }
 
-type SoundCloudTrack = { url: string; title: string; author: string | null };
+type SoundCloudTrack = { url: string; title: string; author: string | null; artworkUrl: string | null };
 
-function isSoundCloudChannelUrl(value: string): boolean {
+type SoundCloudCollectionType = "channel" | "set";
+
+function soundCloudCollectionType(value: string): SoundCloudCollectionType | null {
   try {
     const url = new URL(value);
-    if (url.hostname.toLowerCase().replace(/^www\./, "") !== "soundcloud.com") return false;
+    if (url.protocol !== "https:" || url.hostname.toLowerCase().replace(/^www\./, "") !== "soundcloud.com") return null;
     const parts = url.pathname.split("/").filter(Boolean).map((part) => part.toLowerCase());
-    return parts.length === 1 || (parts.length === 2 && ["popular-tracks", "tracks"].includes(parts[1]));
-  } catch { return false; }
+    if (parts.length === 1 || (parts.length === 2 && ["popular-tracks", "tracks"].includes(parts[1]))) return "channel";
+    if (parts.length === 3 && parts[1] === "sets") return "set";
+    return null;
+  } catch { return null; }
+}
+
+function isSoundCloudCollectionUrl(value: string): boolean {
+  return soundCloudCollectionType(value) !== null;
 }
 
 function htmlAttribute(tag: string, name: string): string | null {
@@ -233,12 +241,49 @@ function decodeHtmlEntities(value: string): string {
   });
 }
 
-function soundCloudTracksFromPage(html: string, pageUrl: string, maxTracks = MAX_SOUNDCLOUD_CHANNEL_TRACKS): SoundCloudTrack[] {
-  const page = new URL(pageUrl);
-  const channelSlug = page.pathname.split("/").filter(Boolean)[0]?.toLowerCase();
-  if (!channelSlug) return [];
+function soundCloudArtworkUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "i1.sndcdn.com") return null;
+    return url.toString();
+  } catch { return null; }
+}
+
+function soundCloudTracksFromHydration(html: string, maxTracks: number): SoundCloudTrack[] {
+  const match = html.match(/window\.__sc_hydration\s*=\s*(\[[\s\S]*?\])\s*;?\s*<\/script>/i);
+  if (!match) return [];
+  let payload: unknown;
+  try { payload = JSON.parse(match[1]); } catch { return []; }
+  if (!Array.isArray(payload)) return [];
+  const playlist = payload.find((item) => isRecord(item) && item.hydratable === "playlist" && isRecord(item.data));
+  if (!isRecord(playlist) || !isRecord(playlist.data) || !Array.isArray(playlist.data.tracks)) return [];
   const tracks: SoundCloudTrack[] = [];
   const seen = new Set<string>();
+  for (const item of playlist.data.tracks) {
+    if (!isRecord(item) || typeof item.permalink_url !== "string") continue;
+    const url = normalizeSoundCloudUrl(item.permalink_url);
+    if (!url) continue;
+    const parsed = new URL(url);
+    if (parsed.hostname.toLowerCase().replace(/^www\./, "") !== "soundcloud.com" || parsed.pathname.split("/").filter(Boolean).length !== 2 || seen.has(url)) continue;
+    const user = isRecord(item.user) ? item.user : null;
+    const author = typeof user?.username === "string" ? user.username : typeof user?.full_name === "string" ? user.full_name : null;
+    const title = typeof item.title === "string" ? item.title.trim().slice(0, 180) : "";
+    tracks.push({ url, title: title || decodeURIComponent(parsed.pathname.split("/").filter(Boolean).at(-1) ?? "").replace(/[-_]+/g, " ").slice(0, 180), author, artworkUrl: soundCloudArtworkUrl(item.artwork_url) });
+    seen.add(url);
+    if (tracks.length >= maxTracks) break;
+  }
+  return tracks;
+}
+
+function soundCloudTracksFromPage(html: string, pageUrl: string, maxTracks = MAX_SOUNDCLOUD_COLLECTION_TRACKS): SoundCloudTrack[] {
+  const page = new URL(pageUrl);
+  const pageParts = page.pathname.split("/").filter(Boolean).map((part) => part.toLowerCase());
+  const collectionType = soundCloudCollectionType(pageUrl);
+  const channelSlug = pageParts[0];
+  if (!channelSlug || !collectionType) return [];
+  const tracks = soundCloudTracksFromHydration(html, maxTracks);
+  const seen = new Set(tracks.map((track) => track.url));
   const articlePattern = /<article\b(?=[^>]*\bitemprop\s*=\s*["']track["'])[^>]*>([\s\S]*?)<\/article>/gi;
   let article: RegExpExecArray | null;
   while ((article = articlePattern.exec(html)) !== null) {
@@ -261,14 +306,14 @@ function soundCloudTracksFromPage(html: string, pageUrl: string, maxTracks = MAX
             target.search = "";
             target.hash = "";
             const url = `${target.origin}${target.pathname}`;
-            if (url !== page.href.replace(/\/$/, "") && !seen.has(url)) track = { url, title: text.slice(0, 180) || "SoundCloud အသံစာအုပ်", author: null };
+            if (url !== page.href.replace(/\/$/, "") && !seen.has(url)) track = { url, title: text.slice(0, 180) || "SoundCloud အသံစာအုပ်", author: null, artworkUrl: null };
           }
         } catch { /* Ignore malformed track permalinks. */ }
       } else {
         try {
           const target = new URL(decodeHtmlEntities(href), page.origin);
           const parts = target.pathname.split("/").filter(Boolean);
-          if (target.hostname.toLowerCase().replace(/^www\./, "") === "soundcloud.com" && parts.length === 1 && parts[0].toLowerCase() === channelSlug && text) pageAuthor = text.slice(0, 180);
+          if (target.hostname.toLowerCase().replace(/^www\./, "") === "soundcloud.com" && parts.length === 1 && text && (collectionType === "set" || parts[0].toLowerCase() === channelSlug)) pageAuthor = text.slice(0, 180);
         } catch { /* Ignore malformed artist links. */ }
       }
     }
@@ -303,7 +348,7 @@ async function readSoundCloudHtml(response: Response): Promise<string> {
   return new TextDecoder().decode(bytes);
 }
 
-async function fetchSoundCloudChannelTracks(channelUrl: string): Promise<SoundCloudTrack[]> {
+async function fetchSoundCloudCollectionTracks(channelUrl: string): Promise<SoundCloudTrack[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort("soundcloud_fetch_timeout"), SOUNDCLOUD_FETCH_TIMEOUT_MS);
   try {
@@ -379,8 +424,8 @@ async function saveLinkIntake(env: RuntimeEnv, input: LinkIntakeInput): Promise<
   return { intakeId: persisted.id, created: insert.meta.changes > 0 };
 }
 
-async function saveSoundCloudChannelTracks(
-  tracks: SoundCloudTrack[], channelUrl: string, updateId: number, chatId: string, messageId: number, env: RuntimeEnv,
+async function saveSoundCloudCollectionTracks(
+  tracks: SoundCloudTrack[], collectionUrl: string, collectionType: SoundCloudCollectionType, updateId: number, chatId: string, messageId: number, env: RuntimeEnv,
 ): Promise<{ created: number; duplicates: number }> {
   let created = 0;
   let duplicates = 0;
@@ -388,9 +433,9 @@ async function saveSoundCloudChannelTracks(
     const saved = await saveLinkIntake(env, {
       sourceType: "soundcloud_link", eventType: "soundcloud_track_received", url: track.url, linkKey: `soundcloud:${track.url}`,
       updateId: soundCloudTrackUpdateId(track.url), chatId, messageId, title: track.title, author: track.author,
-      summary: "SoundCloud channel မှ တစ်ပုဒ်ချင်း ခွဲသိမ်းထားသော အသံစာအုပ် track ဖြစ်သည်။", category: "အသံစာအုပ်", soundcloudUrl: track.url, slugFallback: "soundcloud-track",
-      metadata: { source: "telegram", sourceType: "soundcloud_track", sourceUrl: track.url, channelUrl, telegramUpdateId: updateId, public: { sourceType: "soundcloud" } },
-      eventDetail: { channelUrl, trackUrl: track.url },
+      summary: `SoundCloud ${collectionType === "set" ? "playlist" : "channel"} မှ တစ်ပုဒ်ချင်း ခွဲသိမ်းထားသော အသံစာအုပ် track ဖြစ်သည်။`, category: "အသံစာအုပ်", soundcloudUrl: track.url, slugFallback: "soundcloud-track",
+      metadata: { source: "telegram", sourceType: "soundcloud_track", sourceUrl: track.url, collectionType, collectionUrl, ...(collectionType === "channel" ? { channelUrl: collectionUrl } : {}), telegramUpdateId: updateId, public: { sourceType: "soundcloud", ...(track.artworkUrl ? { coverImage: track.artworkUrl } : {}) } },
+      eventDetail: { collectionUrl, collectionType, trackUrl: track.url },
     });
     if (saved.created) created += 1;
     else duplicates += 1;
@@ -603,20 +648,22 @@ async function receive(request: Request, env: RuntimeEnv): Promise<Response> {
   const messageId = message.message_id;
   // A PDF always wins over links in its caption. Photos carry links but are never stored themselves.
   if (!hasPdf && Number.isSafeInteger(messageId) && (wattpadUrl || soundcloudUrls.length)) {
-    if (!wattpadUrl && soundcloudUrls.length === 1 && isSoundCloudChannelUrl(soundcloudUrls[0])) {
-      const channelUrl = soundcloudUrls[0];
+    const collectionType = soundcloudUrls.length === 1 ? soundCloudCollectionType(soundcloudUrls[0]) : null;
+    if (!wattpadUrl && collectionType) {
+      const collectionUrl = soundcloudUrls[0];
+      const sourceType = collectionType === "set" ? "soundcloud_set" : "soundcloud_channel";
       try {
-        const tracks = await fetchSoundCloudChannelTracks(channelUrl);
+        const tracks = await fetchSoundCloudCollectionTracks(collectionUrl);
         if (!tracks.length) {
-          logWorkerEvent("soundcloud_channel_no_tracks", { channelUrl });
-          return json({ ok: false, error: "soundcloud_channel_tracks_not_found" }, 502);
+          logWorkerEvent("soundcloud_collection_no_tracks", { collectionUrl, collectionType });
+          return json({ ok: false, error: "soundcloud_collection_tracks_not_found" }, 502);
         }
-        const saved = await saveSoundCloudChannelTracks(tracks, channelUrl, parsed.update_id as number, chatId, messageId as number, env);
-        logWorkerEvent("soundcloud_channel_imported", { channelUrl, trackCount: tracks.length, created: saved.created, duplicates: saved.duplicates });
-        return json({ ok: true, status: saved.created ? "accepted" : "duplicate", sourceType: "soundcloud_channel", trackCount: tracks.length, ...saved });
+        const saved = await saveSoundCloudCollectionTracks(tracks, collectionUrl, collectionType, parsed.update_id as number, chatId, messageId as number, env);
+        logWorkerEvent("soundcloud_collection_imported", { collectionUrl, collectionType, trackCount: tracks.length, created: saved.created, duplicates: saved.duplicates });
+        return json({ ok: true, status: saved.created ? "accepted" : "duplicate", sourceType, trackCount: tracks.length, ...saved });
       } catch (error) {
-        logWorkerEvent("soundcloud_channel_import_failed", { channelUrl, error: error instanceof Error ? error.message.slice(0, 120) : "unknown_error" });
-        return json({ ok: false, error: "soundcloud_channel_import_failed" }, 502);
+        logWorkerEvent("soundcloud_collection_import_failed", { collectionUrl, collectionType, error: error instanceof Error ? error.message.slice(0, 120) : "unknown_error" });
+        return json({ ok: false, error: "soundcloud_collection_import_failed" }, 502);
       }
     }
     const saved: { intakeId: string; created: boolean; sourceType: "wattpad_link" | "soundcloud_link" }[] = [];
@@ -633,8 +680,8 @@ async function receive(request: Request, env: RuntimeEnv): Promise<Response> {
     }
     let skippedChannelUrls = 0;
     for (const url of soundcloudUrls) {
-      // Channel pages need a page fetch and up to 50 inserts, so they are only expanded when sent alone.
-      if (isSoundCloudChannelUrl(url)) { skippedChannelUrls += 1; continue; }
+      // Collection pages need a page fetch and up to 50 inserts, so they are only expanded when sent alone.
+      if (isSoundCloudCollectionUrl(url)) { skippedChannelUrls += 1; continue; }
       const metadata = soundcloudMetadata(message, url, soundcloudUrls.length === 1 && !wattpadUrl);
       const result = await saveLinkIntake(env, {
         sourceType: "soundcloud_link", eventType: "soundcloud_link_received", url, linkKey: `soundcloud:${url}`,
@@ -646,7 +693,7 @@ async function receive(request: Request, env: RuntimeEnv): Promise<Response> {
       });
       saved.push({ ...result, sourceType: "soundcloud_link" });
     }
-    if (skippedChannelUrls) logWorkerEvent("soundcloud_channel_skipped_in_multi_link_message", { skippedChannelUrls, saved: saved.length });
+    if (skippedChannelUrls) logWorkerEvent("soundcloud_collection_skipped_in_multi_link_message", { skippedChannelUrls, saved: saved.length });
     if (!saved.length) return json({ ok: true, status: "ignored", skippedChannelUrls });
     const created = saved.filter((item) => item.created).length;
     const status = created ? "accepted" : "duplicate";

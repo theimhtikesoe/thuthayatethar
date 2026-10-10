@@ -404,6 +404,53 @@ test("expands a SoundCloud popular-tracks page into separate idempotent review d
   }
 });
 
+test("expands a SoundCloud set into individual audiobook tracks with each creator and is idempotent", async () => {
+  const setUrl = "https://soundcloud.com/user-343350243/sets/myanmar-audio-book";
+  const page = `<!doctype html><html><body><script>window.__sc_hydration = [{"hydratable":"playlist","data":{"track_count":3,"tracks":[
+    {"kind":"track","permalink_url":"https://soundcloud.com/myanmar-audio-books/fow7hlpqundt","title":"ဆရာေဇာ္ေဇာ္ေအာင္ ၏ ခင်သန်းနု","artwork_url":"https://i1.sndcdn.com/artworks-track-one-large.jpg","user":{"username":"Myanmar Audio Books"}},
+    {"kind":"track","permalink_url":"https://soundcloud.com/akmoe-uk/juu-yellow-train","title":"Juu - Yellow Train","artwork_url":"https://i1.sndcdn.com/artworks-track-two-large.jpg","user":{"username":"A K Moe"}},
+    {"kind":"track","permalink_url":"https://soundcloud.com/artist/third-track","title":"တတိယသီချင်း","artwork_url":"https://i1.sndcdn.com/artworks-track-three-large.jpg","user":{"username":"Artist"}}
+  ]}}];</script><section class="tracklist"><meta itemprop="numTracks" content="3" />
+    <article itemprop="track" itemscope itemtype="http://schema.org/MusicRecording"><h2 itemprop="name"><a itemprop="url" href="/myanmar-audio-books/fow7hlpqundt">ဆရာေဇာ္ေဇာ္ေအာင္ ၏ ခင်သန်းနု</a> by <a href="/myanmar-audio-books">Myanmar Audio Books</a></h2></article>
+    <article itemprop="track" itemscope itemtype="http://schema.org/MusicRecording"><h2 itemprop="name"><a itemprop="url" href="/akmoe-uk/juu-yellow-train">Juu - Yellow Train</a> by <a href="/akmoe-uk">A K Moe</a></h2></article>
+  </section></body></html>`;
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async (input) => {
+    fetchCalls += 1;
+    assert.equal(String(input), setUrl);
+    return new Response(page, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  };
+  const DB = makeSoundCloudDb();
+  const env = makeEnv(DB);
+  const request = () => new Request("https://worker.test/telegram/webhook", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": "test-secret" },
+    body: JSON.stringify({ update_id: 73, message: { message_id: 19, chat: { id: -12345, type: "supergroup" }, text: setUrl } }),
+  });
+  try {
+    const response = await worker.fetch(request(), env);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, status: "accepted", sourceType: "soundcloud_set", trackCount: 3, created: 3, duplicates: 0 });
+    const books = [...DB.state.books.values()];
+    assert.equal(books.length, 3);
+    assert.deepEqual(books.map((book) => book.soundcloudUrl).sort(), [
+      "https://soundcloud.com/akmoe-uk/juu-yellow-train",
+      "https://soundcloud.com/artist/third-track",
+      "https://soundcloud.com/myanmar-audio-books/fow7hlpqundt",
+    ]);
+    assert.equal(books.find((book) => book.soundcloudUrl.includes("fow7hlpqundt")).author, "Myanmar Audio Books");
+    assert.equal(books.find((book) => book.soundcloudUrl.includes("juu-yellow-train")).author, "A K Moe");
+    assert.equal(JSON.parse(books.find((book) => book.soundcloudUrl.includes("fow7hlpqundt")).metadataJson).public.coverImage, "https://i1.sndcdn.com/artworks-track-one-large.jpg");
+    assert.equal(JSON.parse(books.find((book) => book.soundcloudUrl.includes("third-track")).metadataJson).public.coverImage, "https://i1.sndcdn.com/artworks-track-three-large.jpg");
+    assert.ok(books.every((book) => book.category === "အသံစာအုပ်"));
+    const replay = await worker.fetch(request(), env);
+    assert.deepEqual(await replay.json(), { ok: true, status: "duplicate", sourceType: "soundcloud_set", trackCount: 3, created: 0, duplicates: 3 });
+    assert.equal(DB.state.books.size, 3);
+    assert.equal(fetchCalls, 2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("repairs rights and received-event rows after an interrupted D1 batch", async () => {
   const DB = makeDb({ failFirstBatch: true });
   const env = makeEnv(DB);
