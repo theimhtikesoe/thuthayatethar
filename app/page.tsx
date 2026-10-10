@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import dynamic from "next/dynamic";
 import AudiobookPlayer, { AudiobookShelf } from "./components/AudiobookPlayer";
-import { chapterLabel, groupBooks, groupTitle, isBedAungThaik, type ChapterGroup } from "./catalog-grouping";
+import { chapterLabel, groupBooks, groupTitle, isBedAungThaik, isPinnedAudiobook, type ChapterGroup } from "./catalog-grouping";
 import { formatAudioTime, mostRecentListening } from "./audio-progress";
 import { correctedCatalogTitle } from "./burmese-text";
 import { readOfflineSelection, writeOfflineSelection } from "./offline-storage";
@@ -593,7 +593,11 @@ export default function HomePage() {
   const matchingAudioBooks = useMemo(() => {
     return availableBooks
       .filter((book) => Boolean(book.audio_url || book.soundcloud_url || book.youtube_url))
-      .sort((left, right) => Number(isBedAungThaik(right)) - Number(isBedAungThaik(left)));
+      .sort((left, right) => {
+        const pinnedOrder = Number(isPinnedAudiobook(right)) - Number(isPinnedAudiobook(left));
+        if (pinnedOrder) return pinnedOrder;
+        return Number(isBedAungThaik(right)) - Number(isBedAungThaik(left));
+      });
   }, [availableBooks]);
   const recentListening = useMemo<RecentListening | null>(() => {
     if (typeof window === "undefined") return null;

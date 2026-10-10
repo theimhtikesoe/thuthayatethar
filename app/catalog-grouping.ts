@@ -13,6 +13,10 @@ export function isBedAungThaik(book: Pick<ChapterBook, "title" | "author">): boo
   return `${book.title} ${book.author ?? ""}`.normalize("NFKC").replace(/\s+/g, "").includes("အောင်သိုက်");
 }
 
+export function isPinnedAudiobook(book: Pick<ChapterBook, "title">): boolean {
+  return book.title.normalize("NFKC").replace(/\s+/g, "").includes("မေတ္တာပို့");
+}
+
 function normalizeDigits(value: string): string {
   return value.replace(/[၀-၉]/g, (digit) => String(digit.charCodeAt(0) - 0x1040));
 }
