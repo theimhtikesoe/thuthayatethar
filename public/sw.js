@@ -78,6 +78,21 @@ self.addEventListener("fetch", (event) => {
     })());
     return;
   }
+  if (url.pathname === "/api/soundcloud/cover") {
+    event.respondWith((async () => {
+      const cache = await caches.open(BOOK_CACHE);
+      const cached = await cache.match(request.url);
+      if (cached) return cached;
+      try {
+        const response = await fetch(request);
+        if (response.ok && response.headers.get("content-type")?.startsWith("image/")) {
+          try { await cache.put(request.url, response.clone()); } catch { /* Keep the online cover if storage is full. */ }
+        }
+        return response;
+      } catch { return cached || new Response("Offline", { status: 503 }); }
+    })());
+    return;
+  }
   if (url.pathname === "/api/catalog") {
     event.respondWith((async () => {
       const cache = await caches.open(CATALOG_CACHE);
