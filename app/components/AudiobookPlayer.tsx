@@ -49,6 +49,7 @@ declare global {
 }
 
 let apiPromise: Promise<void> | null = null;
+const preparedWidgets = new Map<string, Widget>();
 function loadWidgetApi(): Promise<void> {
   if (typeof window === "undefined" || window.SC?.Widget) return Promise.resolve();
   if (apiPromise) return apiPromise;
@@ -124,6 +125,38 @@ function audiobookRecordKey(book: Audiobook): string {
   return String(book.slug ?? book.id);
 }
 
+/** Start a preloaded SoundCloud widget directly inside the Listen click handler. */
+export function playPreparedAudiobook(book: Audiobook): boolean {
+  const widget = preparedWidgets.get(audiobookRecordKey(book));
+  if (!widget) return false;
+  widget.play();
+  return true;
+}
+
+function PreparedAudiobookWidget({ book }: { book: Audiobook }) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const url = normalizeSoundCloudUrl(book.soundcloud_url);
+  useEffect(() => {
+    if (!url || !iframeRef.current) return;
+    let disposed = false;
+    void loadWidgetApi().then(() => {
+      if (disposed || !iframeRef.current || !window.SC?.Widget) return;
+      const widget = window.SC.Widget(iframeRef.current);
+      widget.bind(window.SC.Widget.Events.READY, () => {
+        if (disposed) return;
+        preparedWidgets.set(audiobookRecordKey(book), widget);
+        window.dispatchEvent(new Event("thuthayatethar:audio-widget-ready"));
+      });
+    });
+    return () => {
+      disposed = true;
+      if (preparedWidgets.get(audiobookRecordKey(book))) preparedWidgets.delete(audiobookRecordKey(book));
+    };
+  }, [book, url]);
+  if (!url) return null;
+  return <iframe ref={iframeRef} className="audiobook-preloader" title="" width="1" height="1" loading="eager" scrolling="no" frameBorder="0" allow="autoplay; encrypted-media" aria-hidden="true" tabIndex={-1} src={`https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}&auto_play=false&hide_related=true&show_comments=false&visual=false&show_user=false&show_reposts=false&show_teaser=false&show_artwork=false`} />;
+}
+
 function audiobookOptionLabel(title: string): string {
   const normalized = title.normalize("NFKC").replace(/[၀-၉]/g, (digit) => String(digit.charCodeAt(0) - 0x1040));
   const marked = normalized.match(/\b(?:chapter|part|episode)\s*[-_:()]?\s*(\d+)\b/i)
@@ -156,7 +189,7 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
   </article>;
 }
 
-export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | null; onClose: () => void }) {
+export default function AudiobookPlayer({ book, onClose, preloadBooks = [] }: { book: Audiobook | null; onClose: () => void; preloadBooks?: Audiobook[] }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<Widget | null>(null);
   const positionRef = useRef(0);
@@ -168,6 +201,8 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const resumeAfterVisibilityRef = useRef(false);
+  const [preparedRevision, setPreparedRevision] = useState(0);
+  const preparedWidget = book ? preparedWidgets.get(audiobookRecordKey(book)) : null;
   const normalizedUrl = useMemo(() => normalizeSoundCloudUrl(book?.soundcloud_url), [book?.soundcloud_url]);
   const playerSrc = useMemo(() => normalizedUrl
     ? `https://w.soundcloud.com/player/?url=${encodeURIComponent(normalizedUrl)}&auto_play=true&hide_related=true&show_comments=false&visual=false&show_user=false&show_reposts=false&show_teaser=false&show_artwork=false`
@@ -192,6 +227,12 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
     });
     return () => { disposed = true; };
   }, [book?.slug, book?.id, normalizedUrl]);
+
+  useEffect(() => {
+    const refreshPreparedWidgets = () => setPreparedRevision((revision) => revision + 1);
+    window.addEventListener("thuthayatethar:audio-widget-ready", refreshPreparedWidgets);
+    return () => window.removeEventListener("thuthayatethar:audio-widget-ready", refreshPreparedWidgets);
+  }, []);
 
   useEffect(() => {
     document.body.classList.toggle("audiobook-playing", Boolean(book && normalizedUrl));
@@ -225,13 +266,13 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
   }, [book?.slug, book?.id, book?.title, book?.author, normalizedUrl]);
 
   useEffect(() => {
-    if (!book || !normalizedUrl || widgetApiState !== "ready" || !iframeRef.current || !window.SC?.Widget) return;
+    if (!book || !normalizedUrl || widgetApiState !== "ready" || (!preparedWidget && (!iframeRef.current || !window.SC?.Widget))) return;
     let disposed = false;
     let lastUiUpdate = 0;
     let lastProgressSave = 0;
     const soundCloud = window.SC;
-    if (!soundCloud?.Widget) return;
-    const widget = soundCloud.Widget(iframeRef.current);
+    if (!preparedWidget && !soundCloud?.Widget) return;
+    const widget = preparedWidget ?? soundCloud!.Widget(iframeRef.current!);
     widgetRef.current = widget;
     const events = soundCloud?.Widget.Events ?? window.SC!.Widget.Events;
     const saved = readAudioProgress(book, window.localStorage);
@@ -278,6 +319,8 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
       });
     };
     widget.bind(events.READY, initializePlayer);
+    // A preloaded iframe may already be ready before the Listen click.
+    if (preparedWidget) initializePlayer();
 
     widget.bind(events.PLAY, () => {
       if (disposed) return;
@@ -354,7 +397,7 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
       if (widgetRef.current === widget) widgetRef.current = null;
       // The iframe is discarded on track changes; this guard prevents stale updates.
     };
-  }, [book, normalizedUrl, playerSrc, widgetApiState]);
+  }, [book, normalizedUrl, playerSrc, widgetApiState, preparedRevision]);
 
   if (!book || !normalizedUrl || !playerSrc) return null;
 
@@ -395,6 +438,7 @@ export default function AudiobookPlayer({ book, onClose }: { book: Audiobook | n
     {widgetApiState !== "ready" || !playerReady || playerError
       ? <p className="audiobook-player-status" role="status">{widgetApiState === "error" || playerError ? "အသံစာအုပ်ကို ဖွင့်မရပါ။ SoundCloud မူရင်းကို စမ်းဖွင့်ပါ။" : "အသံဖွင့်စက်ကို ပြင်ဆင်နေသည်…"}</p>
       : null}
-    {widgetApiState === "ready" && <iframe key={`${book.slug ?? book.id}:${normalizedUrl}`} ref={iframeRef} className="audiobook-engine" title={`${book.title} — SoundCloud အသံရင်းမြစ်`} width="1" height="1" loading="eager" scrolling="no" frameBorder="0" allow="autoplay; encrypted-media" aria-hidden="true" tabIndex={-1} src={playerSrc} />}
+    {preloadBooks.map((item) => <PreparedAudiobookWidget key={audiobookRecordKey(item)} book={item} />)}
+    {widgetApiState === "ready" && !preparedWidget && <iframe key={`${book.slug ?? book.id}:${normalizedUrl}`} ref={iframeRef} className="audiobook-engine" title={`${book.title} — SoundCloud အသံရင်းမြစ်`} width="1" height="1" loading="eager" scrolling="no" frameBorder="0" allow="autoplay; encrypted-media" aria-hidden="true" tabIndex={-1} src={playerSrc} />}
   </aside>;
 }

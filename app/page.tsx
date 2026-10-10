@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import dynamic from "next/dynamic";
-import AudiobookPlayer, { AudiobookShelf } from "./components/AudiobookPlayer";
+import AudiobookPlayer, { AudiobookShelf, playPreparedAudiobook } from "./components/AudiobookPlayer";
 import { chapterLabel, groupBooks, groupTitle, type ChapterGroup } from "./catalog-grouping";
 import { formatAudioTime, mostRecentListening } from "./audio-progress";
 import { correctedCatalogTitle } from "./burmese-text";
@@ -458,6 +458,8 @@ export default function HomePage() {
   const availableBooks = catalogBooks ?? [];
   function playAudiobook(book: Book) {
     if (!book.soundcloud_url) return;
+    // Calling the prepared widget here preserves the Listen click's browser gesture.
+    playPreparedAudiobook(book);
     setAudioBook((current) => {
       const sameIdentity = current && (current.slug ?? String(current.id)) === (book.slug ?? String(book.id));
       return sameIdentity && current?.soundcloud_url === book.soundcloud_url ? current : book;
@@ -743,7 +745,7 @@ export default function HomePage() {
 
       {selected && <BookDetail book={selected} onClose={() => setSelected(null)} onRead={() => openReader(selected)} />}
       {readerBook && <Reader book={readerBook} page={page} setPage={setPage} theme={theme} setTheme={setTheme} fontScale={fontScale} setFontScale={setFontScale} lineHeight={lineHeight} setLineHeight={setLineHeight} onClose={closeReader} onListenAudio={() => playAudiobook(readerBook)} />}
-      <AudiobookPlayer book={audioBook} onClose={closeAudiobookPlayer} />
+      <AudiobookPlayer book={audioBook} onClose={closeAudiobookPlayer} preloadBooks={matchingAudioBooks} />
     </main>
   );
 }
