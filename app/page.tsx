@@ -282,6 +282,7 @@ function getRecentReadings(booksToRead: Book[]): RecentReading[] {
 
 export default function HomePage() {
   const [catalogBooks, setCatalogBooks] = useState<Book[] | null>(null);
+  const catalogSnapshotRef = useRef("");
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [format, setFormat] = useState("အားလုံး");
   const [selected, setSelected] = useState<Book | null>(null);
@@ -348,8 +349,9 @@ export default function HomePage() {
                 ? soundcloudCoverProxyUrl(book.soundcloud_url) || undefined
                 : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || undefined,
           }));
+          catalogSnapshotRef.current = JSON.stringify(offlineSafeBooks);
           setCatalogBooks(offlineSafeBooks);
-          writeLocalValue("thuthayatethar:catalog", JSON.stringify(offlineSafeBooks));
+          writeLocalValue("thuthayatethar:catalog", catalogSnapshotRef.current);
           // Show cached cards immediately while the network refresh runs.
           setCatalogLoading(false);
         }
@@ -399,8 +401,15 @@ export default function HomePage() {
           };
         });
         if (!disposed) {
-          setCatalogBooks(nextBooks);
-          writeLocalValue("thuthayatethar:catalog", JSON.stringify(nextBooks));
+          const nextSnapshot = JSON.stringify(nextBooks);
+          // The API is polled periodically, but replacing the whole catalog with
+          // equivalent objects makes the audiobook shelf rebuild needlessly and
+          // can reset chapter selectors in mobile Safari/PWA sessions.
+          if (nextSnapshot !== catalogSnapshotRef.current) {
+            catalogSnapshotRef.current = nextSnapshot;
+            setCatalogBooks(nextBooks);
+            writeLocalValue("thuthayatethar:catalog", nextSnapshot);
+          }
         }
       })
       .catch(() => { if (!hasCachedCatalog && !disposed) setCatalogBooks([]); })
