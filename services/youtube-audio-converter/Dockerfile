@@ -1,9 +1,9 @@
-FROM python:3.12-slim
+FROM node:22-bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && apt-get install -y --no-install-recommends python3 python3-pip ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir --upgrade yt-dlp
+    && pip3 install --no-cache-dir --break-system-packages --upgrade "yt-dlp[default]"
 
 WORKDIR /app
 COPY server.py /app/server.py
@@ -13,4 +13,4 @@ RUN useradd --create-home --uid 10001 converter \
 USER converter
 ENV PYTHONUNBUFFERED=1 PORT=8787 WORK_DIR=/var/lib/youtube-converter
 EXPOSE 8787
-CMD ["python", "/app/server.py"]
+CMD ["python3", "/app/server.py"]

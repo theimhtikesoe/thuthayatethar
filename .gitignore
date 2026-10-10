@@ -7,5 +7,6 @@ out
 .DS_Store
 .vercel
 .env*.local
+services/youtube-audio-converter/youtube-cookies.txt
 infra/cloudflare/wrangler.toml
 /public/pdf.worker.min.js
