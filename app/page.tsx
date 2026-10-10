@@ -236,6 +236,16 @@ function soundcloudCoverProxyUrl(url?: string) {
   return url ? `/api/soundcloud/cover?url=${encodeURIComponent(url)}` : undefined;
 }
 
+function youtubeCoverUrl(url?: string) {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    const videoId = host === "youtu.be" ? parsed.pathname.slice(1).split("/")[0] : parsed.searchParams.get("v");
+    return videoId && /^[A-Za-z0-9_-]{6,20}$/.test(videoId) ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : undefined;
+  } catch { return undefined; }
+}
+
 function readLocalValue(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
 }
@@ -350,7 +360,7 @@ export default function HomePage() {
               ? "/covers/tian-guan-ci-fu.webp"
               : book.coverImage === bookCoverProxyUrl(book)
                 ? soundcloudCoverProxyUrl(book.soundcloud_url) || undefined
-                : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || undefined,
+                : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || youtubeCoverUrl(book.youtube_url) || undefined,
           }));
           catalogSnapshotRef.current = JSON.stringify(offlineSafeBooks);
           setCatalogBooks(offlineSafeBooks);
@@ -394,7 +404,7 @@ export default function HomePage() {
             // ingestion catalog currently has no cover object for these PDFs.
             coverImage: isTianGuanCiFu
               ? "/covers/tian-guan-ci-fu.webp"
-              : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || undefined,
+              : book.coverImage || soundcloudCoverProxyUrl(book.soundcloud_url) || youtubeCoverUrl(book.youtube_url) || undefined,
             externalUrl: book.externalUrl,
             soundcloud_url: book.soundcloud_url,
             youtube_url: book.youtube_url,
