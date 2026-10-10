@@ -1,0 +1,49 @@
+name: Deploy Telegram ingestion Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/cloudflare/**"
+      - ".github/workflows/deploy-telegram-ingestion.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telegram-ingestion-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test and deploy existing Worker
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ingestion regression tests
+        run: pnpm run test:ingestion
+
+      - name: Deploy Telegram ingestion Worker
+        run: pnpm dlx wrangler@4 deploy --config infra/cloudflare/wrangler.toml
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 557f8dd4f971a942beb3057ddc74a248

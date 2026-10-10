@@ -1,0 +1,38 @@
+name = "thuthayatethar-telegram-ingestion"
+main = "src/index.ts"
+compatibility_date = "2026-10-07"
+account_id = "557f8dd4f971a942beb3057ddc74a248"
+keep_vars = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "thuthayatethar-ingestion"
+database_id = "e6631b37-bcbb-4550-b4c7-3acebb961484"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "thuthayatethar-private-ingestion"
+
+[[secrets_store_secrets]]
+binding = "TELEGRAM_WEBHOOK_SECRET_STORE"
+store_id = "67d3d264273044adb2b26f1b81d9cfed"
+secret_name = "TELEGRAM_WEBHOOK_SECRET"
+
+[[secrets_store_secrets]]
+binding = "TELEGRAM_BOT_TOKEN_STORE"
+store_id = "67d3d264273044adb2b26f1b81d9cfed"
+secret_name = "TELEGRAM_BOT_TOKEN"
+
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+TELEGRAM_ALLOWED_CHAT_IDS = "-1004314141664"
+TELEGRAM_API_BASE_URL = "https://pdf-relay.rz99systems.com"
+MAX_FILE_BYTES = "167772160"
+CATALOG_ORIGIN = "https://thuthayatethar.rz99systems.com"
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+persist = true
