@@ -186,10 +186,22 @@ function youtubeUrlsFor(message: JsonRecord): string[] {
   return urls;
 }
 
-function youtubeMetadata(message: JsonRecord, url: string): { title: string; author: string | null } {
+async function youtubeMetadata(message: JsonRecord, url: string): Promise<{ title: string; author: string | null }> {
   const text = [message.text, message.caption].find((value) => typeof value === "string") as string | undefined;
   const clean = (text ?? "").replace(/https?:\/\/[^\s<>]+/gi, " ").replace(/\s+/g, " ").trim();
-  return { title: clean.slice(0, 180) || `YouTube အသံစာအုပ် ${new URL(url).searchParams.get("v")}`, author: null };
+  if (clean) return { title: clean.slice(0, 180), author: null };
+  let videoTitle = "";
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort("youtube_oembed_timeout"), 5_000);
+    const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (response.ok) {
+      const payload = await response.json() as JsonRecord;
+      if (typeof payload.title === "string") videoTitle = payload.title.trim();
+    }
+  } catch { /* Fall back to a stable ID label if YouTube metadata is unavailable. */ }
+  return { title: videoTitle.slice(0, 180) || `YouTube အသံစာအုပ် ${new URL(url).searchParams.get("v")}`, author: null };
 }
 
 function normalizeAudioUrl(value: unknown): string | null {
@@ -786,7 +798,7 @@ async function receive(request: Request, env: RuntimeEnv): Promise<Response> {
     }
     if (skippedChannelUrls) logWorkerEvent("soundcloud_collection_skipped_in_multi_link_message", { skippedChannelUrls, saved: saved.length });
     for (const url of youtubeUrls) {
-      const metadata = youtubeMetadata(message, url);
+      const metadata = await youtubeMetadata(message, url);
       const result = await saveLinkIntake(env, {
         sourceType: "youtube_link", eventType: "youtube_link_received", url, linkKey: `youtube:${url}`,
         updateId: soundCloudTrackUpdateId(url), chatId, messageId: messageId as number, title: metadata.title, author: metadata.author,
