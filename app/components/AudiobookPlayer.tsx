@@ -216,18 +216,31 @@ function NativeAudiobookPlayer({ book, onClose }: { book: Audiobook; onClose: ()
     const audio = audioRef.current;
     if (!audio || !parts[partIndex]) return;
     const saved = readAudioProgress(book, window.localStorage);
-    const onMetadata = () => { const total = Number.isFinite(audio.duration) ? audio.duration * 1000 : 0; setDuration(total); saveAudioDuration(book, window.localStorage, total); if (saved?.positionMs) audio.currentTime = Math.min(saved.positionMs / 1000, audio.duration); setReady(true); void audio.play().catch(() => undefined); };
-    const onTime = () => { if (!seekingRef.current) setPosition(audio.currentTime * 1000); };
+    const savedPart = Number(window.localStorage.getItem(`${audioProgressStorageKey(book)}:part`) ?? "0");
+    let lastPersistedSecond = -1;
+    const emitProgressChange = () => window.dispatchEvent(new Event("thuthayatethar:audio-progress"));
+    const onMetadata = () => { const total = Number.isFinite(audio.duration) ? audio.duration * 1000 : 0; setDuration(total); saveAudioDuration(book, window.localStorage, total); if (savedPart === partIndex && saved?.positionMs) audio.currentTime = Math.min(saved.positionMs / 1000, audio.duration); setReady(true); void audio.play().catch(() => undefined); };
+    const onTime = () => {
+      if (seekingRef.current) return;
+      const positionMs = audio.currentTime * 1000;
+      setPosition(positionMs);
+      const currentSecond = Math.floor(audio.currentTime);
+      if (currentSecond !== lastPersistedSecond) {
+        lastPersistedSecond = currentSecond;
+        saveAudioProgress(book, window.localStorage, positionMs, duration);
+        emitProgressChange();
+      }
+    };
     const onPlay = () => { setPlaying(true); setMediaSessionPlaybackState("playing"); };
-    const onPause = () => { setPlaying(false); saveAudioProgress(book, window.localStorage, audio.currentTime * 1000, duration); setMediaSessionPlaybackState("paused"); };
-    const onEnded = () => { if (partIndex < parts.length - 1) { window.localStorage.setItem(`${audioProgressStorageKey(book)}:part`, String(partIndex + 1)); setPartIndex((index) => index + 1); setPosition(0); setReady(false); } else { setPlaying(false); clearAudioProgress(book, window.localStorage); window.localStorage.removeItem(`${audioProgressStorageKey(book)}:part`); setMediaSessionPlaybackState("none"); } };
+    const onPause = () => { setPlaying(false); saveAudioProgress(book, window.localStorage, audio.currentTime * 1000, duration); emitProgressChange(); setMediaSessionPlaybackState("paused"); };
+    const onEnded = () => { if (partIndex < parts.length - 1) { saveAudioProgress(book, window.localStorage, 0, 0); emitProgressChange(); window.localStorage.setItem(`${audioProgressStorageKey(book)}:part`, String(partIndex + 1)); setPartIndex((index) => index + 1); setPosition(0); setReady(false); } else { setPlaying(false); clearAudioProgress(book, window.localStorage); window.localStorage.removeItem(`${audioProgressStorageKey(book)}:part`); emitProgressChange(); setMediaSessionPlaybackState("none"); } };
     const onError = () => { setError(true); setReady(false); setMediaSessionPlaybackState("none"); };
     audio.addEventListener("loadedmetadata", onMetadata); audio.addEventListener("timeupdate", onTime); audio.addEventListener("play", onPlay); audio.addEventListener("pause", onPause); audio.addEventListener("ended", onEnded); audio.addEventListener("error", onError); audio.load();
     return () => { seekingRef.current = false; audio.pause(); audio.removeEventListener("loadedmetadata", onMetadata); audio.removeEventListener("timeupdate", onTime); audio.removeEventListener("play", onPlay); audio.removeEventListener("pause", onPause); audio.removeEventListener("ended", onEnded); audio.removeEventListener("error", onError); setMediaSessionPlaybackState("none"); };
   }, [book, book.audio_url, book.audioParts, partIndex]);
   const shown = duration > 0 ? Math.min(position, duration) : position;
   const toggle = () => { const audio = audioRef.current; if (!audio || !ready || error) return; if (audio.paused) void audio.play().catch(() => setError(true)); else audio.pause(); };
-  const seek = (value: string) => { const valueMs = Number(value); if (!audioRef.current || !Number.isFinite(valueMs)) return; audioRef.current.currentTime = valueMs / 1000; setPosition(valueMs); saveAudioProgress(book, window.localStorage, valueMs, duration); };
+  const seek = (value: string) => { const valueMs = Number(value); if (!audioRef.current || !Number.isFinite(valueMs)) return; audioRef.current.currentTime = valueMs / 1000; setPosition(valueMs); saveAudioProgress(book, window.localStorage, valueMs, duration); window.dispatchEvent(new Event("thuthayatethar:audio-progress")); };
   return <aside className="audiobook-dock" aria-label="အသံစာအုပ်ဖွင့်စက်">
     <audio ref={audioRef} className="audiobook-native-audio" src={parts[partIndex]?.url} preload="metadata" aria-label={`${book.title} အသံစာအုပ်`} />
     <div className="audiobook-dock-heading"><span className="audiobook-live-dot" /><span className="audiobook-dock-title"><small>ယခုနားထောင်နေသည် · AUDIO</small><strong>{book.title}</strong><span>{book.author || "တင်သူ မသိရသေးပါ"}</span></span><button type="button" onClick={onClose} className="audiobook-dock-close" aria-label="အသံဖွင့်စက်ကို ပိတ်မည်">×</button></div>
