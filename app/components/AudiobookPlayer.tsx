@@ -190,10 +190,17 @@ function AudiobookGroupCard({ group, onPlay }: { group: AudiobookCoverGroup<Audi
   return <article className="audiobook-card" key={group.key}>
     <AudiobookCover book={book} coverImage={group.books.find((item) => item.coverImage)?.coverImage} />
     <div className="audiobook-card-copy"><small>{isPinnedAudiobook(book) ? "ပင်ထားသည် · အသံစာအုပ်" : isBedAungThaik(book) ? "အပေါ်ဆုံး · အသံစာအုပ်" : book.category || "အသံစာအုပ်"}</small><strong>{correctedCatalogTitle(group.title)}</strong><span>{book.author || "စာရေးသူ မသိရသေးပါ"}</span>{group.books.length > 1 && <em>{group.books.length} ခန်းပါ အသံစာအုပ်</em>}</div>
-    <div className="audiobook-track-picker">
-      {group.books.length > 1
-        ? <label className="audiobook-track-select"><span>အခန်း / ခေါင်းစဉ်ရွေးပါ</span><select value={audiobookRecordKey(selectedBook)} onChange={(event) => setSelectedKey(event.target.value)} aria-label={`${correctedCatalogTitle(group.title)} အခန်းရွေးရန်`}>{group.books.map((item) => <option key={audiobookRecordKey(item)} value={audiobookRecordKey(item)}>{audiobookOptionLabel(item.title)}</option>)}</select></label>
-        : <span className="audiobook-single-track">{correctedCatalogTitle(selectedBook.title)}</span>}
+    <div className={`audiobook-track-picker${group.books.length > 1 ? " has-chapters" : ""}`}>
+      {group.books.length > 1 ? <div className="audiobook-chapter-panel" aria-label={`${correctedCatalogTitle(group.title)} အခန်းများ`}>
+        <div className="audiobook-chapter-heading"><span><i aria-hidden="true">☷</i> မာတိကာ</span><strong>{group.books.length} ခန်း</strong></div>
+        <div className="audiobook-chapter-list">{group.books.map((item, index) => {
+          const itemKey = audiobookRecordKey(item);
+          const active = itemKey === audiobookRecordKey(selectedBook);
+          return <button type="button" className={`audiobook-chapter-row${active ? " active" : ""}`} key={itemKey} onClick={() => setSelectedKey(itemKey)} aria-pressed={active}>
+            <span className="audiobook-chapter-number">{String(index + 1).padStart(2, "0")}</span><span className="audiobook-chapter-name">{audiobookOptionLabel(item.title)}</span><span className="audiobook-chapter-chevron" aria-hidden="true">{active ? "●" : "›"}</span>
+          </button>;
+        })}</div>
+      </div> : <span className="audiobook-single-track">{correctedCatalogTitle(selectedBook.title)}</span>}
       <button type="button" className={`audiobook-listen${!canPlay ? " is-unavailable" : ""}`} onClick={() => { if (canPlay) onPlay(selectedBook); }} disabled={!canPlay} aria-label={`${correctedCatalogTitle(selectedBook.title)} ${listenLabel}`}><span aria-hidden="true">{canPlay ? "▶" : isUploading ? "↻" : "–"}</span> {listenLabel}</button>
     </div>
   </article>;

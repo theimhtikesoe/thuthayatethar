@@ -713,7 +713,22 @@ h2 { font-size: clamp(28px, 3.4vw, 44px); line-height: 1.55; letter-spacing: -.0
 .audiobook-card-copy strong { display: -webkit-box; overflow-wrap: anywhere; overflow: hidden; font-size: 16px; line-height: 1.6; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .audiobook-card-copy > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .audiobook-card-copy em { color: #9a7650; font-size: 9px; font-style: normal; }
-.audiobook-track-picker { grid-column: 2; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; align-items: stretch; }
+.audiobook-track-picker { grid-column: 2; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; align-items: stretch; }
+.audiobook-track-picker.has-chapters { gap: 10px; }
+.audiobook-chapter-panel { min-width: 0; padding: 10px; border: 1px solid rgba(73,109,99,.16); border-radius: 12px; background: linear-gradient(145deg, rgba(239,247,241,.92), rgba(255,250,241,.9)); }
+.audiobook-chapter-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 7px; color: var(--green); font-size: 10px; }
+.audiobook-chapter-heading span { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; }
+.audiobook-chapter-heading i { font-size: 14px; font-style: normal; line-height: 1; }
+.audiobook-chapter-heading strong { color: #9a7650; font-size: 9px; font-weight: 600; }
+.audiobook-chapter-list { display: grid; gap: 4px; max-height: 178px; overflow-y: auto; padding-right: 2px; scrollbar-width: thin; scrollbar-color: rgba(73,109,99,.35) transparent; }
+.audiobook-chapter-row { min-width: 0; display: grid; grid-template-columns: 25px minmax(0,1fr) 15px; align-items: center; gap: 7px; padding: 7px 7px; border: 1px solid transparent; border-radius: 8px; background: rgba(255,255,255,.48); color: var(--muted); text-align: left; font: inherit; font-size: 10px; cursor: pointer; transition: background .16s ease, border-color .16s ease, color .16s ease, transform .16s ease; }
+.audiobook-chapter-row:hover { border-color: rgba(73,109,99,.18); background: rgba(255,255,255,.88); color: var(--ink); transform: translateX(2px); }
+.audiobook-chapter-row.active { border-color: rgba(73,109,99,.26); background: var(--green); color: #fffdf9; box-shadow: 0 4px 10px rgba(38,78,75,.14); }
+.audiobook-chapter-number { color: #a58a67; font-family: Georgia, serif; font-size: 10px; }
+.audiobook-chapter-row.active .audiobook-chapter-number { color: rgba(255,255,255,.72); }
+.audiobook-chapter-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audiobook-chapter-chevron { color: var(--green); font-size: 13px; line-height: 1; text-align: center; }
+.audiobook-chapter-row.active .audiobook-chapter-chevron { color: var(--gold); font-size: 8px; }
 .audiobook-track-select { display: grid; min-width: 0; gap: 4px; color: var(--muted); font-size: 10px; }
 .audiobook-track-select select { width: 100%; min-width: 0; height: 38px; border: 1px solid rgba(73,109,99,.24); border-radius: 8px; background: #fffdf9; color: var(--ink); padding: 6px 9px; font: inherit; font-size: 11px; }
 .audiobook-track-select select:focus-visible { outline: 2px solid rgba(73,109,99,.22); border-color: var(--green); }
@@ -757,7 +772,9 @@ body.audiobook-playing .reader-shell .reader-workspace { padding-bottom: 170px; 
   .audiobook-card-copy strong { font-size: 14px; line-height: 1.6; -webkit-line-clamp: 4; }
   .audiobook-card-copy > span { font-size: 10px; }
   .audiobook-track-picker { grid-template-columns: minmax(0, 1fr); gap: 5px; }
-  .audiobook-track-select select { height: 35px; font-size: 10px; }
+  .audiobook-chapter-panel { padding: 9px; border-radius: 10px; }
+  .audiobook-chapter-list { max-height: 156px; }
+  .audiobook-chapter-row { padding: 8px 6px; font-size: 10px; }
   .audiobook-listen { padding: 9px 10px; font-size: 10px; }
   .audiobook-dock { left: max(10px, env(safe-area-inset-left)); right: max(10px, env(safe-area-inset-right)); bottom: max(14px, calc(env(safe-area-inset-bottom) + 8px)); width: auto; padding: 16px 14px 13px; border-radius: 18px; }
   .audiobook-dock-title strong { font-size: 15px; }

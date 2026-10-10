@@ -81,6 +81,27 @@ test("future numbered Make It Come True by Phay Myint uploads share one selector
   assert.equal(groups[0].books.length, 2);
 });
 
+test("numbered spoken-novel uploads share one chapter group", () => {
+  const groups = groupAudiobooks([
+    book(1, "01 - အသံထွက်ဝတ္ထု - ငြိမ်းကျော်", "/covers/one.jpg", { author: "A K Moe" }),
+    book(2, "02 - အသံထွက်ဝတ္ထု - မင်းရှင်", "/covers/two.jpg", { author: "A K Moe" }),
+    book(3, "05 - အသံထွက်ဝတ္ထု - ဆောင်းလုလင်", "/covers/five.jpg", { author: "A K Moe" }),
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].title, "အသံထွက်ဝတ္ထု");
+  assert.deepEqual(groups[0].books.map(({ id }) => id), [1, 2, 3]);
+});
+
+test("Bo Aung Din English and Burmese titles share one chapter group", () => {
+  const groups = groupAudiobooks([
+    book(1, "Bo Aung Din ဗိုလ်အောင်ဒင် ၁ - ကက်ဆက်ဇာတ်လမ်း", "/covers/one.jpg", { author: "A K Moe" }),
+    book(2, "bo aung din 2", "/covers/two.jpg"),
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].title, "Bo Aung Din / ဗိုလ်အောင်ဒင်");
+  assert.deepEqual(groups[0].books.map(({ id }) => id), [1, 2]);
+});
+
 test("identical covers do not merge unrelated or unnumbered recordings", () => {
   const groups = groupAudiobooks([
     book(1, "First audiobook", "/covers/shared.jpg"),

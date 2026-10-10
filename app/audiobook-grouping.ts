@@ -27,6 +27,10 @@ type NumberedChapter = { baseTitle: string; number: number };
 
 function numberedChapter(title: string): NumberedChapter | null {
   const normalized = normalizeTitleDigits(title).trim();
+  const spokenNovel = normalized.match(/^0*(\d+)\s*[-.)]\s*အသံထွက်ဝတ္ထု(?:\s|$)/i);
+  if (spokenNovel) return { baseTitle: "အသံထွက်ဝတ္ထု", number: Number(spokenNovel[1]) };
+  const boAungDin = normalized.match(/^bo\s+aung\s+din(?:\s+ဗိုလ်အောင်ဒင်)?\s*(\d+)/i);
+  if (boAungDin) return { baseTitle: "Bo Aung Din / ဗိုလ်အောင်ဒင်", number: Number(boAungDin[1]) };
   const marked = normalized.match(/\b(?:chapter|part|episode)\s*[-_:()]?\s*(\d+)\b/i)
     ?? normalized.match(/(?:အခန်း|အပိုင်း)\s*[-_:()]?\s*(\d+)/);
   if (marked) {
@@ -84,9 +88,10 @@ export function groupAudiobooks<T extends AudiobookShelfBook>(books: T[]): Audio
     const author = normalizedIdentity(book.author ?? "");
     const baseTitle = seriesIdentity(chapter.baseTitle);
     const isTianGuanCiFu = /^tian\s+guan\s+ci\s+fu(?:\s|$)/i.test(baseTitle);
+    const isCuratedSeries = isTianGuanCiFu || baseTitle === "အသံထွက်ဝတ္ထု" || baseTitle === "bo aung din / ဗိုလ်အောင်ဒင်";
     // Metadata authors are inconsistent across uploads of the same Tian Guan
     // Ci Fu series, so title identity must win for this known series.
-    const key = isTianGuanCiFu ? baseTitle : `${baseTitle}\u0000${author}`;
+    const key = isCuratedSeries ? baseTitle : `${baseTitle}\u0000${author}`;
     const entries = chapterGroups.get(key);
     const entry = { book, index, number: chapter.number };
     if (entries) entries.push(entry);
